@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
@@ -264,14 +265,24 @@ u8 group_bit(u8 g) { return g == GRP_JUMP ? 1 : g == GRP_CALL ? 2 : g == GRP_BRA
 
 }  // namespace
 
-const std::string& Mnem::intern(std::string_view s) {
-  static SvMap<std::unique_ptr<std::string>> table;
+const Mnem::Entry& Mnem::intern(std::string_view s) {
+  static SvMap<const Entry*> table;
   auto it = table.find(s);
-  if (it == table.end()) it = table.emplace(std::string(s), std::make_unique<std::string>(s)).first;
+  if (it == table.end()) {
+    auto& all = entries();
+    if (all.size() > 0xffff) throw std::runtime_error("more than 65536 distinct mnemonics");
+    all.push_back(std::make_unique<Entry>(Entry{std::string(s), u16(all.size())}));
+    it = table.emplace(std::string(s), all.back().get()).first;
+  }
   return *it->second;
 }
+std::vector<std::unique_ptr<Mnem::Entry>>& Mnem::entries() {
+  static std::vector<std::unique_ptr<Entry>> all;
+  return all;
+}
+Mnem Mnem::from_id(u16 id) { return Mnem(entries()[id].get()); }
 
-static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96, "instructions are kept for the run: keep them flat");
+static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96, "instructions are decoded in bulk: keep them flat");
 
 bool Insn::group(u8 g) const { return (gmask & group_bit(g)) != 0; }
 bool Insn::branches() const { return (gmask & 7) != 0; }
@@ -387,18 +398,19 @@ std::vector<Insn> decode_linear(std::string_view code, u64 start) {
 }
 
 Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
-  code = im.bytes(s, i64(e) - i64(s));
+  code = decoded_from_ = im.bytes(s, i64(e) - i64(s));
   relocated = im.reloc_lower_bound(e) > im.reloc_lower_bound(s);
   i64 frva = i64(s - im.base), erva = i64(e - im.base);
   i64 n = i64(code.size());
   cut = n;
   u16 rip = reg_rip();
+  static std::vector<Insn> ins_;   // the decoded instructions, kept only while the lean form is made
+  std::vector<Insn>& all = ins_;
+  all.clear();
   {
     const u8* p = reinterpret_cast<const u8*>(code.data());
     size_t off = 0;
     Insn ins;
-    static std::vector<Insn> scratch;   // decoded into, then copied at the exact size: functions stay for the run
-    scratch.clear();
     while (off < code.size() && decode_one(p + off, code.size() - off, s + off, ins)) {
       i64 k = i64(off);
       if (k >= cut) break;
@@ -412,17 +424,15 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
           if (t < cut) cut = std::max(t, i64(ins.address + ins.size - s));
         }
       }
-      scratch.push_back(ins);
+      all.push_back(ins);
     }
-    insns.resize(scratch.size());   // Insn is trivially copyable
-    std::memcpy(static_cast<void*>(insns.data()), scratch.data(), scratch.size() * sizeof(Insn));
   }
   // alignment nops after the last ret/jmp (before a switch table) are padding, not code
-  while (insns.size() > 1 && insns.back().type == FDI_NOP &&
-         (insns[insns.size() - 2].type == FDI_RET || insns[insns.size() - 2].type == FDI_JMP) &&
-         i64(insns.back().address + insns.back().size - s) == cut) {
-    cut = i64(insns.back().address - s);
-    insns.pop_back();
+  while (all.size() > 1 && all.back().type == FDI_NOP &&
+         (all[all.size() - 2].type == FDI_RET || all[all.size() - 2].type == FDI_JMP) &&
+         i64(all.back().address + all.back().size - s) == cut) {
+    cut = i64(all.back().address - s);
+    all.pop_back();
   }
   // a dword table at the cut whose entries point past every in-span table: decoding resumes there
   if (cut < n && tables.count(cut) && tables[cut] == 4) {
@@ -442,13 +452,54 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   }
   if (resume) {
     auto more = decode_linear(code.substr(size_t(*resume)), s + u64(*resume));
-    for (auto& i : more) insns.push_back(std::move(i));
+    for (auto& i : more) all.push_back(i);
   }
   i64 decoded = 0;
-  for (auto& i : insns) decoded += i.size;
+  for (auto& i : all) decoded += i.size;
   complete = decoded == cut + (resume ? n - *resume : 0);
-  image_base = image_base_regs(insns, im.base);
+  std::vector<u32> image_base = image_base_regs(all, im.base);
+  insns.reserve(all.size());
+  for (size_t k = 0; k < all.size(); ++k) {
+    const Insn& ins = all[k];
+    Lean l{u32(ins.address - s), u32(field_list.size()), ins.mnemonic.id(), ins.size, 0, ins.branches()};
+    add_fields(ins, k < image_base.size() ? image_base[k] : 0);
+    l.nfields = u8(field_list.size() - l.field);
+    l.addressed = l.addressed || l.nfields;
+    for (auto& op : ins.ops) l.addressed = l.addressed || (op.type == OP_MEM && (op.base() == rip || op.index));
+    insns.push_back(l);
+  }
   trim_padding();
+}
+
+bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::span<const Field> fb) {
+  if (a.size != b.size || fa.size() != fb.size()) return false;
+  for (size_t z = 0; z < fa.size(); ++z)
+    if (fa[z].off != fb[z].off || fa[z].size != fb[z].size || fa[z].kind != fb[z].kind) return false;
+  return true;
+}
+
+bool same_outside_fields(std::string_view a, std::string_view b, std::span<const Field> f) {
+  if (a.size() != b.size()) return false;
+  u32 masked = 0;   // instructions are at most 15 bytes; a field can reach past the end
+  for (auto& x : f)
+    for (size_t i = x.off; i < size_t(x.off) + x.size && i < a.size(); ++i) masked |= 1u << i;
+  for (size_t i = 0; i < a.size(); ++i)
+    if (!(masked >> i & 1) && a[i] != b[i]) return false;
+  return true;
+}
+
+Insn Code::insn(const Lean& l) const {
+  Insn ins;
+  // the same bytes, limit and address as the first decode
+  decode_one(reinterpret_cast<const u8*>(decoded_from_.data()) + l.off, decoded_from_.size() - l.off, start + l.off, ins);
+  return ins;
+}
+
+std::vector<Insn> Code::decoded() const {
+  std::vector<Insn> out;
+  out.reserve(insns.size());
+  for (auto& l : insns) out.push_back(insn(l));
+  return out;
 }
 
 void Code::trim_padding() {
@@ -512,51 +563,44 @@ std::vector<OutsideTable> Code::outside_tables() const {
   return out;
 }
 
-std::vector<Field> Code::fields(const Insn& ins) const {
-  std::vector<Field> out;
+void Code::add_fields(const Insn& ins, u32 image_base) {
+  size_t first = field_list.size();
+  auto add = [&](int off, int size, FieldKind kind, i64 value, int access) {
+    field_list.push_back(Field{value, access, u8(off), u8(size), kind});
+  };
   i64 frva = i64(start - img->base);
   if (ins.branches()) {
     for (auto& op : ins.ops)
       if (op.type == OP_IMM && !(i64(start) <= op.imm() && op.imm() < i64(end)) && ins.imm_size)
-        out.push_back({ins.imm_offset, ins.imm_size, F_EXT, op.imm(), 0});
+        add(ins.imm_offset, ins.imm_size, F_EXT, op.imm(), 0);
   }
+  // [__ImageBase register + disp] (or as the index) addressing a part of the image
+  auto image_relative = [&](const Operand& op) {
+    if (!image_base) return false;
+    u32 regs = 0;
+    for (u16 r : {op.base(), op.index}) if (r) { int g = gpr_index(r); if (g >= 0) regs |= 1u << g; }
+    return (image_base & regs) && op.disp() > 0 && img->flags(img->base + u64(op.disp())).has_value();
+  };
   for (auto& op : ins.ops) {
     if (op.type != OP_MEM) continue;
     int size = ins.type == FDI_LEA ? 0 : op.size;   // bytes read there; lea only takes the address
     if (op.base() == reg_rip()) {
-      out.push_back({ins.disp_offset, 4, F_RIP, i64(ins.address + ins.size) + op.disp(), size});
+      add(ins.disp_offset, 4, F_RIP, i64(ins.address + ins.size) + op.disp(), size);
     } else if (op.index && tables.count(op.disp() - frva)) {
-      out.push_back({ins.disp_offset, ins.disp_size, F_TBL, op.disp() - frva, 0});
-    } else if (image_relative(ins, op)) {
-      out.push_back({ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.disp(), size});
+      add(ins.disp_offset, ins.disp_size, F_TBL, op.disp() - frva, 0);
+    } else if (image_relative(op)) {
+      add(ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.disp(), size);
     }
   }
   if (relocated) {
     size_t i = img->reloc_lower_bound(ins.address);
     while (i < img->reloc_sorted.size() && img->reloc_sorted[i] < ins.address + ins.size) {
       u64 site = img->reloc_sorted[i];
-      out.push_back({int(site - ins.address), 8, F_ABS, i64(img->u64_at(site)), 0});
+      add(int(site - ins.address), 8, F_ABS, i64(img->u64_at(site)), 0);
       ++i;
     }
   }
-  if (out.size() > 1) std::sort(out.begin(), out.end());
-  return out;
-}
-
-bool Code::image_relative(const Insn& ins, const Operand& op) const {
-  size_t k;
-  if (!insns.empty() && &ins >= insns.data() && &ins < insns.data() + insns.size()) {
-    k = size_t(&ins - insns.data());
-  } else {   // a copy: by address (instructions are in address order)
-    auto it = std::lower_bound(insns.begin(), insns.end(), ins.address, [](const Insn& i, u64 a) { return i.address < a; });
-    if (it == insns.end() || it->address != ins.address) return false;
-    k = size_t(it - insns.begin());
-  }
-  u32 have = k < image_base.size() ? image_base[k] : 0;
-  if (!have) return false;
-  u32 regs = 0;
-  for (u16 r : {op.base(), op.index}) if (r) { int g = gpr_index(r); if (g >= 0) regs |= 1u << g; }
-  return (have & regs) && op.disp() > 0 && img->flags(img->base + u64(op.disp())).has_value();
+  if (field_list.size() - first > 1) std::sort(field_list.begin() + long(first), field_list.end());
 }
 
 std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {

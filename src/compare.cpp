@@ -427,19 +427,13 @@ Comparer::CodeResult Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) 
     return cr;
   }
   for (size_t k = 0; k < oc.insns.size(); ++k) {
-    const Insn &a = oc.insns[k], &b = rc.insns[k];
+    const Lean &a = oc.insns[k], &b = rc.insns[k];
     auto fa = oc.fields(a), fb = rc.fields(b);
-    bool same_layout = a.size == b.size && fa.size() == fb.size();
-    for (size_t z = 0; same_layout && z < fa.size(); ++z)
-      if (fa[z].off != fb[z].off || fa[z].size != fb[z].size || fa[z].kind != fb[z].kind) same_layout = false;
-    auto enc = [&] { return "@" + std::to_string(k) + ": `" + a.mnemonic + " " + a.op_str() + "` | `" + b.mnemonic + " " + b.op_str() + "`"; };
-    if (!same_layout) { probs.push_back({"encoding", enc()}); continue; }
-    Bytes ba(oc.bytes(a)), bb(rc.bytes(b));
-    for (auto& f : fa) {
-      mask(ba, f.off, f.off + f.size);
-      mask(bb, f.off, f.off + f.size);
-    }
-    if (ba != bb) { probs.push_back({"encoding", enc()}); continue; }
+    auto enc = [&] {
+      Insn x = oc.insn(a), y = rc.insn(b);
+      return "@" + std::to_string(k) + ": `" + x.mnemonic + " " + x.op_str() + "` | `" + y.mnemonic + " " + y.op_str() + "`";
+    };
+    if (!same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) { probs.push_back({"encoding", enc()}); continue; }
     for (size_t z = 0; z < fa.size(); ++z) {
       if (fa[z].kind == F_TBL) {
         if (fa[z].value != fb[z].value)

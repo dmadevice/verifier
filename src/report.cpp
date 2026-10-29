@@ -23,10 +23,8 @@ const char* size_name(int n) {
 
 }  // namespace
 
-Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve0, const Image& img,
-               bool const_by_value) {
-  Toks toks;
-  toks.reserve(insns.size());
+Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve0, const Image& img,
+                  bool const_by_value) {
   i64 flo = i64(lo - img.base), fhi = i64(hi - img.base);
   auto resolve = [&](u64 t) {
     auto it = img.imports.find(t);
@@ -34,58 +32,63 @@ Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::functi
     return resolve0(t);
   };
   u16 rip = reg_rip();
-  for (auto& ins : insns) {
-    Tok tok{ins.mnemonic, {}};
-    tok.ops.reserve(ins.ops.size());
-    for (auto& op : ins.ops) {
-      Op o{};
-      if (op.type == OP_REG) {
-        o.k = Op::R;
-        o.base = reg_canon(op.reg);
-      } else if (op.type == OP_IMM) {
-        if (ins.branches()) {
-          i64 t = op.imm();
-          if (i64(lo) <= t && t < i64(hi)) { o.k = Op::REL; o.v = t - i64(lo); }
-          else { o.k = Op::SYM; o.key = resolve(u64(t)); }
-        } else {
-          o.k = Op::I;
-          o.v = op.imm();
-        }
-      } else if (op.type == OP_MEM) {
-        if (op.base() == rip) {
-          u64 t = ins.address + ins.size + u64(op.disp());
-          Key r = resolve(t);
-          if (const_by_value && r.kind == Key::CONST) {
-            o.k = Op::CONST;
-            o.hex = hex_bytes(img.bytes(t, op.size ? op.size : 4));
-          } else {
-            o.k = Op::MSYM;
-            o.key = r;
-            o.size = op.size;
-          }
-        } else if (flo <= op.disp() && op.disp() < fhi + i64(TABLE_SLACK) && op.index) {
-          o.k = Op::TBL;
-          o.base = reg_canon(op.base());
-          o.index = reg_canon(op.index);
-          o.scale = op.scale;
-          o.v = op.disp() - flo;
-          o.size = op.size;
-        } else {
-          o.k = Op::M;
-          o.base = reg_canon(op.base());
-          o.index = reg_canon(op.index);
-          o.scale = op.scale;
-          o.v = op.disp();
-          o.size = op.size;
-          o.seg = reg_canon(segment_reg(op));
-        }
+  Tok tok{ins.mnemonic, {}};
+  tok.ops.reserve(ins.ops.size());
+  for (auto& op : ins.ops) {
+    Op o{};
+    if (op.type == OP_REG) {
+      o.k = Op::R;
+      o.base = reg_canon(op.reg);
+    } else if (op.type == OP_IMM) {
+      if (ins.branches()) {
+        i64 t = op.imm();
+        if (i64(lo) <= t && t < i64(hi)) { o.k = Op::REL; o.v = t - i64(lo); }
+        else { o.k = Op::SYM; o.key = resolve(u64(t)); }
       } else {
-        continue;
+        o.k = Op::I;
+        o.v = op.imm();
       }
-      tok.ops.push_back(std::move(o));
+    } else if (op.type == OP_MEM) {
+      if (op.base() == rip) {
+        u64 t = ins.address + ins.size + u64(op.disp());
+        Key r = resolve(t);
+        if (const_by_value && r.kind == Key::CONST) {
+          o.k = Op::CONST;
+          o.hex = hex_bytes(img.bytes(t, op.size ? op.size : 4));
+        } else {
+          o.k = Op::MSYM;
+          o.key = r;
+          o.size = op.size;
+        }
+      } else if (flo <= op.disp() && op.disp() < fhi + i64(TABLE_SLACK) && op.index) {
+        o.k = Op::TBL;
+        o.base = reg_canon(op.base());
+        o.index = reg_canon(op.index);
+        o.scale = op.scale;
+        o.v = op.disp() - flo;
+        o.size = op.size;
+      } else {
+        o.k = Op::M;
+        o.base = reg_canon(op.base());
+        o.index = reg_canon(op.index);
+        o.scale = op.scale;
+        o.v = op.disp();
+        o.size = op.size;
+        o.seg = reg_canon(segment_reg(op));
+      }
+    } else {
+      continue;
     }
-    toks.push_back(std::move(tok));
+    tok.ops.push_back(std::move(o));
   }
+  return tok;
+}
+
+Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
+               bool const_by_value) {
+  Toks toks;
+  toks.reserve(insns.size());
+  for (auto& ins : insns) toks.push_back(symbolise_one(ins, lo, hi, resolve, img, const_by_value));
   return toks;
 }
 

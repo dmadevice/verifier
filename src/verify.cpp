@@ -60,6 +60,50 @@ const std::string& where_of(const std::string& path, const std::string& root) {
   return it->second;
 }
 
+const std::function<Key(u64)>& by_va() {
+  static const std::function<Key(u64)> f = [](u64 t) { return Key::of_va(t); };
+  return f;
+}
+
+// the original's RIP-relative operand stands for its bytes where the rebuilt one is a compiler constant (by value)
+void const_by_value(Tok& o, const Tok& r, const Image& O) {
+  if (r.ops.size() != o.ops.size()) return;
+  for (size_t z = 0; z < r.ops.size(); ++z) {
+    if (r.ops[z].k == Op::CONST && o.ops[z].k == Op::MSYM) {
+      Op c{};
+      c.k = Op::CONST;
+      c.hex = hex_bytes(O.bytes(o.ops[z].key.va, i64(r.ops[z].hex.size() / 2)));
+      o.ops[z] = c;
+    }
+  }
+}
+
+void add_unresolved(const Tok& t, std::set<std::string>& out) {
+  for (auto& op : t.ops)
+    if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) out.insert(op.key.name);
+}
+
+// Whether the two functions' tokens are equal, decided from their kept form: instructions with the same size,
+// field layout and bytes outside the fields have the same operands except where the address matters
+// (Lean::addressed), and only those are decoded again and compared as tokens. false when not known to be equal
+// (the full comparison decides); when true, `unresolved` has the rebuilt tokens' unresolved names.
+bool same_tokens(const Code& oc, const Code& rc, u64 ova, u64 oend, u64 rva, u64 rend, const Image& O, const Image& R,
+                 const std::function<Key(u64)>& resolve, std::set<std::string>& unresolved) {
+  if (oc.insns.size() != rc.insns.size()) return false;
+  for (size_t k = 0; k < oc.insns.size(); ++k) {
+    const Lean &a = oc.insns[k], &b = rc.insns[k];
+    auto fa = oc.fields(a), fb = rc.fields(b);
+    if (a.mnem != b.mnem || !same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) return false;
+    if (!a.addressed && !b.addressed) continue;
+    Tok to = symbolise_one(oc.insn(a), ova, oend, by_va(), O, false);
+    Tok tr = symbolise_one(rc.insn(b), rva, rend, resolve, R, true);
+    const_by_value(to, tr, O);
+    if (!(to == tr)) return false;
+    add_unresolved(tr, unresolved);
+  }
+  return true;
+}
+
 }  // namespace
 
 json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
@@ -89,28 +133,22 @@ json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt&
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
   Problems probs = cmp.function(ova, oend, rva, rend);
   const FnMemo* m = cmp.memo_fn.find({ova, rva});
-  const auto& oi = m->oc->insns;
-  const auto& ri = m->rc->insns;
-  Toks ot = symbolise(oi, ova, oend, [](u64 t) { return Key::of_va(t); }, orig.img, false);
-  Toks rt = symbolise(ri, rva, rend, [&](u64 t) { return pairing.resolve(t); }, reb.img, true);
-  // original: a RIP-relative operand matches a rebuilt compiler constant when the bytes agree
-  for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
-    auto &rops = rt[k].ops, &oops = ot[k].ops;
-    if (rops.size() != oops.size()) continue;
-    for (size_t z = 0; z < rops.size(); ++z) {
-      if (rops[z].k == Op::CONST && oops[z].k == Op::MSYM) {
-        Op c{};
-        c.k = Op::CONST;
-        c.hex = hex_bytes(orig.img.bytes(oops[z].key.va, i64(rops[z].hex.size() / 2)));
-        oops[z] = c;
-      }
-    }
-  }
+  const Code &oc = *m->oc, &rc = *m->rc;
+  std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
-  for (auto& t : rt)
-    for (auto& op : t.ops)
-      if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) unresolved.insert(op.key.name);
-  bool same = ot == rt;
+  bool same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
+  std::vector<Insn> oi, ri;   // decoded again, with their tokens, only when the report shows instructions
+  Toks ot, rt;
+  if (!same || show) {
+    oi = oc.decoded();
+    ri = rc.decoded();
+    ot = symbolise(oi, ova, oend, by_va(), orig.img, false);
+    rt = symbolise(ri, rva, rend, resolve, reb.img, true);
+    for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
+    unresolved.clear();
+    for (auto& t : rt) add_unresolved(t, unresolved);
+    same = ot == rt;
+  }
   Value category = probs.empty() ? Value::null() : Value::str(same ? probs[0].first : classify(ot, rt));
   rec.set("osize", Value::integer(i64(oend - ova)));
   rec.set("rsize", Value::integer(i64(rend - rva)));

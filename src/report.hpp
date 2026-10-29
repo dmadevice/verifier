@@ -32,6 +32,8 @@ struct Tok {
 };
 using Toks = std::vector<Tok>;
 
+Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
+                  bool const_by_value);
 Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
                bool const_by_value);
 std::string tok_text(const Tok& t, const std::unordered_map<u64, std::string>& names);

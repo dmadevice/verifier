@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -47,26 +48,32 @@ class OpVec {
   Operand ops_[kMax];
 };
 
-// A mnemonic: interned (one string per distinct mnemonic for the run), compared and concatenated as a string
+// A mnemonic: interned (one string per distinct mnemonic for the run, numbered), compared and concatenated as a
+// string
 class Mnem {
  public:
-  Mnem() : s_(empty()) {}
-  explicit Mnem(std::string_view s) : s_(&intern(s)) {}
-  Mnem(const char* s) : s_(&intern(s)) {}
-  const std::string& str() const { return *s_; }
-  operator const std::string&() const { return *s_; }
-  operator std::string_view() const { return *s_; }
-  bool operator==(const Mnem& o) const { return s_ == o.s_; }
-  bool operator==(const char* o) const { return *s_ == o; }
-  bool operator==(const std::string& o) const { return *s_ == o; }
+  Mnem() : e_(empty()) {}
+  explicit Mnem(std::string_view s) : e_(&intern(s)) {}
+  Mnem(const char* s) : e_(&intern(s)) {}
+  static Mnem from_id(u16 id);
+  u16 id() const { return e_->id; }
+  const std::string& str() const { return e_->s; }
+  operator const std::string&() const { return e_->s; }
+  operator std::string_view() const { return e_->s; }
+  bool operator==(const Mnem& o) const { return e_ == o.e_; }
+  bool operator==(const char* o) const { return e_->s == o; }
+  bool operator==(const std::string& o) const { return e_->s == o; }
 
  private:
-  static const std::string& intern(std::string_view s);
-  static const std::string* empty() {
-    static const std::string* e = &intern("");
+  struct Entry { std::string s; u16 id; };
+  explicit Mnem(const Entry* e) : e_(e) {}
+  static const Entry& intern(std::string_view s);
+  static std::vector<std::unique_ptr<Entry>>& entries();
+  static const Entry* empty() {
+    static const Entry* e = &intern("");
     return e;
   }
-  const std::string* s_;
+  const Entry* e_;
 };
 inline std::string operator+(const Mnem& m, const char* s) { return m.str() + s; }
 inline std::string operator+(const Mnem& m, const std::string& s) { return m.str() + s; }
@@ -98,10 +105,10 @@ u16 reg_rip();
 enum FieldKind : u8 { F_ABS = 0, F_EXT = 1, F_IMG = 2, F_RIP = 3, F_TBL = 4 };   // ordered as the names sort
 const char* field_kind_name(FieldKind k);
 struct Field {
-  int off, size;
-  FieldKind kind;
   i64 value;     // target VA (function-relative table offset for F_TBL)
   int access;
+  u8 off, size;
+  FieldKind kind;
   bool operator<(const Field& o) const;
 };
 
@@ -122,6 +129,21 @@ struct OutsideTable {
 // Decode instructions from `code` at address `start`, linearly, until an undecodable byte (or `limit` bytes).
 std::vector<Insn> decode_linear(std::string_view code, u64 start);
 
+// An instruction as a function's code keeps it: where it is, its size and mnemonic, and its address fields. The
+// operands are decoded again (Code::insn) when a report needs them.
+struct Lean {
+  u32 off;          // from the function's start
+  u32 field;        // its first field in Code::field_list
+  u16 mnem;         // Mnem::id()
+  u8 size, nfields;
+  bool addressed;   // its operands depend on where it is: a branch, a RIP-relative or indexed memory operand, or a field
+};
+
+// same size, and fields at the same places with the same kinds
+bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::span<const Field> fb);
+// the same bytes outside the fields `f` (of the first)
+bool same_outside_fields(std::string_view a, std::string_view b, std::span<const Field> f);
+
 class Code {
  public:
   Code(const Image& img, u64 start, u64 end);
@@ -129,20 +151,25 @@ class Code {
   u64 start, end;
   std::string_view code;              // the function's bytes, in the image
   bool relocated;
-  std::vector<Insn> insns;
+  std::vector<Lean> insns;
+  std::vector<Field> field_list;      // every instruction's fields, in order
   std::map<i64, int> tables;          // function-relative table offset -> entry size
   i64 cut = 0;
   std::optional<i64> resume;          // code resumes here after the tables (hand-written switches)
   bool complete = false;
-  std::vector<u32> image_base;        // image_base_regs() of the instructions
 
-  std::string_view bytes(const Insn& ins) const { return code.substr(size_t(ins.address - start), ins.size); }
-  std::vector<Field> fields(const Insn& ins) const;
+  u64 address(const Lean& i) const { return start + i.off; }
+  std::string_view bytes(const Lean& i) const { return code.substr(i.off, i.size); }
+  std::span<const Field> fields(const Lean& i) const { return {field_list.data() + i.field, i.nfields}; }
+  Mnem mnemonic(const Lean& i) const { return Mnem::from_id(i.mnem); }
+  Insn insn(const Lean& i) const;     // decoded again
+  std::vector<Insn> decoded() const;  // every instruction, decoded again
   std::vector<TableItem> table_region() const;
   std::vector<OutsideTable> outside_tables() const;
-  bool image_relative(const Insn& ins, const Operand& op) const;
 
  private:
+  std::string_view decoded_from_;     // the bytes the instructions were decoded from (`code` before trimming)
+  void add_fields(const Insn& ins, u32 image_base);
   void trim_padding();
 };
 

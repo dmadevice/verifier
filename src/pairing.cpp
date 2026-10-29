@@ -170,13 +170,9 @@ Pairing::Votes Pairing::votes_of(u64 rva, u64 ova) {
   Votes out;
   if (oc->insns.size() != rc->insns.size()) return out;
   for (size_t k = 0; k < oc->insns.size(); ++k) {
-    const Insn &a = oc->insns[k], &b = rc->insns[k];
-    if (a.mnemonic != b.mnemonic || a.size != b.size) continue;
+    const Lean &a = oc->insns[k], &b = rc->insns[k];
     auto fa = oc->fields(a), fb = rc->fields(b);
-    bool same = fa.size() == fb.size();
-    for (size_t z = 0; same && z < fa.size(); ++z)
-      same = fa[z].off == fb[z].off && fa[z].size == fb[z].size && fa[z].kind == fb[z].kind;
-    if (!same) continue;
+    if (a.mnem != b.mnem || !same_layout(a, fa, b, fb)) continue;
     for (size_t z = 0; z < fa.size(); ++z) {
       const Field &x = fa[z], &y = fb[z];
       if (x.kind != F_RIP && x.kind != F_IMG && x.kind != F_ABS) continue;
@@ -262,9 +258,8 @@ std::vector<u64> Pairing::orig_refs(u64 f) {
   if (auto it = refs_of_.find(f); it != refs_of_.end()) return it->second;
   auto c = cmp->orig_code(f, orig.extent(f));
   std::set<u64> s;
-  for (auto& i : c->insns)
-    for (auto& x : c->fields(i))
-      if (x.kind == F_RIP || x.kind == F_IMG || x.kind == F_ABS) s.insert(u64(x.value));
+  for (auto& x : c->field_list)
+    if (x.kind == F_RIP || x.kind == F_IMG || x.kind == F_ABS) s.insert(u64(x.value));
   return refs_of_.emplace(f, std::vector<u64>(s.begin(), s.end())).first->second;
 }
 
