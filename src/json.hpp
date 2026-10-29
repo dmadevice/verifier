@@ -42,4 +42,21 @@ Value parse(std::string_view text);   // throws std::runtime_error
 std::string dump(const Value& v);         // the document, indented, with a final newline
 std::string quote(std::string_view s);    // a JSON string literal
 
+// The writer's pieces, for a document written as it is made (the text dump() gives for the same values)
+void put_quoted(std::string& out, std::string_view s);                             // a string
+void put_value(std::string& out, const Value& v, int level);                        // a value at `level`
+void put_strings(std::string& out, const std::vector<std::string>& v, int level);   // an array of strings at `level`
+class ObjectWriter {   // an object at `level`: key() before each member's value, end() after the last
+ public:
+  ObjectWriter(std::string& out, int level) : out_(out), level_(level) {}
+  void key(std::string_view k);
+  void end();
+  int value_level() const { return level_ + 1; }
+
+ private:
+  std::string& out_;
+  int level_;
+  bool first_ = true;
+};
+
 }  // namespace verifier::json

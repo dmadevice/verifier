@@ -855,6 +855,57 @@ Problems name_cache() {
   return bad;
 }
 
+// the report's records, written as they are made, are the text json::dump gives for the same document
+Problems report_writer() {
+  using json::Value;
+  auto strs = [](std::vector<std::string> v) { Value a = Value::array(); for (auto& x : v) a.push(Value::str(x)); return a; };
+  std::vector<Result> rs(4);
+  std::vector<Value> want(4, Value::object());
+  rs[0].orig = "0x180001000"; rs[0].name = "f"; rs[0].kind = "FUNCTION"; rs[0].src = "a.cpp:1"; rs[0].status = "BADADDR";
+  rs[0].overloads = {"(int)", "(char const*)"};
+  for (auto& [k, v] : std::vector<std::pair<std::string, Value>>{{"orig", Value::str("0x180001000")}, {"name", Value::str("f")},
+       {"kind", Value::str("FUNCTION")}, {"src", Value::str("a.cpp:1")}, {"overloads", strs({"(int)", "(char const*)"})},
+       {"status", Value::str("BADADDR")}})
+    want[0].set(k, v);
+  rs[1] = rs[0]; rs[1].overloads = {"(int)"}; rs[1].status = "LIBCODE"; rs[1].linked = true; rs[1].lib = "x.lib";
+  want[1] = Value::object();
+  for (auto& [k, v] : std::vector<std::pair<std::string, Value>>{{"orig", Value::str("0x180001000")}, {"name", Value::str("f")},
+       {"kind", Value::str("FUNCTION")}, {"src", Value::str("a.cpp:1")}, {"status", Value::str("LIBCODE")}})
+    want[1].set(k, v);
+  Value lib = Value::array(); lib.push(Value::str("x.lib")); lib.push(Value::null());
+  want[1].set("library", lib);
+  rs[2] = rs[1]; rs[2].linked = false; rs[2].status = "MATCH"; rs[2].compared = true; rs[2].osize = 16; rs[2].rsize = 16;
+  want[2] = Value::object();
+  for (auto& [k, v] : std::vector<std::pair<std::string, Value>>{{"orig", Value::str("0x180001000")}, {"name", Value::str("f")},
+       {"kind", Value::str("FUNCTION")}, {"src", Value::str("a.cpp:1")}, {"osize", Value::integer(16)}, {"rsize", Value::integer(16)},
+       {"status", Value::str("MATCH")}, {"category", Value::null()}, {"unresolved", Value::array()}, {"problems", Value::array()}})
+    want[2].set(k, v);
+  rs[3] = rs[2]; rs[3].status = "DIFF"; rs[3].category = "regalloc"; rs[3].unresolved = {"?g@@3HA"}; rs[3].problems = {"code: \"x\"\n"};
+  rs[3].first_diff = Result::FirstDiff{3, "mov eax, 1", "mov ecx, 1"}; rs[3].has_diff = true;
+  want[3] = Value::object();
+  Value fd = Value::object(); fd.set("index", Value::integer(3)); fd.set("orig", Value::str("mov eax, 1")); fd.set("rebuilt", Value::str("mov ecx, 1"));
+  for (auto& [k, v] : std::vector<std::pair<std::string, Value>>{{"orig", Value::str("0x180001000")}, {"name", Value::str("f")},
+       {"kind", Value::str("FUNCTION")}, {"src", Value::str("a.cpp:1")}, {"osize", Value::integer(16)}, {"rsize", Value::integer(16)},
+       {"status", Value::str("DIFF")}, {"category", Value::str("regalloc")}, {"unresolved", strs({"?g@@3HA"})},
+       {"problems", strs({"code: \"x\"\n"})}, {"first_diff", fd}, {"diff", Value::array()}})
+    want[3].set(k, v);
+  Problems bad;
+  for (size_t n : {size_t(0), size_t(4)}) {   // as run() writes the document
+    std::string got = "{\n  \"results\": ";
+    for (size_t k = 0; k < n; ++k) { got += k == 0 ? "[\n    " : ",\n    "; write_result(got, rs[k], 2); }
+    got += n == 0 ? "[]" : "\n  ]";
+    got += ",\n  \"matched\": ";
+    json::put_value(got, Value::integer(1), 1);
+    got += "\n}\n";
+    Value doc = Value::object(), arr = Value::array();
+    for (size_t k = 0; k < n; ++k) arr.push(want[k]);
+    doc.set("results", arr);
+    doc.set("matched", Value::integer(1));
+    if (got != json::dump(doc)) bad.push_back({"report", std::to_string(n) + " results: the text differs"});
+  }
+  return bad;
+}
+
 Problems ignored_annotations() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-ann-" + unique_suffix());
@@ -966,6 +1017,7 @@ int main(int argc, char** argv) {
       {"definition names", nullptr, definition_names},
       {"long names", nullptr, long_names},
       {"name cache file", nullptr, name_cache},
+      {"report writer", nullptr, report_writer},
       {"destructor pairing", nullptr, destructor_pairing},
       {"folded annotations", nullptr, folded_annotations},
       {"instruction diff", nullptr, instruction_diff},

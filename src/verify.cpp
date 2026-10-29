@@ -44,13 +44,6 @@ std::string head_chars(const std::string& s, size_t n) {
   return s.substr(0, std::min(i, s.size()));
 }
 
-Value str_list(std::vector<std::string> v) {
-  Value a = Value::array();
-  a.arr.reserve(v.size());
-  for (auto& s : v) a.push(Value::str(std::move(s)));
-  return a;
-}
-
 // a source path as the report gives it (relative to the root); many annotations share a file
 const std::string& where_of(const std::string& path, const std::string& root) {
   static std::unordered_map<std::string, std::string> memo;
@@ -106,29 +99,28 @@ bool same_tokens(const Code& oc, const Code& rc, u64 ova, u64 oend, u64 rva, u64
 
 }  // namespace
 
-json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                     const std::string& root, bool show, Out& out, bool want_diff) {
+Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
+                const std::string& root, bool show, Out& out, bool want_diff) {
   u64 ova = ann.va;
-  Value rec = Value::object();
-  rec.set("orig", Value::str(hex(ova)));
-  rec.set("name", Value::str(ann.name));
-  rec.set("kind", Value::str(ann.kind));
-  rec.set("src", Value::str(where_of(ann.path, root) + ":" + std::to_string(ann.line)));
+  Result rec;
+  rec.va = ova;
+  rec.orig = hex(ova);
+  rec.name = ann.name;
+  rec.kind = ann.kind;
+  rec.src = where_of(ann.path, root) + ":" + std::to_string(ann.line);
   auto lk = reb.lookup(ann.name, sig_flag(ann.flags), true);
-  auto overloads = reb.overloads_of(ann.name);
-  if (overloads.size() > 1) rec.set("overloads", str_list(overloads));
-  if (!orig.functions.count(ova)) { rec.set("status", Value::str("BADADDR")); return rec; }
+  rec.overloads = reb.overloads_of(ann.name);
+  if (!orig.functions.count(ova)) { rec.status = "BADADDR"; return rec; }
   if (is_counted(ann.kind) && orig.linked.count(ova)) {
-    rec.set("status", Value::str("LIBCODE"));
+    rec.status = "LIBCODE";
     auto& l = orig.linked.at(ova);
-    Value lib = Value::array();
-    lib.push(Value::str(l.lib));
-    lib.push(l.has_symbol ? Value::str(l.symbol) : Value::null());
-    rec.set("library", lib);
+    rec.linked = true;
+    rec.lib = l.lib;
+    if (l.has_symbol) rec.symbol = l.symbol;
     return rec;
   }
-  if (lk.vas.empty() || lk.nhits > 1) { rec.set("status", Value::str(lk.vas.empty() ? "MISSING" : "AMBIGUOUS")); return rec; }
-  rec.set("name", Value::str(lk.qname));
+  if (lk.vas.empty() || lk.nhits > 1) { rec.status = lk.vas.empty() ? "MISSING" : "AMBIGUOUS"; return rec; }
+  rec.name = lk.qname;
   u64 rva = lk.vas[0];
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
   Problems probs = cmp.function(ova, oend, rva, rend);
@@ -149,26 +141,21 @@ json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt&
     for (auto& t : rt) add_unresolved(t, unresolved);
     same = ot == rt;
   }
-  Value category = probs.empty() ? Value::null() : Value::str(same ? probs[0].first : classify(ot, rt));
-  rec.set("osize", Value::integer(i64(oend - ova)));
-  rec.set("rsize", Value::integer(i64(rend - rva)));
-  rec.set("status", Value::str(probs.empty() ? "MATCH" : "DIFF"));
-  rec.set("category", category);
-  rec.set("unresolved", str_list(std::vector<std::string>(unresolved.begin(), unresolved.end())));
-  std::vector<std::string> ps;
-  for (size_t i = 0; i < probs.size() && i < 8; ++i) ps.push_back(probs[i].first + ": " + probs[i].second);
-  rec.set("problems", str_list(std::move(ps)));
+  rec.compared = true;
+  if (!probs.empty()) rec.category = same ? probs[0].first : classify(ot, rt);
+  rec.osize = i64(oend - ova);
+  rec.rsize = i64(rend - rva);
+  rec.status = probs.empty() ? "MATCH" : "DIFF";
+  rec.unresolved.assign(unresolved.begin(), unresolved.end());
+  for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].first + ": " + probs[i].second);
   if (!same) {
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
       if (ot[k] == rt[k]) continue;
-      Value fd = Value::object();
-      fd.set("index", Value::integer(i64(k)));
-      fd.set("orig", Value::str(oi[k].mnemonic + " " + oi[k].op_str()));
-      fd.set("rebuilt", Value::str(ri[k].mnemonic + " " + ri[k].op_str()));
-      rec.set("first_diff", fd);
+      rec.first_diff = Result::FirstDiff{i64(k), oi[k].mnemonic + " " + oi[k].op_str(), ri[k].mnemonic + " " + ri[k].op_str()};
       break;
     }
-    rec.set("diff", want_diff ? str_list(insn_diff(oi, ri, ot, rt, cmp.names)) : Value::array());
+    rec.has_diff = true;
+    if (want_diff) rec.diff = insn_diff(oi, ri, ot, rt, cmp.names);
   }
   if (show) {
     out.print("--- " + lk.qname + "  orig " + std::to_string(oend - ova) + "B | rebuilt " + std::to_string(rend - rva) + "B  " +
@@ -184,39 +171,75 @@ json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt&
   return rec;
 }
 
-std::string result_line(const Value& r, const std::string& module) {
-  auto field = [&](const char* k) -> std::string {
-    const Value* v = r.get(k);
-    if (!v) return "-";
-    return v->type == Value::Int ? std::to_string(v->i) : v->s;
-  };
-  const Value* cat = r.get("category");
-  std::string line = pad_right(r["status"].s, 9) + " " + r["orig"].s + " " + pad_left(field("osize"), 5) + "/" +
-                     pad_right(field("rsize"), 5) + " " + pad_right(cat && cat->type == Value::String ? cat->s : "", 12) + " " +
-                     r["name"].s;
-  auto items = [&](const char* k) -> const Value* {   // a non-empty array or object field
-    const Value* v = r.get(k);
-    return v && (!v->arr.empty() || !v->obj.empty()) ? v : nullptr;
-  };
-  const Value* fd = items("first_diff");
-  const Value* pr = items("problems");
-  if (fd) {
-    line += "\n            @" + std::to_string((*fd)["index"].i) + ": orig `" + (*fd)["orig"].s + "` | rebuilt `" + (*fd)["rebuilt"].s + "`";
-  } else if (pr) {
-    line += "\n            " + head_chars(pr->arr[0].s, 160);
+void write_result(std::string& out, const Result& r, int level) {
+  json::ObjectWriter o(out, level);
+  int in = o.value_level();
+  auto str = [&](const char* k, const std::string& v) { o.key(k); json::put_quoted(out, v); };
+  auto strs = [&](const char* k, const std::vector<std::string>& v) { o.key(k); json::put_strings(out, v, in); };
+  str("orig", r.orig);
+  str("name", r.name);
+  str("kind", r.kind);
+  str("src", r.src);
+  if (r.overloads.size() > 1) strs("overloads", r.overloads);
+  if (r.compared) {
+    o.key("osize");
+    out += std::to_string(r.osize);
+    o.key("rsize");
+    out += std::to_string(r.rsize);
   }
-  const Value* un = items("unresolved");
-  if (un) {
+  str("status", r.status);
+  if (r.linked) {
+    o.key("library");
+    out += '[';
+    for (int k = 0; k < 2; ++k) {
+      out += k ? ",\n" : "\n";
+      out.append(2 * size_t(in + 1), ' ');
+      if (k == 0) json::put_quoted(out, r.lib);
+      else if (r.symbol) json::put_quoted(out, *r.symbol);
+      else out += "null";
+    }
+    out += '\n';
+    out.append(2 * size_t(in), ' ');
+    out += ']';
+  }
+  if (r.compared) {
+    o.key("category");
+    if (r.category) json::put_quoted(out, *r.category);
+    else out += "null";
+    strs("unresolved", r.unresolved);
+    strs("problems", r.problems);
+    if (r.first_diff) {
+      o.key("first_diff");
+      json::ObjectWriter f(out, in);
+      f.key("index");
+      out += std::to_string(r.first_diff->index);
+      f.key("orig");
+      json::put_quoted(out, r.first_diff->orig);
+      f.key("rebuilt");
+      json::put_quoted(out, r.first_diff->rebuilt);
+      f.end();
+    }
+    if (r.has_diff) strs("diff", r.diff);
+  }
+  o.end();
+}
+
+std::string result_line(const Result& r, const std::string& module) {
+  std::string line = pad_right(r.status, 9) + " " + r.orig + " " + pad_left(r.compared ? std::to_string(r.osize) : "-", 5) + "/" +
+                     pad_right(r.compared ? std::to_string(r.rsize) : "-", 5) + " " + pad_right(r.category.value_or(""), 12) + " " +
+                     r.name;
+  if (r.first_diff) {
+    line += "\n            @" + std::to_string(r.first_diff->index) + ": orig `" + r.first_diff->orig + "` | rebuilt `" + r.first_diff->rebuilt + "`";
+  } else if (!r.problems.empty()) {
+    line += "\n            " + head_chars(r.problems[0], 160);
+  }
+  if (!r.unresolved.empty()) {
     std::vector<std::string> xs;
-    for (auto& x : un->arr) xs.push_back(head_chars(x.s, 90));
+    for (auto& x : r.unresolved) xs.push_back(head_chars(x, 90));
     line += "\n            unresolved: " + join(xs, ", ");
   }
-  const Value* ov = items("overloads");
-  if (ov && r["status"].s != "MATCH") {
-    std::vector<std::string> xs;
-    for (auto& x : ov->arr) xs.push_back(x.s);
-    line += "\n            overloads: " + head_chars(join(xs, " "), 200) + " (pick one: `// FUNCTION: " + module + " 0x... (<params>)`)";
-  }
+  if (r.overloads.size() > 1 && r.status != "MATCH")
+    line += "\n            overloads: " + head_chars(join(r.overloads, " "), 200) + " (pick one: `// FUNCTION: " + module + " 0x... (<params>)`)";
   return line;
 }
 
@@ -245,7 +268,7 @@ namespace {
 struct Totals {
   std::set<u64> matched;
   Value fields = Value::object();
-  std::vector<const Value*> libcode;
+  std::vector<const Result*> libcode;
 };
 
 // counts, most first (ties by name)
@@ -261,10 +284,10 @@ std::string count_list(const std::vector<std::pair<std::string, i64>>& v) {   //
   return join(parts, ", ");
 }
 
-Totals summarize(const std::vector<Value>& results, const Original& orig, Out& out, const std::string& module) {
+Totals summarize(const std::vector<Result>& results, const Original& orig, Out& out, const std::string& module) {
   Totals t;
   for (auto& r : results)
-    if (r["status"].s == "MATCH" && is_counted(r["kind"].s)) t.matched.insert(parse_hex(r["orig"].s));
+    if (r.status == "MATCH" && is_counted(r.kind)) t.matched.insert(r.va);
   std::pair<u64, u64> funclets{0, 0};
   if (auto it = orig.img.pogo.find(".text$x"); it != orig.img.pogo.end()) funclets = it->second;
   size_t universe = 0;
@@ -279,10 +302,9 @@ Totals summarize(const std::vector<Value>& results, const Original& orig, Out& o
   std::map<std::string, i64> cat_counts, lib_counts;
   size_t differ = 0;
   for (auto& r : results) {
-    if (r["status"].s == "MATCH") continue;
+    if (r.status == "MATCH") continue;
     ++differ;
-    const Value* c = r.get("category");
-    ++cat_counts[c && c->type == Value::String ? c->s : r["status"].s];
+    ++cat_counts[r.category ? *r.category : r.status];
   }
   auto cats = by_count(cat_counts);
   for (auto& [ea, l] : orig.linked) {
@@ -291,16 +313,15 @@ Totals summarize(const std::vector<Value>& results, const Original& orig, Out& o
   }
   size_t lib_checked = 0, lib_match = 0;
   for (auto& r : results) {
-    if (r["kind"].s == "LIBRARY") { ++lib_checked; lib_match += r["status"].s == "MATCH"; }
-    if (r["status"].s == "LIBCODE") t.libcode.push_back(&r);
+    if (r.kind == "LIBRARY") { ++lib_checked; lib_match += r.status == "MATCH"; }
+    if (r.status == "LIBCODE") t.libcode.push_back(&r);
   }
   for (auto* r : t.libcode) {
-    auto& lib = (*r)["library"];
-    std::string sym = lib.arr[1].is_null() ? "" : lib.arr[1].s;
-    out.print("ERROR " + (*r)["orig"].s + " (" + (*r)["src"].s + ") is linked library code from " + lib.arr[0].s +
+    std::string sym = r->symbol.value_or("");
+    out.print("ERROR " + r->orig + " (" + r->src + ") is linked library code from " + r->lib +
               (sym.empty() ? "" : ", `" + sym + "`") +
               ": remove the definition and reach it as the original does (through the library call or class that uses it); `// " +
-              (*r)["kind"].s + ":` is for decompiled code, `// LIBRARY: " + module + " " + (*r)["orig"].s + " <symbol>` for library code");
+              r->kind + ":` is for decompiled code, `// LIBRARY: " + module + " " + r->orig + " <symbol>` for library code");
   }
   out.print("\nannotated " + std::to_string(results.size()) + ": " + std::to_string(t.matched.size()) + " match, " +
             std::to_string(differ) + " do not" + (cats.empty() ? "" : " (" + count_list(cats) + ")"));
@@ -322,7 +343,7 @@ Totals summarize(const std::vector<Value>& results, const Original& orig, Out& o
   return t;
 }
 
-bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Value>& results, bool update, Out& out) {
+bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Result>& results, bool update, Out& out) {
   std::map<u64, std::string> prev;
   if (file_exists(path)) {
     for (auto& line : read_lines(path)) {
@@ -342,7 +363,7 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
       out.print("refusing --update while regressions exist");
     } else {
       std::map<u64, std::string> names;
-      for (auto& r : results) names[parse_hex(r["orig"].s)] = r["name"].s;
+      for (auto& r : results) names[r.va] = r.name;
       std::set<u64> all(matched);
       for (auto& [v, n] : prev) all.insert(v);
       std::string text = "# Functions that byte-match. Maintained by verifier --update; --check fails if one regresses.\n";
@@ -550,9 +571,19 @@ int run(int argc, char** argv) {
   std::vector<const Annotation*> order;
   for (auto& ann : anns) if (is_paired(ann.kind)) order.push_back(&ann);
   std::stable_sort(order.begin(), order.end(), [](auto* x, auto* y) { return x->va < y->va; });
-  std::vector<Value> results;
+  // the report's results are written as they are made: a result keeps what stdout and the summary need
+  std::vector<Result> results;
   results.reserve(order.size());
-  for (auto* ann : order) results.push_back(evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out));
+  std::string report;
+  if (a.has_json) report = "{\n  \"results\": ";
+  for (auto* ann : order) {
+    results.push_back(evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out));
+    if (!a.has_json) continue;
+    report += results.size() == 1 ? "[\n    " : ",\n    ";
+    write_result(report, results.back(), 2);
+    results.back().diff = {};
+  }
+  if (a.has_json) report += results.empty() ? "[]" : "\n  ]";
   ph.mark("evaluate");
   if (std::getenv("VERIFIER_TIMING")) {
     auto o = orig_cache.stats(), r = rebuilt_cache.stats();
@@ -572,16 +603,15 @@ int run(int argc, char** argv) {
   ph.mark("globals+summary");
 
   if (a.update) name_cache.save();
-  std::string report;
   if (a.has_json) {
-    Value doc = Value::object();
-    Value rs = Value::array();
-    rs.arr = std::move(results);
-    doc.set("results", std::move(rs));
-    for (auto& [k, v] : totals.fields.obj) doc.set(k, v);
-    report = json::dump(doc);
+    for (auto& [k, v] : totals.fields.obj) {
+      report += ",\n  ";
+      json::put_quoted(report, k);
+      report += ": ";
+      json::put_value(report, v, 1);
+    }
+    report += "\n}\n";
     std::ofstream(a.json, std::ios::binary) << report;
-    results = std::move(doc.obj[0].second.arr);
     ph.mark("json");
   }
   int rc = totals.libcode.empty() ? 0 : 1;

@@ -236,6 +236,39 @@ std::string dump(const Value& v) {
   return out;
 }
 
+void put_quoted(std::string& out, std::string_view s) { put_str(out, s); }
+void put_value(std::string& out, const Value& v, int level) { write(out, v, level); }
+
+void put_strings(std::string& out, const std::vector<std::string>& v, int level) {
+  if (v.empty()) { out += "[]"; return; }
+  out += '[';
+  for (size_t k = 0; k < v.size(); ++k) {
+    if (k) out += ',';
+    out += '\n';
+    out.append(2 * static_cast<size_t>(level + 1), ' ');
+    put_str(out, v[k]);
+  }
+  out += '\n';
+  out.append(2 * static_cast<size_t>(level), ' ');
+  out += ']';
+}
+
+void ObjectWriter::key(std::string_view k) {
+  out_ += first_ ? '{' : ',';
+  first_ = false;
+  out_ += '\n';
+  out_.append(2 * static_cast<size_t>(level_ + 1), ' ');
+  put_str(out_, k);
+  out_ += ": ";
+}
+
+void ObjectWriter::end() {
+  if (first_) { out_ += "{}"; return; }
+  out_ += '\n';
+  out_.append(2 * static_cast<size_t>(level_), ' ');
+  out_ += '}';
+}
+
 std::string quote(std::string_view s) {
   std::string out;
   put_str(out, s);
