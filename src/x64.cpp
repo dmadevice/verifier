@@ -79,17 +79,17 @@ u32 written_gprs(const FdInstr& fi) {
   return w;
 }
 
-u8 branch_bits(const FdInstr& fi) {   // GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE as bits 0..2
+u8 branch_bits(const FdInstr& fi) {   // the Group bits
   u8 g = 0;
   switch (FD_TYPE(&fi)) {
-    case FDI_CALL: case FDI_CALLF: g |= 2; break;
+    case FDI_CALL: case FDI_CALLF: g |= GRP_CALL; break;
     case FDI_JMP: case FDI_JMPF: case FDI_JO: case FDI_JNO: case FDI_JC: case FDI_JNC: case FDI_JZ: case FDI_JNZ:
     case FDI_JBE: case FDI_JA: case FDI_JS: case FDI_JNS: case FDI_JP: case FDI_JNP: case FDI_JL: case FDI_JGE:
     case FDI_JLE: case FDI_JG: case FDI_JCXZ: case FDI_LOOP: case FDI_LOOPZ: case FDI_LOOPNZ:
-      g |= 1; break;
+      g |= GRP_JUMP; break;
     default: break;
   }
-  if (FD_OP_TYPE(&fi, 0) == FD_OT_OFF) g |= 4;
+  if (FD_OP_TYPE(&fi, 0) == FD_OT_OFF) g |= GRP_BRANCH_RELATIVE;
   return g;
 }
 
@@ -254,14 +254,22 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
   Layout l = layout(p, size_t(len), has_mem, 1u << addrlg);
   r.disp_offset = l.disp_offset;
   r.disp_size = l.disp_size;
-  if (r.gmask & 4) {   // the branch offset ends the instruction
+  if (r.group(GRP_BRANCH_RELATIVE)) {   // the branch offset ends the instruction
     r.imm_offset = l.opcode_end;
     r.imm_size = u8(len - l.opcode_end);
   }
   return true;
 }
 
-u8 group_bit(u8 g) { return g == GRP_JUMP ? 1 : g == GRP_CALL ? 2 : g == GRP_BRANCH_RELATIVE ? 4 : 0; }
+// fn(ins, offset) for each instruction decoded linearly from `code` at address `start`, until an undecodable byte
+// or fn returns false
+template <class F>
+void decode_each(std::string_view code, u64 start, F&& fn) {
+  const u8* p = reinterpret_cast<const u8*>(code.data());
+  size_t off = 0;
+  Insn ins;
+  while (off < code.size() && decode_one(p + off, code.size() - off, start + off, ins) && fn(ins, off)) off += ins.size;
+}
 
 }  // namespace
 
@@ -283,9 +291,6 @@ std::vector<std::unique_ptr<Mnem::Entry>>& Mnem::entries() {
 Mnem Mnem::from_id(u16 id) { return Mnem(entries()[id].get()); }
 
 static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96, "instructions are decoded in bulk: keep them flat");
-
-bool Insn::group(u8 g) const { return (gmask & group_bit(g)) != 0; }
-bool Insn::branches() const { return (gmask & 7) != 0; }
 
 std::string Insn::op_str() const {
   auto size_ptr = [](int n) -> std::string {
@@ -387,13 +392,7 @@ bool Field::operator<(const Field& o) const {
 
 std::vector<Insn> decode_linear(std::string_view code, u64 start) {
   std::vector<Insn> out;
-  const u8* p = reinterpret_cast<const u8*>(code.data());
-  size_t off = 0;
-  Insn ins;
-  while (off < code.size() && decode_one(p + off, code.size() - off, start + off, ins)) {
-    off += ins.size;
-    out.push_back(std::move(ins));
-  }
+  decode_each(code, start, [&](const Insn& ins, size_t) { out.push_back(ins); return true; });
   return out;
 }
 
@@ -407,26 +406,19 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   static std::vector<Insn> ins_;   // the decoded instructions, kept only while the lean form is made
   std::vector<Insn>& all = ins_;
   all.clear();
-  {
-    const u8* p = reinterpret_cast<const u8*>(code.data());
-    size_t off = 0;
-    Insn ins;
-    while (off < code.size() && decode_one(p + off, code.size() - off, s + off, ins)) {
-      i64 k = i64(off);
-      if (k >= cut) break;
-      off += ins.size;
-      for (auto& op : ins.ops) {
-        if (op.type == OP_MEM && op.base() != rip && op.index && frva <= op.disp() &&
-            op.disp() < erva + i64(TABLE_SLACK)) {
-          i64 t = op.disp() - frva;
-          auto it = tables.find(t);
-          tables[t] = std::max(it == tables.end() ? 0 : it->second, int(op.size));
-          if (t < cut) cut = std::max(t, i64(ins.address + ins.size - s));
-        }
+  decode_each(code, s, [&](const Insn& ins, size_t off) {
+    if (i64(off) >= cut) return false;
+    for (auto& op : ins.ops) {
+      if (op.type == OP_MEM && op.base() != rip && op.index && frva <= op.disp() && op.disp() < erva + i64(TABLE_SLACK)) {
+        i64 t = op.disp() - frva;
+        int& size = tables[t];
+        size = std::max(size, int(op.size));
+        if (t < cut) cut = std::max(t, i64(ins.address + ins.size - s));
       }
-      all.push_back(ins);
     }
-  }
+    all.push_back(ins);
+    return true;
+  });
   // alignment nops after the last ret/jmp (before a switch table) are padding, not code
   while (all.size() > 1 && all.back().type == FDI_NOP &&
          (all[all.size() - 2].type == FDI_RET || all[all.size() - 2].type == FDI_JMP) &&
@@ -708,7 +700,7 @@ std::optional<u64> leaf_extent(const Image& img, u64 va) {
     for (auto& ins : decode_linear(std::string_view(window).substr(at, endp - at), va + at)) {
       nxt = ins.address + ins.size;
       for (auto& op : ins.ops)
-        if (op.type == OP_IMM && (ins.group(GRP_JUMP) || ins.group(GRP_CALL) || ins.group(GRP_BRANCH_RELATIVE)) &&
+        if (op.type == OP_IMM && ins.branches() &&
             i64(va) <= op.imm() && op.imm() < i64(va + MAX_DATA_COMPARE))
           reach = std::max(reach, u64(op.imm()));
       if ((ins.type == FDI_RET || ins.type == FDI_RETF || ins.type == FDI_JMP || ins.type == FDI_INT3) && reach < nxt)

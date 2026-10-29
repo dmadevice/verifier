@@ -50,7 +50,6 @@ class Pairing {
   // votes_fn: the local static votes to decide from instead of computing every voter's (mutation probes)
   Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache,
                      const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn = nullptr);
-  std::map<u64, Votes> local_votes;   // the votes prebind_locals decided from
   void use(std::unique_ptr<Comparer> c);   // fixtures: a Comparer with hooks of their own
   Key resolve_symbol(u64 t) const;
   Key resolve(u64 t) const;

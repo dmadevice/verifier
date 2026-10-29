@@ -22,7 +22,6 @@ Image Image::load(const std::string& path) {
   if (rd16(data, oh) != 0x20b) throw std::runtime_error(path + ": not PE32+");
   u64 base = rd64(data, oh + 24);
   u32 sect_align = rd32(data, oh + 32), file_align = rd32(data, oh + 36);
-  u32 size_headers = rd32(data, oh + 60);
   size_t dd = oh + 112;
   auto dir = [&](int k) { return std::pair<u32, u32>(rd32(data, dd + 8 * k), rd32(data, dd + 8 * k + 4)); };
   size_t sec_tab = oh + opt_size;
@@ -43,7 +42,6 @@ Image Image::load(const std::string& path) {
   std::optional<u32> lowest;
   for (auto& s : secs) if (s.rawptr > 0) { u32 a = adj_ptr(s.rawptr); if (!lowest || a < *lowest) lowest = a; }
   std::string mapped = (!lowest || *lowest < header_end) ? data.substr(0, header_end) : data.substr(0, *lowest);
-  (void)size_headers;
   for (auto& s : secs) {
     if (s.vsize == 0 && s.rawsize == 0) continue;
     u32 srd = s.rawsize, prd = adj_ptr(s.rawptr), vadj = adj_va(s.va);
@@ -158,19 +156,19 @@ std::string_view Image::bytes(u64 va, i64 n) const {
   return std::string_view(img).substr(size_t(r), size_t(n));
 }
 
-u32 Image::u32_at(u64 va) const {
-  char b[4] = {0, 0, 0, 0};
-  auto s = bytes(va, 4);
-  std::memcpy(b, s.data(), s.size());
-  return le32(b);
+namespace {
+template <class T>
+T read_at(const Image& img, u64 va) {   // little-endian, zero-filled past the end of the image
+  T v = 0;
+  auto s = img.bytes(va, sizeof(T));
+  std::memcpy(&v, s.data(), s.size());
+  return v;
 }
+}  // namespace
+
+u32 Image::u32_at(u64 va) const { return read_at<u32>(*this, va); }
 i32 Image::i32_at(u64 va) const { return static_cast<i32>(u32_at(va)); }
-u64 Image::u64_at(u64 va) const {
-  char b[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-  auto s = bytes(va, 8);
-  std::memcpy(b, s.data(), s.size());
-  return le64(b);
-}
+u64 Image::u64_at(u64 va) const { return read_at<u64>(*this, va); }
 
 std::optional<u32> Image::flags(u64 va) const {
   for (auto& s : sections) if (s.lo <= va && va < s.hi) return s.ch;

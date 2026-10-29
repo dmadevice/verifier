@@ -151,7 +151,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   if (!same) {
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
       if (ot[k] == rt[k]) continue;
-      rec.first_diff = Result::FirstDiff{i64(k), oi[k].mnemonic + " " + oi[k].op_str(), ri[k].mnemonic + " " + ri[k].op_str()};
+      rec.first_diff = Result::FirstDiff{i64(k), oi[k].text(), ri[k].text()};
       break;
     }
     rec.has_diff = true;
@@ -162,8 +162,8 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
               (probs.empty() ? "MATCH" : "DIFF"));
     for (auto& [c, d] : probs) out.print("  problem " + c + ": " + d);
     for (size_t k = 0; k < std::max(oi.size(), ri.size()); ++k) {
-      std::string x = k < oi.size() ? oi[k].mnemonic + " " + oi[k].op_str() : "";
-      std::string y = k < ri.size() ? ri[k].mnemonic + " " + ri[k].op_str() : "";
+      std::string x = k < oi.size() ? oi[k].text() : "";
+      std::string y = k < ri.size() ? ri[k].text() : "";
       bool eq = k < ot.size() && k < rt.size() && ot[k] == rt[k];
       out.print(std::string(eq ? " " : "*") + " " + pad_right(x, 48) + " | " + y);
     }
@@ -176,6 +176,10 @@ void write_result(std::string& out, const Result& r, int level) {
   int in = o.value_level();
   auto str = [&](const char* k, const std::string& v) { o.key(k); json::put_quoted(out, v); };
   auto strs = [&](const char* k, const std::vector<std::string>& v) { o.key(k); json::put_strings(out, v, in); };
+  auto str_or_null = [&](const std::optional<std::string>& v) {
+    if (v) json::put_quoted(out, *v);
+    else out += "null";
+  };
   str("orig", r.orig);
   str("name", r.name);
   str("kind", r.kind);
@@ -191,21 +195,18 @@ void write_result(std::string& out, const Result& r, int level) {
   if (r.linked) {
     o.key("library");
     out += '[';
-    for (int k = 0; k < 2; ++k) {
-      out += k ? ",\n" : "\n";
-      out.append(2 * size_t(in + 1), ' ');
-      if (k == 0) json::put_quoted(out, r.lib);
-      else if (r.symbol) json::put_quoted(out, *r.symbol);
-      else out += "null";
-    }
-    out += '\n';
-    out.append(2 * size_t(in), ' ');
+    auto indent = [&](int level) { out += '\n'; out.append(2 * size_t(level), ' '); };
+    indent(in + 1);
+    json::put_quoted(out, r.lib);
+    out += ',';
+    indent(in + 1);
+    str_or_null(r.symbol);
+    indent(in);
     out += ']';
   }
   if (r.compared) {
     o.key("category");
-    if (r.category) json::put_quoted(out, *r.category);
-    else out += "null";
+    str_or_null(r.category);
     strs("unresolved", r.unresolved);
     strs("problems", r.problems);
     if (r.first_diff) {
@@ -347,8 +348,8 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
   std::map<u64, std::string> prev;
   if (file_exists(path)) {
     for (auto& line : read_lines(path)) {
-      if (strip(line).empty() || starts_with(line, "#")) continue;
       std::string s = strip(line);
+      if (s.empty() || starts_with(line, "#")) continue;
       size_t sp = s.find_first_of(" \t\r\n\v\f");
       u64 va = parse_hex(s.substr(0, sp));
       prev[va] = sp == std::string::npos ? "" : strip(s.substr(sp));
@@ -408,9 +409,9 @@ Args parse_args(int argc, char** argv) {
     if (s == "--config") { a.config = value("--config"); }
     else if (s == "--rebuilt") { a.rebuilt = value("--rebuilt"); have_rebuilt = true; }
     else if (s == "--map") { a.map = value("--map"); have_map = true; }
-    else if (s == "--matched") { a.matched = value("--matched"); a.has_matched = true; }
-    else if (s == "--json") { a.json = value("--json"); a.has_json = true; }
-    else if (s == "--show") { a.show = value("--show"); a.has_show = true; }
+    else if (s == "--matched") a.matched = value("--matched");
+    else if (s == "--json") a.json = value("--json");
+    else if (s == "--show") a.show = value("--show");
     else if (s == "--check") a.check = true;
     else if (s == "--update") a.update = true;
     else if (s == "--src") {
@@ -474,7 +475,7 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
   add(verifier);
   add(p.root);
   for (auto& s : args) add(s);
-  std::vector<std::string> files{a.rebuilt, a.map, a.has_matched ? a.matched : "", p.file, p.original, p.functions, p.vtables,
+  std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.file, p.original, p.functions, p.vtables,
                                  p.data_items, p.data_names, p.library_matches, p.library_functions, p.symbols, p.undname};
   for (auto& top : a.src) for (auto& f : walk_files(top)) files.push_back(f);
   for (auto& f : files) {
@@ -512,15 +513,8 @@ bool load_last(const std::string& path, const std::string& key, std::string& out
 }
 
 void save_last(const std::string& path, const std::string& key, const std::string& out, const std::string& report, int rc) {
-  std::string tmp = path + ".tmp";
-  {
-    std::ofstream f(tmp, std::ios::binary);
-    f << "verifier-last 1\n" << key << "\n" << rc << "\n" << out.size() << "\n" << out << report.size() << "\n" << report;
-    if (!f) return;
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) std::filesystem::remove(tmp, ec);
+  write_file_atomic(path, "verifier-last 1\n" + key + "\n" + std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
+                              std::to_string(report.size()) + "\n" + report);
 }
 
 }  // namespace
@@ -529,7 +523,7 @@ int run(int argc, char** argv) {
   Args a = parse_args(argc, argv);
   Config p = Config::load(a.config);
   std::string last;
-  if (a.has_json && a.check && !(a.update || a.has_show)) last = path_join(dirname(abspath(a.json)), LAST_RUN);
+  if (a.json && a.check && !(a.update || a.show)) last = path_join(dirname(abspath(*a.json)), LAST_RUN);
   std::string key;
   if (!last.empty()) {
     std::string exe = self_exe();
@@ -539,7 +533,7 @@ int run(int argc, char** argv) {
     if (load_last(last, key, out, report, rc)) {
       std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
       std::fwrite(out.data(), 1, out.size(), stdout);
-      std::ofstream(a.json, std::ios::binary) << report;
+      std::ofstream(*a.json, std::ios::binary) << report;
       std::fflush(stdout);
       return rc;
     }
@@ -567,7 +561,7 @@ int run(int argc, char** argv) {
   ph.mark("prebind votes");
 
   std::optional<u64> show;
-  if (a.has_show) show = parse_hex(a.show);
+  if (a.show) show = parse_hex(*a.show);
   std::vector<const Annotation*> order;
   for (auto& ann : anns) if (is_paired(ann.kind)) order.push_back(&ann);
   std::stable_sort(order.begin(), order.end(), [](auto* x, auto* y) { return x->va < y->va; });
@@ -575,15 +569,15 @@ int run(int argc, char** argv) {
   std::vector<Result> results;
   results.reserve(order.size());
   std::string report;
-  if (a.has_json) report = "{\n  \"results\": ";
+  if (a.json) report = "{\n  \"results\": ";
   for (auto* ann : order) {
     results.push_back(evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out));
-    if (!a.has_json) continue;
+    if (!a.json) continue;
     report += results.size() == 1 ? "[\n    " : ",\n    ";
     write_result(report, results.back(), 2);
     results.back().diff = {};
   }
-  if (a.has_json) report += results.empty() ? "[]" : "\n  ]";
+  if (a.json) report += results.empty() ? "[]" : "\n  ]";
   ph.mark("evaluate");
   if (std::getenv("VERIFIER_TIMING")) {
     auto o = orig_cache.stats(), r = rebuilt_cache.stats();
@@ -603,7 +597,7 @@ int run(int argc, char** argv) {
   ph.mark("globals+summary");
 
   if (a.update) name_cache.save();
-  if (a.has_json) {
+  if (a.json) {
     for (auto& [k, v] : totals.fields.obj) {
       report += ",\n  ";
       json::put_quoted(report, k);
@@ -611,11 +605,11 @@ int run(int argc, char** argv) {
       json::put_value(report, v, 1);
     }
     report += "\n}\n";
-    std::ofstream(a.json, std::ios::binary) << report;
+    std::ofstream(*a.json, std::ios::binary) << report;
     ph.mark("json");
   }
   int rc = totals.libcode.empty() ? 0 : 1;
-  if (a.has_matched && regression_gate(a.matched, totals.matched, results, a.update, out)) rc = 1;
+  if (a.matched && regression_gate(*a.matched, totals.matched, results, a.update, out)) rc = 1;
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
   if (!last.empty()) save_last(last, key, out.text(), report, rc);

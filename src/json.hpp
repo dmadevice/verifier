@@ -40,7 +40,6 @@ struct Value {
 
 Value parse(std::string_view text);   // throws std::runtime_error
 std::string dump(const Value& v);         // the document, indented, with a final newline
-std::string quote(std::string_view s);    // a JSON string literal
 
 // The writer's pieces, for a document written as it is made (the text dump() gives for the same values)
 void put_quoted(std::string& out, std::string_view s);                             // a string

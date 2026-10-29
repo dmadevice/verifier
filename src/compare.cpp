@@ -20,23 +20,22 @@ std::string_view keep_text(std::string_view s) {
 
 bool Journal::speculate(const std::function<bool()>& attempt) {
   size_t mark = log.size();
+  auto undo = [&] {
+    for (size_t i = log.size(); i > mark; --i) log[i - 1]();
+    log.resize(mark);
+  };
   ++active;
   bool ok = false;
   try {
     ok = attempt();
   } catch (...) {
     --active;
-    for (size_t i = log.size(); i > mark; --i) log[i - 1]();
-    log.resize(mark);
+    undo();
     throw;
   }
   --active;
-  if (!ok) {
-    for (size_t i = log.size(); i > mark; --i) log[i - 1]();
-    log.resize(mark);
-  } else if (!active) {
-    log.resize(mark);   // held by no assumption any more
-  }
+  if (!ok) undo();
+  else if (!active) log.resize(mark);   // held by no assumption any more
   return ok;
 }
 
@@ -219,6 +218,11 @@ bool Comparer::refers_to(u64 f, u64 lo, u64 n) {
   return it != refs.end() && *it < lo + n;
 }
 
+bool Comparer::is_alternate(u64 o_t, u64 r_t) {
+  auto alts = alternates(r_t);
+  return std::find(alts.begin(), alts.end(), o_t) != alts.end();
+}
+
 bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
   if (auto p = vt_r.find(r_vt); p && *p == o_vt) return true;
   if (vt_r.contains(r_vt) || vt_o.contains(o_vt) || !vtables.count(o_vt) || !symbol_start(r_vt)) return false;
@@ -240,10 +244,7 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
     return Problem{"reference", "import " + imp_str(a) + " vs " + imp_str(b)};
   }
   Key key = resolve(r_t);
-  if (!key.is_va(o_t)) {
-    auto alts = alternates(r_t);
-    if (std::find(alts.begin(), alts.end(), o_t) != alts.end()) key = Key::of_va(o_t);
-  }
+  if (!key.is_va(o_t) && is_alternate(o_t, r_t)) key = Key::of_va(o_t);
   if (key.kind == Key::UNRESOLVED || (!key.is_va(o_t) && local_base(r_t).has_value())) {
     if (auto b = bind_local(o_t, r_t)) key = *b;
   }
@@ -413,12 +414,10 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
     u64 s = slots[i];
     u64 r_s = R->u64_at(r_vt + 8 * i);
     Key got = resolve(r_s);
-    if (got.is_va(s)) continue;
-    auto alts = alternates(r_s);
-    if (std::find(alts.begin(), alts.end(), s) != alts.end()) continue;
+    if (got.is_va(s) || is_alternate(s, r_s)) continue;
     if (got.kind == Key::UNRESOLVED && O->executable(s) && infer(s, r_s)) continue;
     res = Problem{"vtable", "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " +
-                                (got.kind != Key::VA ? std::string(got.name) : hex(got.va))};
+                                got.text()};
     break;
   }
   if (!res && !same_rtti(rtti(*O, O->u64_at(o_vt - 8)), rtti(*R, R->u64_at(r_vt - 8))))
@@ -427,8 +426,8 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
   return res;
 }
 
-Comparer::CodeResult Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
-  CodeResult cr;
+FnMemo Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
+  FnMemo cr;
   cr.oc = orig_code(ostart, oend);
   cr.rc = rebuilt_code(rstart, rend);
   const Code &oc = *cr.oc, &rc = *cr.rc;
@@ -446,8 +445,7 @@ Comparer::CodeResult Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) 
     const Lean &a = oc.insns[k], &b = rc.insns[k];
     auto fa = oc.fields(a), fb = rc.fields(b);
     auto enc = [&] {
-      Insn x = oc.insn(a), y = rc.insn(b);
-      return "@" + std::to_string(k) + ": `" + x.mnemonic + " " + x.op_str() + "` | `" + y.mnemonic + " " + y.op_str() + "`";
+      return "@" + std::to_string(k) + ": `" + oc.insn(a).text() + "` | `" + rc.insn(b).text() + "`";
     };
     if (!same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) { probs.push_back({"encoding", enc()}); continue; }
     for (size_t z = 0; z < fa.size(); ++z) {
@@ -491,12 +489,19 @@ Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart,
   }
   if (!o.handler) return {};
   Key got = resolve(*r.handler);
-  if (!got.is_va(*o.handler)) return {{"unwind", "handler " + hex(*o.handler) + " vs " + (got.kind == Key::VA ? hex(got.va) : std::string(got.name))}};
+  if (!got.is_va(*o.handler)) return {{"unwind", "handler " + hex(*o.handler) + " vs " + got.text()}};
   auto it = names.find(*o.handler);
   return handler_data(it == names.end() ? "" : it->second, *o.hdata, *r.hdata, ostart, oend, rstart, rend, depth);
 }
 
 // -- EH ----------------------------------------------------------------------------------------------------------
+
+namespace {
+std::optional<u64> extent_or_leaf(const Image& img, u64 va) {   // .pdata's extent, else a leaf function's
+  auto e = img.extent(va);
+  return e ? e : leaf_extent(img, va);
+}
+}  // namespace
 
 class EHContext {
  public:
@@ -522,10 +527,7 @@ class EHContext {
       if (o - ostart != r - rstart) probs.push_back({"eh", "in-function handler offset differs"});
       return;
     }
-    auto oe = O->extent(o);
-    if (!oe) oe = leaf_extent(*O, o);
-    auto re = R->extent(r);
-    if (!re) re = leaf_extent(*R, r);
+    auto oe = extent_or_leaf(*O, o), re = extent_or_leaf(*R, r);
     if (O->pdata.count(o) != R->pdata.count(r)) { probs.push_back({"eh", "funclet " + hex(o) + ": .pdata presence differs"}); return; }
     if (!oe || !re) { probs.push_back({"eh", "funclet " + hex(o) + " has no .pdata"}); return; }
     if (depth >= MAX_FUNCLET_DEPTH) { probs.push_back({"eh", "funclet nesting too deep"}); return; }
@@ -542,8 +544,7 @@ class EHContext {
     if (start <= va && va < end) return {'p', 0, i64(va - start)};
     for (size_t k = 0; k < funs.size(); ++k) {
       u64 f = funs[k];
-      auto fe = img.extent(f);
-      if (!fe) fe = leaf_extent(img, f);
+      auto fe = extent_or_leaf(img, f);
       if (fe && *fe && f <= va && va < *fe) return {'f', i64(k), i64(va - f)};
     }
     return {'?', 0, 0};
@@ -656,10 +657,10 @@ Problems Comparer::function(u64 ostart, u64 oend, u64 rstart, u64 rend, int dept
   auto k = std::make_pair(ostart, rstart);
   if (auto m = memo_fn.find(k)) return m->probs;
   memo_fn.set(k, FnMemo{});
-  CodeResult cr = code(ostart, oend, rstart, rend);
-  Problems probs = cr.probs;
-  if (probs.empty()) probs = unwinds(ostart, oend, rstart, rend, depth);
-  memo_fn.set(k, FnMemo{probs, cr.oc, cr.rc});
+  FnMemo m = code(ostart, oend, rstart, rend);
+  if (m.probs.empty()) m.probs = unwinds(ostart, oend, rstart, rend, depth);
+  Problems probs = m.probs;
+  memo_fn.set(k, std::move(m));
   return probs;
 }
 

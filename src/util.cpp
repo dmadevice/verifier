@@ -73,19 +73,23 @@ bool file_exists(const std::string& path) {
   return std::filesystem::is_regular_file(path, ec);
 }
 
-std::vector<std::string> read_lines(const std::string& path) {
-  // lines end at \n, \r\n or \r
-  std::string data = read_file(path);
-  std::vector<std::string> out;
-  size_t i = 0, n = data.size();
-  while (i < n) {
-    size_t j = i;
-    while (j < n && data[j] != '\n' && data[j] != '\r') ++j;
-    out.emplace_back(data, i, j - i);
-    if (j < n && data[j] == '\r' && j + 1 < n && data[j + 1] == '\n') j += 2;
-    else if (j < n) j += 1;
-    i = j;
+bool write_file_atomic(const std::string& path, std::string_view data) {
+  std::string tmp = path + ".tmp";
+  {
+    std::ofstream f(tmp, std::ios::binary);
+    if (!f) return false;
+    f.write(data.data(), std::streamsize(data.size()));
+    if (!f) return false;
   }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) std::filesystem::remove(tmp, ec);
+  return !ec;
+}
+
+std::vector<std::string> read_lines(const std::string& path) {
+  std::vector<std::string> out;
+  for_each_line(read_file(path), [&](std::string_view l) { out.emplace_back(l); });
   return out;
 }
 
@@ -109,7 +113,7 @@ u64 parse_hex(std::string_view s) {
   if (starts_with(s, "0x") || starts_with(s, "0X")) s.remove_prefix(2);
   u64 v = 0;
   for (char c : s) {
-    int d = (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+    int d = hex_digit(c);
     if (d < 0) throw std::runtime_error("bad hex: " + std::string(s));
     v = v * 16 + d;
   }
@@ -124,6 +128,12 @@ std::string strip(std::string_view s) {
   while (a < b && is_space(s[a])) ++a;
   while (b > a && is_space(s[b - 1])) --b;
   return std::string(s.substr(a, b - a));
+}
+
+std::string rstrip(std::string_view s) {
+  size_t b = s.size();
+  while (b > 0 && is_space(s[b - 1])) --b;
+  return std::string(s.substr(0, b));
 }
 
 std::string rstrip_char(std::string_view s, char c) {

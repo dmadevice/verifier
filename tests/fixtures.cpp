@@ -594,7 +594,6 @@ Problems replay_key() {
   a.rebuilt = files["x.dll"];
   a.map = files["x.map"];
   a.matched = files["matched.txt"];
-  a.has_matched = true;
   a.src = {(d / "src").string()};
   Config p;
   std::vector<std::string> args;

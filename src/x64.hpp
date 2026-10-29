@@ -2,14 +2,12 @@
 // region with its switch tables.
 #pragma once
 #include <map>
-#include <ostream>
 #include <string_view>
 #include <unordered_map>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "pe.hpp"
@@ -18,7 +16,7 @@ namespace verifier {
 
 constexpr u64 TABLE_SLACK = 0x1000;
 enum OpType : u8 { OP_INVALID = 0, OP_REG = 1, OP_IMM = 2, OP_MEM = 3 };
-enum Group : u8 { GRP_JUMP = 1, GRP_CALL = 2, GRP_BRANCH_RELATIVE = 7 };
+enum Group : u8 { GRP_JUMP = 1, GRP_CALL = 2, GRP_BRANCH_RELATIVE = 4 };   // bits of Insn::gmask
 
 // An operand in 16 bytes. OP_MEM: [base + index*scale + disp], with a segment override if `segment`.
 struct Operand {
@@ -75,24 +73,20 @@ class Mnem {
   }
   const Entry* e_;
 };
-inline std::string operator+(const Mnem& m, const char* s) { return m.str() + s; }
-inline std::string operator+(const Mnem& m, const std::string& s) { return m.str() + s; }
-inline std::string operator+(const std::string& s, const Mnem& m) { return s + m.str(); }
-inline std::string operator+(std::string&& s, const Mnem& m) { return std::move(s) + m.str(); }
-inline std::ostream& operator<<(std::ostream& o, const Mnem& m) { return o << m.str(); }
 
 struct Insn {
   u64 address = 0;
   u8 size = 0;
-  u8 gmask = 0;               // GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE as bits 0..2
+  u8 gmask = 0;               // the Group bits
   u8 imm_offset = 0, imm_size = 0, disp_offset = 0, disp_size = 0;
   u16 wmask = 0;              // 64-bit GPRs written (gpr_index bits)
   u16 type = 0;               // the decoder's instruction type
   Mnem mnemonic;
   OpVec ops;
   std::string op_str() const; // the operands as text (only reports need it)
-  bool group(u8 g) const;
-  bool branches() const;      // in GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE
+  std::string text() const { return mnemonic.str() + " " + op_str(); }
+  bool group(Group g) const { return (gmask & g) != 0; }
+  bool branches() const { return gmask != 0; }   // in any group
 };
 
 const char* reg_name(u16 reg);       // a register's name ("" for none)
@@ -104,6 +98,7 @@ u16 reg_rip();
 // An address field of an instruction: (offset in instruction, size, kind, value, access size)
 enum FieldKind : u8 { F_ABS = 0, F_EXT = 1, F_IMG = 2, F_RIP = 3, F_TBL = 4 };   // ordered as the names sort
 const char* field_kind_name(FieldKind k);
+inline bool is_address(FieldKind k) { return k == F_RIP || k == F_IMG || k == F_ABS; }   // a field holding a VA
 struct Field {
   i64 value;     // target VA (function-relative table offset for F_TBL)
   int access;

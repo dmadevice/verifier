@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -25,6 +23,15 @@ namespace {
 bool is_hex_lower(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }
 bool op_char(char c) { return std::string_view("<>=!+-*/%^&|~[],").find(c) != std::string_view::npos; }
 bool alpha_(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
+size_t skip_space(std::string_view s, size_t i) { while (i < s.size() && is_space(s[i])) ++i; return i; }
+size_t skip_word(std::string_view s, size_t i) { while (i < s.size() && is_word(s[i])) ++i; return i; }
+size_t skip_digits(std::string_view s, size_t i) { while (i < s.size() && is_digit(s[i])) ++i; return i; }
+bool at(std::string_view s, size_t i, std::string_view w) { return s.size() >= i && s.substr(i, w.size()) == w; }
+// `__\w+` at i: its end, or npos
+size_t underscore_word(std::string_view s, size_t i) {
+  if (!at(s, i, "__") || i + 2 >= s.size() || !is_word(s[i + 2])) return std::string_view::npos;
+  return skip_word(s, i + 2);
+}
 
 }  // namespace
 
@@ -34,7 +41,7 @@ std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
     std::string_view p[4];   // the first four whitespace-separated fields
     size_t n = 0, i = 0;
     while (n < 4) {
-      while (i < line.size() && is_space(line[i])) ++i;
+      i = skip_space(line, i);
       if (i == line.size()) break;
       size_t j = i;
       while (j < line.size() && !is_space(line[j])) ++j;
@@ -56,8 +63,7 @@ std::string norm_name(const std::string& in) {
   // drop `__ptr64` (and the whitespace before it)
   std::string s;
   for (size_t i = 0; i < in.size();) {
-    size_t j = i;
-    while (j < in.size() && is_space(in[j])) ++j;
+    size_t j = skip_space(in, i);
     if (in.compare(j, 7, "__ptr64") == 0 && (j + 7 == in.size() || !is_word(in[j + 7]))) { i = j + 7; continue; }
     s += in[i++];
   }
@@ -77,13 +83,10 @@ std::string norm_name(const std::string& in) {
   // no whitespace around < > , * &, nor at either end
   std::string u;
   for (size_t i = 0; i < t.size();) {
-    size_t j = i;
-    while (j < t.size() && is_space(t[j])) ++j;
+    size_t j = skip_space(t, i);
     if (j < t.size() && std::string_view("<>,*&").find(t[j]) != std::string_view::npos) {
       u += t[j];
-      j += 1;
-      while (j < t.size() && is_space(t[j])) ++j;
-      i = j;
+      i = skip_space(t, j + 1);
       continue;
     }
     u += t[i++];
@@ -97,8 +100,7 @@ std::string norm_params(const std::string& p) {
   std::string q;
   for (size_t i = 0; i < s.size();) {
     if (is_word(s[i]) && (i == 0 || !is_word(s[i - 1]))) {
-      size_t j = i;
-      while (j < s.size() && is_word(s[j])) ++j;
+      size_t j = skip_word(s, i);
       if (s.compare(j, 2, "::") == 0) { i = j + 2; continue; }
       q.append(s, i, j - i);
       i = j;
@@ -109,7 +111,7 @@ std::string norm_params(const std::string& p) {
   // whitespace runs as one space, none inside the parentheses' ends
   std::string w;
   for (size_t i = 0; i < q.size();) {
-    if (is_space(q[i])) { while (i < q.size() && is_space(q[i])) ++i; w += ' '; continue; }
+    if (is_space(q[i])) { i = skip_space(q, i); w += ' '; continue; }
     w += q[i++];
   }
   w = replace_all(replace_all(w, "( ", "("), " )", ")");
@@ -160,8 +162,7 @@ std::string last_token(const std::string& head) {
     else if (c == '\'') ++quoted;
     else if (c == '`') --quoted;
     else if (is_space(c) && depth <= 0 && quoted <= 0) {
-      std::string before = head.substr(0, size_t(i));
-      while (!before.empty() && is_space(before.back())) before.pop_back();
+      std::string before = rstrip(std::string_view(head).substr(0, size_t(i)));
       if (before == "operator" || ends_with(before, " operator") || ends_with(before, "::operator"))
         return last_token(before) + " " + head.substr(size_t(i) + 1);
       return head.substr(size_t(i) + 1);
@@ -172,18 +173,6 @@ std::string last_token(const std::string& head) {
 
 // ---- scanners: each gives what the regular expression in its comment gives under std::regex (ECMAScript:
 // \s is [ \t\n\v\f\r], \w is [A-Za-z0-9_], `.` is any character but \n and \r) ----
-
-namespace {
-bool is_digit(char c) { return c >= '0' && c <= '9'; }
-size_t skip_space(std::string_view s, size_t i) { while (i < s.size() && is_space(s[i])) ++i; return i; }
-size_t skip_word(std::string_view s, size_t i) { while (i < s.size() && is_word(s[i])) ++i; return i; }
-bool at(std::string_view s, size_t i, std::string_view w) { return s.size() >= i && s.substr(i, w.size()) == w; }
-// `__\w+` at i: its end, or npos
-size_t underscore_word(std::string_view s, size_t i) {
-  if (!at(s, i, "__") || i + 2 >= s.size() || !is_word(s[i + 2])) return std::string_view::npos;
-  return skip_word(s, i + 2);
-}
-}  // namespace
 
 // search ([A-Za-z_]\w*)\s*(?:\[[^\]]*\])*\s*(?:=|;|\{): the first identifier followed by array bounds and `=`,
 // `;` or `{`. The tail only depends on where the identifier's run of word characters ends, so each run is tried
@@ -363,18 +352,14 @@ bool dynamic_thunk(const std::string& und, std::optional<std::string>& owner, st
   return true;
 }
 
-std::optional<std::string> definition_name(const std::string& line0) {
-  std::string ls = line0;
-  size_t a = 0;
-  while (a < ls.size() && is_space(ls[a])) ++a;
+std::optional<std::string> definition_name(const std::string& ls) {
+  size_t a = skip_space(ls, 0);
   if (ls.compare(a, 2, "//") == 0 || ls.compare(a, 1, "#") == 0) return std::nullopt;
   std::string line = ls.find("__declspec") != std::string::npos ? strip_declspec(ls) : ls;
   long i = param_start(line);
   std::string name;
   if (i > 0) {
-    std::string head = line.substr(0, size_t(i));
-    while (!head.empty() && is_space(head.back())) head.pop_back();
-    name = last_token(head);
+    name = last_token(rstrip(std::string_view(line).substr(0, size_t(i))));
     size_t k = 0;
     while (k < name.size() && (name[k] == '*' || name[k] == '&')) ++k;
     name = name.substr(k);
@@ -388,11 +373,9 @@ static std::optional<std::string> static_owner_c(const std::string& und) {
   for (size_t p = und.find('`'); p != std::string::npos; p = und.find('`', p + 1)) {
     size_t j = p + 1;
     if (j >= und.size() || !alpha_(und[j])) continue;
-    size_t k = j;
-    while (k < und.size() && is_word(und[k])) ++k;
+    size_t k = skip_word(und, j);
     if (und.compare(k, 4, "'::`") != 0) continue;
-    size_t d = k + 4, e = d;
-    while (e < und.size() && und[e] >= '0' && und[e] <= '9') ++e;
+    size_t d = k + 4, e = skip_digits(und, d);
     if (e == d || und.compare(e, 3, "'::") != 0) continue;
     return und.substr(j, k - j);
   }
@@ -443,7 +426,7 @@ static std::string qualified_uncached(const std::string& und) {
         for (size_t q = und.find(k, best); q != std::string::npos && q + std::strlen(k) <= run_end; q = und.find(k, q + 1))
           p = std::max(p, q);
       size_t e = p + std::strlen("`scalar deleting destructor'");
-      auto digits = [&](size_t& x) { size_t y = x; while (y < und.size() && und[y] >= '0' && und[y] <= '9') ++y; bool ok = y > x; x = y; return ok; };
+      auto digits = [&](size_t& x) { size_t y = skip_digits(und, x); bool ok = y > x; x = y; return ok; };
       if (und.compare(e, 10, "`adjustor{") == 0) {
         size_t x = e + 10;
         if (digits(x) && und.compare(x, 2, "}'") == 0) e = x + 2;
@@ -465,9 +448,7 @@ static std::string qualified_uncached(const std::string& und) {
   }
   std::string u = fnptr_inner(und);
   long i = param_start(u);
-  std::string head = i >= 0 ? u.substr(0, size_t(i)) : u;
-  while (!head.empty() && is_space(head.back())) head.pop_back();
-  return norm_name(last_token(head));
+  return norm_name(last_token(rstrip(i >= 0 ? std::string_view(u).substr(0, size_t(i)) : std::string_view(u))));
 }
 
 std::string qualified(const std::string& und) {
@@ -484,8 +465,7 @@ size_t local_static_match(std::string_view d) {
   ++i;
   size_t j = std::string::npos;
   if (d.compare(i, 2, "$S") == 0) {
-    size_t k = i + 2;
-    while (k < n && d[k] >= '0' && d[k] <= '9') ++k;
+    size_t k = skip_digits(d, i + 2);
     if (k > i + 2 && k < n && d[k] == '@') j = k;
   }
   if (j == std::string::npos) {
@@ -497,7 +477,7 @@ size_t local_static_match(std::string_view d) {
   }
   if (j == std::string::npos || d.compare(j, 2, "@?") != 0) return 0;
   size_t k = j + 2;
-  if (k < n && d[k] >= '0' && d[k] <= '9' && d.compare(k + 1, 2, "??") == 0) return k + 3;
+  if (k < n && is_digit(d[k]) && d.compare(k + 1, 2, "??") == 0) return k + 3;
   size_t m = k;
   while (m < n && d[m] >= 'A' && d[m] <= 'P') ++m;
   if (m > k && m < n && d[m] == '@' && d.compare(m + 1, 2, "??") == 0) return m + 3;
@@ -664,6 +644,35 @@ u32 slots_for(size_t n) {
   return c;
 }
 
+// the file's header: magic and key, zero-padded to a multiple of 8
+std::string file_head(const std::string& key) {
+  std::string h = std::string(NAMES_MAGIC) + key + "\n";
+  h.resize((h.size() + 7) / 8 * 8, '\0');
+  return h;
+}
+
+// linear probing in an index of `slots` (a power of two) for the value + 1 that `hit` accepts: the value, or -1
+template <class Hit>
+long probe(const u32* index, u32 slots, std::string_view s, Hit hit) {
+  if (!slots) return -1;
+  for (u32 i = u32(name_hash(s)) & (slots - 1);; i = (i + 1) & (slots - 1)) {
+    u32 v = index[i];
+    if (!v) return -1;
+    if (hit(v - 1)) return long(v - 1);
+  }
+}
+
+// an index of `slots` holding k + 1 at keys[k]'s hash
+std::vector<u32> build_index(const std::vector<std::string_view>& keys, u32 slots) {
+  std::vector<u32> idx(slots);
+  for (size_t k = 0; k < keys.size(); ++k) {
+    u32 i = u32(name_hash(keys[k])) & (slots - 1);
+    while (idx[i]) i = (i + 1) & (slots - 1);
+    idx[i] = u32(k + 1);
+  }
+  return idx;
+}
+
 }  // namespace
 
 NameCache::NameCache(std::string path, std::string key, std::string undname)
@@ -671,9 +680,9 @@ NameCache::NameCache(std::string path, std::string key, std::string undname)
   if (path_.empty() || !file_exists(path_)) return;
   try {
     file_ = read_file(path_);
-    std::string head = std::string(NAMES_MAGIC) + key_ + "\n";
-    size_t at = (head.size() + 7) / 8 * 8;
-    if (file_.size() < at + 16 || file_.compare(0, head.size(), head) != 0) { file_.clear(); return; }
+    std::string head = file_head(key_);
+    size_t at = head.size();
+    if (file_.size() < at + 16 || file_.compare(0, at, head) != 0) { file_.clear(); return; }
     const u32* h = reinterpret_cast<const u32*>(file_.data() + at);
     u64 ns = h[0], ne = h[1], es = h[2], ss = h[3];
     u64 words = 4 + ns + ROW * ne + es + ss;
@@ -710,21 +719,15 @@ std::string_view NameCache::text(u32 id) const {
   return new_text_[id - nstr_];
 }
 
-std::optional<u32> NameCache::find_string(std::string_view s) const {
-  if (sslots_) {
-    for (u32 i = u32(name_hash(s)) & (sslots_ - 1);; i = (i + 1) & (sslots_ - 1)) {
-      u32 v = sidx_[i];
-      if (!v) break;
-      if (text(v - 1) == s) return v - 1;
-    }
-  }
+std::optional<u32> NameCache::id_of(std::string_view s) const {
+  if (long k = probe(sidx_, sslots_, s, [&](u32 id) { return text(id) == s; }); k >= 0) return u32(k);
   auto it = new_ids_.find(s);
   if (it != new_ids_.end()) return it->second;
   return std::nullopt;
 }
 
 u32 NameCache::intern(std::string s) {
-  if (auto id = find_string(s)) return *id;
+  if (auto id = id_of(s)) return *id;
   u32 id = nstr_ + u32(new_text_.size());
   std::string_view v = owned_.emplace_back(std::move(s));
   new_text_.push_back(v);
@@ -732,15 +735,8 @@ u32 NameCache::intern(std::string s) {
   return id;
 }
 
-std::optional<u32> NameCache::id_of(std::string_view s) const { return find_string(s); }
-
 long NameCache::find_entry(std::string_view d) const {
-  if (!eslots_) return -1;
-  for (u32 i = u32(name_hash(d)) & (eslots_ - 1);; i = (i + 1) & (eslots_ - 1)) {
-    u32 v = eidx_[i];
-    if (!v) return -1;
-    if (text(ent_[ROW * size_t(v - 1)]) == d) return long(v - 1);
-  }
+  return probe(eidx_, eslots_, d, [&](u32 k) { return text(ent_[ROW * size_t(k)]) == d; });
 }
 
 const NameInfo* NameCache::file_entry(u32 k) const {
@@ -819,39 +815,22 @@ void NameCache::save() {
       ent.push_back(v);
   }
   u32 es = slots_for(names.size()), ss = slots_for(strs.size());
-  std::vector<u32> eidx(es), sidx(ss), ends;
-  for (size_t k = 0; k < names.size(); ++k) {
-    u32 i = u32(name_hash(names[k])) & (es - 1);
-    while (eidx[i]) i = (i + 1) & (es - 1);
-    eidx[i] = u32(k + 1);
-  }
+  std::vector<u32> ends;
   u64 total = 0;
-  for (size_t k = 0; k < strs.size(); ++k) {
-    u32 i = u32(name_hash(strs[k])) & (ss - 1);
-    while (sidx[i]) i = (i + 1) & (ss - 1);
-    sidx[i] = u32(k + 1);
-    total += strs[k].size();
+  for (auto s : strs) {
+    total += s.size();
     if (total > 0xffffffffu) return;   // too large for the format: no cache
     ends.push_back(u32(total));
   }
-  std::string out = std::string(NAMES_MAGIC) + key_ + "\n";
-  out.resize((out.size() + 7) / 8 * 8, '\0');
+  std::string out = file_head(key_);
   auto put = [&](const std::vector<u32>& v) { out.append(reinterpret_cast<const char*>(v.data()), 4 * v.size()); };
   put({u32(strs.size()), u32(names.size()), es, ss});
   put(ends);
   put(ent);
-  put(eidx);
-  put(sidx);
+  put(build_index(names, es));
+  put(build_index(strs, ss));
   for (auto& s : strs) out += s;
-  std::string tmp = path_ + ".tmp";
-  {
-    std::ofstream f(tmp, std::ios::binary);
-    if (!f) return;
-    f.write(out.data(), std::streamsize(out.size()));
-    if (!f) return;
-  }
-  std::error_code ec;
-  std::filesystem::rename(tmp, path_, ec);   // readers see the old file or the new one
+  write_file_atomic(path_, out);
 }
 
 }  // namespace verifier

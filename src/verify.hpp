@@ -55,9 +55,10 @@ std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns, const
 
 struct Args {
   std::string config = "verifier.conf";
-  std::string rebuilt, map, matched, json, show;
+  std::string rebuilt, map;
+  std::optional<std::string> matched, json, show;
   std::vector<std::string> src;
-  bool check = false, update = false, has_matched = false, has_json = false, has_show = false;
+  bool check = false, update = false;
 };
 // the --check replay key: the verifier (the executable's hash), its arguments and every file it reads
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier);

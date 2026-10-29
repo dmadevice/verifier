@@ -1,6 +1,7 @@
 #include "pairing.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace verifier {
 
@@ -99,10 +100,8 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
 }
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
-  cmp = std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables, &orig.ida_names);
+  use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables, &orig.ida_names));
   Comparer& c = *cmp;
-  inferred_.attach(&c.journal);
-  inferred_r_.attach(&c.journal);
   c.orig_code = [&oc](u64 s, u64 e) { return oc.code(s, e); };
   c.rebuilt_code = [&rc](u64 s, u64 e) { return rc.code(s, e); };
   c.infer = [this](u64 o, u64 r) { return infer(o, r); };
@@ -140,7 +139,6 @@ void Pairing::prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>
       if (!v.empty()) votes[rva] = std::move(v);
     }
   }
-  local_votes = votes;
   for (auto& [base, o_base] : decide_locals(votes)) {
     cmp->bound.set(base, o_base);
     cmp->bound_o.set(o_base, base);
@@ -152,7 +150,6 @@ std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
   for (auto& [rva, ova] : reb_to_orig)
     if (reb.img.executable(rva) && orig.functions.count(ova)) pairs.emplace(rva, ova);
   // owners of local statics that resolve by their own names (an annotation's pairing comes first)
-  std::map<u64, u64> extra;
   for (auto& [base, owners] : reb.static_owner) {
     if (!owners) continue;
     for (u64 owner : *owners) {
@@ -175,17 +172,14 @@ Pairing::Votes Pairing::votes_of(u64 rva, u64 ova) {
     if (a.mnem != b.mnem || !same_layout(a, fa, b, fb)) continue;
     for (size_t z = 0; z < fa.size(); ++z) {
       const Field &x = fa[z], &y = fb[z];
-      if (x.kind != F_RIP && x.kind != F_IMG && x.kind != F_ABS) continue;
+      if (!is_address(x.kind)) continue;
       auto at = reb.local_base(u64(y.value));
       u64 xv = u64(x.value);
       if (!at || O.executable(xv) || !O.flags(xv)) continue;
       u64 o_base = xv - at->second;
       bool fits = !orig.in_padding(o_base) && cmp->static_fits(o_base, at->first) && !annotated_between(o_base, xv);
-      auto& starts = out[at->first];
-      std::optional<u64> key = fits ? std::optional<u64>(o_base) : std::nullopt;
-      auto it = starts.find(key);
-      if (it == starts.end()) starts[key] = at->second;
-      else it->second = std::max(it->second, at->second);
+      auto [it, fresh] = out[at->first].try_emplace(fits ? std::optional<u64>(o_base) : std::nullopt, at->second);
+      if (!fresh) it->second = std::max(it->second, at->second);
     }
   }
   return out;
@@ -259,7 +253,7 @@ std::vector<u64> Pairing::orig_refs(u64 f) {
   auto c = cmp->orig_code(f, orig.extent(f));
   std::set<u64> s;
   for (auto& x : c->field_list)
-    if (x.kind == F_RIP || x.kind == F_IMG || x.kind == F_ABS) s.insert(u64(x.value));
+    if (is_address(x.kind)) s.insert(u64(x.value));
   return refs_of_.emplace(f, std::vector<u64>(s.begin(), s.end())).first->second;
 }
 
@@ -340,16 +334,8 @@ bool Pairing::infer(u64 o_t, u64 r_t) {
   return cmp->journal.speculate([&] {
     inferred_.set({o_t, r_t}, true);
     inferred_r_.set(r_t, o_t);
-    ++infer_depth_;
-    bool ok;
-    try {
-      ok = cmp->function(o_t, oend, r_t, rend, 1).empty();
-    } catch (...) {
-      --infer_depth_;
-      throw;
-    }
-    --infer_depth_;
-    return ok;
+    struct Depth { int& d; Depth(int& x) : d(++x) {} ~Depth() { --d; } } depth(infer_depth_);
+    return cmp->function(o_t, oend, r_t, rend, 1).empty();
   });
 }
 

@@ -64,12 +64,6 @@ class JMap {
     }
     m_[k] = std::move(v);
   }
-  void erase(const K& k) {
-    auto it = m_.find(k);
-    if (it == m_.end()) return;
-    if (j_ && j_->active) { V old = it->second; j_->log.push_back([this, k, old] { m_[k] = old; }); }
-    m_.erase(it);
-  }
   const std::unordered_map<K, V, H>& items() const { return m_; }
   size_t size() const { return m_.size(); }
 
@@ -82,7 +76,7 @@ struct PairHash {
   size_t operator()(const std::pair<u64, u64>& p) const { return std::hash<u64>()(p.first * 0x9E3779B97F4A7C15ull ^ p.second); }
 };
 
-struct FnMemo {
+struct FnMemo {   // a function comparison's problems, and the two functions' code
   Problems probs;
   std::shared_ptr<const Code> oc, rc;
 };
@@ -153,10 +147,10 @@ class Comparer {
   Problems unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth, int chain_depth = 0);
 
  private:
-  struct CodeResult { Problems probs; std::shared_ptr<const Code> oc, rc; };
-  CodeResult code(u64 ostart, u64 oend, u64 rstart, u64 rend);
+  FnMemo code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   bool same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<bool> wide = std::nullopt);
   std::optional<Problem> accessed(u64 o_t, u64 r_t, int n);
+  bool is_alternate(u64 o_t, u64 r_t);   // r_t's symbol is one of several at its address, one of them naming o_t
   std::optional<Problem> throw_info_cmp(u64 o_t, u64 r_t, std::string_view name);
   Problems handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth);
   friend class EHContext;

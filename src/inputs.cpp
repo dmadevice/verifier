@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 
 #include "json.hpp"
 #include "sha256.hpp"
@@ -13,17 +12,15 @@ namespace verifier {
 
 namespace {
 
+// a decimal JSON member value at line[i], ended by ',' or '}': its value, and where it ends
+bool member_int(std::string_view line, size_t i, u64& v, size_t& end) {
+  return parse_dec(line, i, v, end) && end < line.size() && (line[end] == ',' || line[end] == '}');
+}
+
 // `{"ea": <int>` at the start of a JSON line (IDA's exports write "ea" first): its value, and where it ends
 bool lead_ea(std::string_view line, u64& ea, size_t& end) {
   static constexpr std::string_view head = "{\"ea\": ";
-  if (line.substr(0, head.size()) != head) return false;
-  size_t i = head.size(), j = i;
-  u64 v = 0;
-  while (j < line.size() && line[j] >= '0' && line[j] <= '9') v = v * 10 + u64(line[j++] - '0');
-  if (j == i || j - i > 19 || j >= line.size() || (line[j] != ',' && line[j] != '}')) return false;
-  ea = v;
-  end = j;
-  return true;
+  return line.substr(0, head.size()) == head && member_int(line, head.size(), ea, end);
 }
 
 // the snapshot's fields: little-endian u64s and length-prefixed strings
@@ -106,13 +103,12 @@ void Original::load_exports() {
     if (!functions.count(f.ea)) function_order.push_back(f.ea);
     functions[f.ea] = f;
   });
-  for (u64 ea : function_order) ida_names[ea] = functions[ea].name;
-  std::vector<json::Value> matches;
-  if (file_exists(p.library_matches)) {
-    auto doc = json::parse(read_file(p.library_matches));
-    matches = doc["matches"].arr;
+  for (u64 ea : function_order) {
+    ida_names[ea] = functions[ea].name;
+    by_name[functions[ea].name] = ea;
   }
-  for (u64 ea : function_order) by_name[functions[ea].name] = ea;
+  std::vector<json::Value> matches;
+  if (file_exists(p.library_matches)) matches = json::parse(read_file(p.library_matches))["matches"].arr;
   if (file_exists(p.vtables)) {
     for (auto& line : read_lines(p.vtables)) {
       if (strip(line).empty()) continue;
@@ -198,14 +194,7 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
   w.s("end");
   std::error_code ec;
   std::filesystem::create_directories(config_->cache_dir, ec);
-  std::string tmp = path + ".tmp";
-  {
-    std::ofstream f(tmp, std::ios::binary);
-    if (!f) return;
-    f << w.out;
-    if (!f) return;
-  }
-  std::filesystem::rename(tmp, path, ec);   // readers see the old file or the new one
+  write_file_atomic(path, w.out);
 }
 
 bool Original::load_snapshot(const std::string& path, const std::string& key) {
@@ -253,17 +242,11 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   o.data_names_.reserve(n);
   while (n--) o.data_names_.insert(r.u());
   if (r.s() != "end" || !r.ok || r.p != data.size()) return false;
-  snapshot_ = std::move(data);   // the names are views of it
-  functions = std::move(o.functions);
-  function_order = std::move(o.function_order);
-  ida_names = std::move(o.ida_names);
-  by_name = std::move(o.by_name);
-  vtables = std::move(o.vtables);
-  linked = std::move(o.linked);
-  boundaries_ = std::move(o.boundaries_);
-  align_starts_ = std::move(o.align_starts_);
-  align_ends_ = std::move(o.align_ends_);
-  data_names_ = std::move(o.data_names_);
+  o.digest = std::move(digest);
+  o.img = std::move(img);
+  o.config_ = config_;
+  o.snapshot_ = std::move(data);   // the names are views of it
+  *this = std::move(o);
   return true;
 }
 
@@ -282,14 +265,8 @@ void Original::load_items() {
       u64 ea, size;
       size_t e;
       static constexpr std::string_view sz = ", \"size\": ";
-      bool fast = lead_ea(line, ea, e) && line.substr(e, sz.size()) == sz;
-      if (fast) {   // `{"ea": N, "size": M, ...`
-        size_t i = e + sz.size(), j = i;
-        size = 0;
-        while (j < line.size() && line[j] >= '0' && line[j] <= '9') size = size * 10 + u64(line[j++] - '0');
-        fast = j > i && j - i <= 19 && j < line.size() && (line[j] == ',' || line[j] == '}');
-      }
-      if (!fast) {
+      // `{"ea": N, "size": M, ...`, or any other JSON
+      if (!(lead_ea(line, ea, e) && line.substr(e, sz.size()) == sz && member_int(line, e + sz.size(), size, e))) {
         auto d = json::parse(line);
         ea = u64(d["ea"].as_int());
         size = u64(d["size"].as_int());
@@ -378,18 +355,18 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   for (auto& [va, d] : syms) {
     size_t m = local_statics.count(va) ? local_static_match(d) : 0;
     if (!m) continue;
-    std::string rest(d.substr(m));
-    std::optional<size_t> k;
+    // the owner: the function whose decorated name is "?" and the rest up to one of its '@'s (the first that is one)
+    std::string_view rest = d.substr(m);
+    std::optional<u64> owner;
     std::string probe;
-    for (size_t i = 0; i < rest.size(); ++i) {
+    for (size_t i = 0; i < rest.size() && !owner; ++i) {
       if (rest[i] != '@') continue;
-      probe.assign("?").append(rest, 0, i);
-      if (code_by_dec.count(std::string_view(probe))) { k = i; break; }
+      probe.assign("?").append(rest.substr(0, i));
+      if (auto it = code_by_dec.find(std::string_view(probe)); it != code_by_dec.end()) owner = it->second;
     }
-    auto it = static_owner.find(va);
-    if (it == static_owner.end()) it = static_owner.emplace(va, std::set<u64>()).first;
-    if (!k || !it->second) it->second = std::nullopt;
-    else it->second->insert(code_by_dec.at("?" + rest.substr(0, *k)));
+    auto& owners = static_owner.try_emplace(va, std::set<u64>()).first->second;
+    if (!owner || !owners) owners = std::nullopt;
+    else owners->insert(*owner);
   }
 }
 

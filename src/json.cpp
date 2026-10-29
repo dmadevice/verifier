@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <stdexcept>
 
+#include "util.hpp"
+
 namespace verifier::json {
 
 const Value* Value::get(std::string_view key) const {
@@ -68,8 +70,9 @@ struct Parser {
     if (p + 4 > t.size()) fail("short \\u escape");
     unsigned v = 0;
     for (int k = 0; k < 4; ++k) {
-      char c = t[p++];
-      v = v * 16 + ((c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : (fail("bad hex"), 0));
+      int d = hex_digit(t[p++]);
+      if (d < 0) fail("bad hex");
+      v = v * 16 + unsigned(d);
     }
     return v;
   }
@@ -164,8 +167,15 @@ struct Parser {
   }
 };
 
+inline void newline(std::string& out, int level) {   // a line break and `level`'s indent
+  out += '\n';
+  out.append(2 * static_cast<size_t>(level), ' ');
+}
+
+}  // namespace
+
 // a JSON string literal: UTF-8 is written as is, control characters escaped
-void put_str(std::string& out, std::string_view s) {
+void put_quoted(std::string& out, std::string_view s) {
   out += '"';
   for (unsigned char c : s) {
     switch (c) {
@@ -182,8 +192,7 @@ void put_str(std::string& out, std::string_view s) {
   out += '"';
 }
 
-void write(std::string& out, const Value& v, int level) {
-  auto nl = [&](int lv) { out += '\n'; out.append(2 * static_cast<size_t>(lv), ' '); };
+void put_value(std::string& out, const Value& v, int level) {
   switch (v.type) {
     case Value::Null: out += "null"; break;
     case Value::Bool: out += v.b ? "true" : "false"; break;
@@ -191,16 +200,16 @@ void write(std::string& out, const Value& v, int level) {
     case Value::Double: {
       char b[32]; std::snprintf(b, sizeof b, "%.17g", v.d); out += b; break;   // not used by the report
     }
-    case Value::String: put_str(out, v.s); break;
+    case Value::String: put_quoted(out, v.s); break;
     case Value::Array:
       if (v.arr.empty()) { out += "[]"; break; }
       out += '[';
       for (size_t k = 0; k < v.arr.size(); ++k) {
         if (k) out += ',';
-        nl(level + 1);
-        write(out, v.arr[k], level + 1);
+        newline(out, level + 1);
+        put_value(out, v.arr[k], level + 1);
       }
-      nl(level);
+      newline(out, level);
       out += ']';
       break;
     case Value::Object:
@@ -208,18 +217,16 @@ void write(std::string& out, const Value& v, int level) {
       out += '{';
       for (size_t k = 0; k < v.obj.size(); ++k) {
         if (k) out += ',';
-        nl(level + 1);
-        put_str(out, v.obj[k].first);
+        newline(out, level + 1);
+        put_quoted(out, v.obj[k].first);
         out += ": ";
-        write(out, v.obj[k].second, level + 1);
+        put_value(out, v.obj[k].second, level + 1);
       }
-      nl(level);
+      newline(out, level);
       out += '}';
       break;
   }
 }
-
-}  // namespace
 
 Value parse(std::string_view text) {
   Parser ps{text};
@@ -231,48 +238,35 @@ Value parse(std::string_view text) {
 
 std::string dump(const Value& v) {
   std::string out;
-  write(out, v, 0);
+  put_value(out, v, 0);
   out += '\n';
   return out;
 }
-
-void put_quoted(std::string& out, std::string_view s) { put_str(out, s); }
-void put_value(std::string& out, const Value& v, int level) { write(out, v, level); }
 
 void put_strings(std::string& out, const std::vector<std::string>& v, int level) {
   if (v.empty()) { out += "[]"; return; }
   out += '[';
   for (size_t k = 0; k < v.size(); ++k) {
     if (k) out += ',';
-    out += '\n';
-    out.append(2 * static_cast<size_t>(level + 1), ' ');
-    put_str(out, v[k]);
+    newline(out, level + 1);
+    put_quoted(out, v[k]);
   }
-  out += '\n';
-  out.append(2 * static_cast<size_t>(level), ' ');
+  newline(out, level);
   out += ']';
 }
 
 void ObjectWriter::key(std::string_view k) {
   out_ += first_ ? '{' : ',';
   first_ = false;
-  out_ += '\n';
-  out_.append(2 * static_cast<size_t>(level_ + 1), ' ');
-  put_str(out_, k);
+  newline(out_, level_ + 1);
+  put_quoted(out_, k);
   out_ += ": ";
 }
 
 void ObjectWriter::end() {
   if (first_) { out_ += "{}"; return; }
-  out_ += '\n';
-  out_.append(2 * static_cast<size_t>(level_), ' ');
+  newline(out_, level_);
   out_ += '}';
-}
-
-std::string quote(std::string_view s) {
-  std::string out;
-  put_str(out, s);
-  return out;
 }
 
 }  // namespace verifier::json

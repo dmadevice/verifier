@@ -21,10 +21,6 @@ const char* size_name(int n) {
   }
 }
 
-}  // namespace
-
-namespace {
-
 // symbolise_one() into a fresh token
 void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve0, const Image& img,
                     bool const_by_value) {
@@ -62,21 +58,15 @@ void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::functi
           o.key = r;
           o.size = op.size;
         }
-      } else if (flo <= op.disp() && op.disp() < fhi + i64(TABLE_SLACK) && op.index) {
-        o.k = Op::TBL;
-        o.base = reg_canon(op.base());
-        o.index = reg_canon(op.index);
-        o.scale = op.scale;
-        o.v = op.disp() - flo;
-        o.size = op.size;
       } else {
-        o.k = Op::M;
+        bool table = flo <= op.disp() && op.disp() < fhi + i64(TABLE_SLACK) && op.index;
+        o.k = table ? Op::TBL : Op::M;
         o.base = reg_canon(op.base());
         o.index = reg_canon(op.index);
         o.scale = op.scale;
-        o.v = op.disp();
+        o.v = table ? op.disp() - flo : op.disp();
         o.size = op.size;
-        o.seg = reg_canon(segment_reg(op));
+        if (!table) o.seg = reg_canon(segment_reg(op));
       }
     } else {
       continue;
@@ -166,33 +156,22 @@ std::string classify(const Toks& a, const Toks& b) {
   for (auto& t : b) mb.push_back(t.mnemonic);
   if (ma == mb) {
     size_t n = std::min(a.size(), b.size());
-    bool regalloc = true;
-    for (size_t i = 0; regalloc && i < n; ++i) {
-      auto &x = a[i].ops, &y = b[i].ops;
-      if (x.size() != y.size()) { regalloc = false; break; }
-      for (size_t k = 0; k < x.size(); ++k) {
-        const Op &o = x[k], &p = y[k];
-        bool ok = o == p || (o.k == Op::R && p.k == Op::R) ||
-                  (o.k == Op::M && p.k == Op::M && o.scale == p.scale && o.v == p.v && o.size == p.size && o.seg == p.seg);
-        if (!ok) { regalloc = false; break; }
+    auto all_ops = [&](auto same) {   // every instruction has as many operands, each pair `same`
+      for (size_t i = 0; i < n; ++i) {
+        auto &x = a[i].ops, &y = b[i].ops;
+        if (x.size() != y.size()) return false;
+        for (size_t k = 0; k < x.size(); ++k) if (!same(x[k], y[k])) return false;
       }
-    }
-    if (regalloc) return "regalloc";
-    bool kinds = true;
-    for (size_t i = 0; kinds && i < n; ++i) {
-      auto &x = a[i].ops, &y = b[i].ops;
-      if (x.size() != y.size()) { kinds = false; break; }
-      for (size_t k = 0; k < x.size(); ++k) if (x[k].k != y[k].k) { kinds = false; break; }
-    }
-    if (kinds) {
-      for (size_t i = 0; i < n; ++i)
-        for (size_t k = 0; k < a[i].ops.size(); ++k) {
-          const Op &o = a[i].ops[k], &p = b[i].ops[k];
-          if (!(o == p) && o.k != Op::SYM && o.k != Op::MSYM) return "immediate";
-        }
-      return "reference";
-    }
-    return "unexplained";
+      return true;
+    };
+    if (all_ops([](const Op& o, const Op& p) {
+          return o == p || (o.k == Op::R && p.k == Op::R) ||
+                 (o.k == Op::M && p.k == Op::M && o.scale == p.scale && o.v == p.v && o.size == p.size && o.seg == p.seg);
+        }))
+      return "regalloc";
+    if (!all_ops([](const Op& o, const Op& p) { return o.k == p.k; })) return "unexplained";
+    bool refs = all_ops([](const Op& o, const Op& p) { return o == p || o.k == Op::SYM || o.k == Op::MSYM; });
+    return refs ? "reference" : "immediate";
   }
   auto sa = ma, sb = mb;
   std::sort(sa.begin(), sa.end());
@@ -207,8 +186,6 @@ std::string classify(const Toks& a, const Toks& b) {
 // sides; the longest block is found in linear time with a suffix automaton ----------------------------------
 
 namespace {
-
-struct Match { size_t i, j, k; };
 
 // suffix automaton of b[blo:bhi] with edge lists in one pool (the root's transitions in a table by symbol);
 // first: where the state's first occurrence in b ends. Symbols are small non-negative ints. One alignment calls
@@ -247,7 +224,7 @@ struct Automaton {
   bool used(size_t i) const { return slot_gen[i] == gen; }
 };
 
-Match longest_match(Automaton& w, const std::vector<int>& a, const std::vector<int>& b, size_t alo, size_t ahi, size_t blo,
+LongestMatch longest_match(Automaton& w, const std::vector<int>& a, const std::vector<int>& b, size_t alo, size_t ahi, size_t blo,
                     size_t bhi) {
   auto& st = w.st;
   auto& edges = w.edges;
@@ -343,29 +320,28 @@ Match longest_match(Automaton& w, const std::vector<int>& a, const std::vector<i
 
 LongestMatch find_longest_match(const std::vector<int>& a, const std::vector<int>& b, size_t alo, size_t ahi, size_t blo, size_t bhi) {
   Automaton w;
-  Match m = longest_match(w, a, b, alo, ahi, blo, bhi);
-  return {m.i, m.j, m.k};
+  return longest_match(w, a, b, alo, ahi, blo, bhi);
 }
 
 std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int>& b) {
   size_t la = a.size(), lb = b.size();
   std::vector<std::tuple<size_t, size_t, size_t, size_t>> queue{{0, la, 0, lb}};
-  std::vector<Match> blocks;
+  std::vector<LongestMatch> blocks;
   Automaton w;
   while (!queue.empty()) {
     auto [alo, ahi, blo, bhi] = queue.back();
     queue.pop_back();
-    Match x = longest_match(w, a, b, alo, ahi, blo, bhi);
+    LongestMatch x = longest_match(w, a, b, alo, ahi, blo, bhi);
     if (x.k) {
       blocks.push_back(x);
       if (alo < x.i && blo < x.j) queue.emplace_back(alo, x.i, blo, x.j);
       if (x.i + x.k < ahi && x.j + x.k < bhi) queue.emplace_back(x.i + x.k, ahi, x.j + x.k, bhi);
     }
   }
-  std::sort(blocks.begin(), blocks.end(), [](const Match& p, const Match& q) {
+  std::sort(blocks.begin(), blocks.end(), [](const LongestMatch& p, const LongestMatch& q) {
     return std::tie(p.i, p.j, p.k) < std::tie(q.i, q.j, q.k);
   });
-  std::vector<Match> na;
+  std::vector<LongestMatch> na;
   size_t i1 = 0, j1 = 0, k1 = 0;
   for (auto& m : blocks) {
     if (i1 + k1 == m.i && j1 + k1 == m.j) {

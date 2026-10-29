@@ -89,7 +89,6 @@ class NameCache {
   const NameInfo* find(std::string_view d) const;
   long find_entry(std::string_view d) const;   // the file's entry for a name, -1 if none
   const NameInfo* file_entry(u32 k) const;
-  std::optional<u32> find_string(std::string_view s) const;
   u32 intern(std::string s);
 };
 
