@@ -327,12 +327,17 @@ bool Original::in_padding(u64 va) const {
 
 Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc) : names_(&nc) {
   img = Image::load(path);
-  syms = parse_map(map_path);
+  map_text = read_file(map_path);
+  syms = parse_map(map_text);
   std::vector<std::string_view> decs;
   decs.reserve(syms.size());
   for (auto& s : syms) decs.push_back(s.second);
   std::vector<const NameInfo*> infos = nc.load(decs);   // infos[i]: syms[i]'s
   decs = {};
+  by_va.reserve(syms.size());
+  qual_to_va.reserve(syms.size());
+  sigs_of.reserve(syms.size());
+  by_suffix.reserve(2 * syms.size());
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, dec] = syms[i];
     auto& v = by_va[va];
@@ -360,7 +365,7 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
     auto& [va, d] = syms[i];
     if (!img.executable(va)) continue;
     code_names.insert(infos[i]->qualified);
-    code_by_dec[d] = va;
+    code_by_dec[std::string(d)] = va;
   }
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, d] = syms[i];
@@ -370,7 +375,7 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   for (auto& [va, d] : syms) {
     size_t m = local_statics.count(va) ? local_static_match(d) : 0;
     if (!m) continue;
-    std::string rest = d.substr(m);
+    std::string rest(d.substr(m));
     std::optional<size_t> k;
     std::string probe;
     for (size_t i = 0; i < rest.size(); ++i) {

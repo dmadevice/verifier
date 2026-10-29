@@ -387,7 +387,7 @@ std::vector<Insn> decode_linear(std::string_view code, u64 start) {
 }
 
 Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
-  code = Bytes(im.bytes(s, i64(e) - i64(s)));
+  code = im.bytes(s, i64(e) - i64(s));
   relocated = im.reloc_lower_bound(e) > im.reloc_lower_bound(s);
   i64 frva = i64(s - im.base), erva = i64(e - im.base);
   i64 n = i64(code.size());
@@ -441,7 +441,7 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
     for (i64 t : targets) if (t >= j && t > last && (!resume || t < *resume)) resume = t;
   }
   if (resume) {
-    auto more = decode_linear(std::string_view(code).substr(size_t(*resume)), s + u64(*resume));
+    auto more = decode_linear(code.substr(size_t(*resume)), s + u64(*resume));
     for (auto& i : more) insns.push_back(std::move(i));
   }
   i64 decoded = 0;
@@ -455,7 +455,7 @@ void Code::trim_padding() {
   i64 n = i64(code.size());
   if (cut < n && !resume) {
     for (auto& [t, sz] : tables) if (t < n) return;
-    code.resize(size_t(cut));
+    code = code.substr(0, size_t(cut));
   }
 }
 

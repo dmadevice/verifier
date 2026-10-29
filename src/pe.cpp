@@ -75,7 +75,7 @@ Image Image::load(const std::string& path) {
     if (size < 8) break;
     for (u64 e = off + 8; e + 2 <= off + size; e += 2) {
       u16 v = rd16(img, e);
-      if ((v >> 12) == 10) im.relocs.insert(base + page + (v & 0xFFF));
+      if ((v >> 12) == 10) im.reloc_sorted.push_back(base + page + (v & 0xFFF));
     }
     off += size;
   }
@@ -128,15 +128,15 @@ Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections
   im.img = std::move(mem);
   im.sections = std::move(sections);
   im.pdata = std::move(pdata);
-  im.relocs.insert(relocs.begin(), relocs.end());
+  im.reloc_sorted = std::move(relocs);
   im.imports = std::move(imports);
   im.finish();
   return im;
 }
 
 void Image::finish() {
-  reloc_sorted.assign(relocs.begin(), relocs.end());
   std::sort(reloc_sorted.begin(), reloc_sorted.end());
+  reloc_sorted.erase(std::unique(reloc_sorted.begin(), reloc_sorted.end()), reloc_sorted.end());
   pdata_sorted.clear();
   for (auto& kv : pdata) pdata_sorted.push_back(kv.first);
 }

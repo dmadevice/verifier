@@ -14,7 +14,7 @@ namespace verifier {
 
 extern const char* const SCALAR_DD;   // "`scalar deleting destructor'"
 
-std::vector<std::pair<u64, std::string>> parse_map(const std::string& path);
+std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text);   // views of the text
 
 std::string norm_name(const std::string& s);
 std::string norm_params(const std::string& p);
@@ -24,7 +24,7 @@ std::optional<std::string> definition_name(const std::string& line);
 std::string static_owner(const std::string& und);
 std::string signature(const std::string& und);
 std::string qualified(const std::string& und);        // memoised
-size_t local_static_match(const std::string& dec);    // end of the local static prefix of a decorated name, 0 if it is not one
+size_t local_static_match(std::string_view dec);    // end of the local static prefix of a decorated name, 0 if it is not one
 
 // pick_destructor(name, va, va is a vtable slot, has_code)
 template <class HasCode>

@@ -68,8 +68,9 @@ class Rebuilt {
   Rebuilt(const std::string& path, const std::string& map_path, NameCache& names);
   virtual ~Rebuilt() = default;
   Image img;
-  // names are views of strings syms and the NameCache own (both outlive the tables)
-  std::vector<std::pair<u64, std::string>> syms;
+  // names are views of the map's text and of strings the NameCache owns (both outlive the tables)
+  std::string map_text;
+  std::vector<std::pair<u64, std::string_view>> syms;
   std::unordered_map<u64, std::vector<std::string_view>> by_va;   // decorated names at an address, map order
   std::vector<u64> by_va_order;
   std::unordered_map<std::string_view, std::vector<u64>, SvHash> qual_to_va;

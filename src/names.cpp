@@ -27,9 +27,9 @@ bool alpha_(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
 
 }  // namespace
 
-std::vector<std::pair<u64, std::string>> parse_map(const std::string& path) {
-  std::vector<std::pair<u64, std::string>> syms;
-  for_each_file_line(path, [&](std::string_view line) {
+std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
+  std::vector<std::pair<u64, std::string_view>> syms;
+  for_each_line(text, [&](std::string_view line) {
     std::string_view p[4];   // the first four whitespace-separated fields
     size_t n = 0, i = 0;
     while (n < 4) {
@@ -46,7 +46,7 @@ std::vector<std::pair<u64, std::string>> parse_map(const std::string& path) {
     for (int k = 0; k < 13; ++k) if (k != 4 && !is_hex_lower(a[k])) return;
     if (p[2].size() != 16) return;
     for (char c : p[2]) if (!is_hex_lower(c)) return;
-    syms.emplace_back(parse_hex(p[2]), std::string(p[1]));
+    syms.emplace_back(parse_hex(p[2]), p[1]);
   });
   return syms;
 }
@@ -292,7 +292,7 @@ std::string qualified(const std::string& und) {
   return memo.emplace(und, qualified_uncached(und)).first->second;
 }
 
-size_t local_static_match(const std::string& d) {
+size_t local_static_match(std::string_view d) {
   // a local static or its guard: `?<name>@?<scope>??<owner>` or `?$S<n>@?<scope>??<owner>`, scope a digit or [A-P]+@
   size_t n = d.size(), i = 0;
   if (i >= n || d[i] != '?') return 0;

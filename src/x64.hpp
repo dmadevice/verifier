@@ -127,7 +127,7 @@ class Code {
   Code(const Image& img, u64 start, u64 end);
   const Image* img;
   u64 start, end;
-  Bytes code;
+  std::string_view code;              // the function's bytes, in the image
   bool relocated;
   std::vector<Insn> insns;
   std::map<i64, int> tables;          // function-relative table offset -> entry size
@@ -136,7 +136,7 @@ class Code {
   bool complete = false;
   std::vector<u32> image_base;        // image_base_regs() of the instructions
 
-  std::string_view bytes(const Insn& ins) const { return std::string_view(code).substr(size_t(ins.address - start), ins.size); }
+  std::string_view bytes(const Insn& ins) const { return code.substr(size_t(ins.address - start), ins.size); }
   std::vector<Field> fields(const Insn& ins) const;
   std::vector<TableItem> table_region() const;
   std::vector<OutsideTable> outside_tables() const;

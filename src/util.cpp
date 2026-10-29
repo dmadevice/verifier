@@ -18,12 +18,15 @@ std::string read_file(const std::string& path) {
   std::FILE* f = std::fopen(path.c_str(), "rb");
   if (!f) throw std::runtime_error("cannot read " + path);
   std::string out;
-  char buf[1 << 16];
-  if (std::fseek(f, 0, SEEK_END) == 0) {
+  if (std::fseek(f, 0, SEEK_END) == 0) {   // read in place at the file's size, then whatever follows
     long n = std::ftell(f);
-    if (n > 0) out.reserve(size_t(n));
     std::fseek(f, 0, SEEK_SET);
+    if (n > 0) {
+      out.resize(size_t(n));
+      out.resize(std::fread(out.data(), 1, out.size(), f));
+    }
   }
+  char buf[1 << 16];
   size_t got;
   while ((got = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, got);
   bool err = std::ferror(f) != 0;

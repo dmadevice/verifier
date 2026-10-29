@@ -44,9 +44,10 @@ std::string head_chars(const std::string& s, size_t n) {
   return s.substr(0, std::min(i, s.size()));
 }
 
-Value str_list(const std::vector<std::string>& v) {
+Value str_list(std::vector<std::string> v) {
   Value a = Value::array();
-  for (auto& s : v) a.push(Value::str(s));
+  a.arr.reserve(v.size());
+  for (auto& s : v) a.push(Value::str(std::move(s)));
   return a;
 }
 
@@ -118,7 +119,7 @@ json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt&
   rec.set("unresolved", str_list(std::vector<std::string>(unresolved.begin(), unresolved.end())));
   std::vector<std::string> ps;
   for (size_t i = 0; i < probs.size() && i < 8; ++i) ps.push_back(probs[i].first + ": " + probs[i].second);
-  rec.set("problems", str_list(ps));
+  rec.set("problems", str_list(std::move(ps)));
   if (!same) {
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
       if (ot[k] == rt[k]) continue;

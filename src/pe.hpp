@@ -1,12 +1,12 @@
 // PE images (the original and the rebuilt DLL): the memory-mapped image, sections, .pdata, base relocations,
 // imports, unwind data and the POGO debug entry.
 #pragma once
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -48,8 +48,7 @@ class Image {
   std::vector<Section> sections;
   std::map<u64, std::pair<u64, u32>> pdata;   // begin VA -> (end VA, UNWIND_INFO RVA); first entry wins
   std::vector<u64> pdata_sorted;
-  std::unordered_set<u64> relocs;
-  std::vector<u64> reloc_sorted;
+  std::vector<u64> reloc_sorted;          // the 64-bit relocation sites, sorted, distinct
   std::unordered_map<u64, Import> imports;   // IAT slot VA -> import
   std::map<std::string, std::pair<u64, u64>> pogo;   // subsection -> (start VA, end VA)
 
@@ -64,7 +63,7 @@ class Image {
   Bytes cstring(u64 va, bool wide = false) const;
   std::optional<u64> extent(u64 va) const;   // .pdata range plus chained ranges
   Unwind unwind(u32 unwind_rva) const;
-  bool has_reloc(u64 va) const { return relocs.count(va) != 0; }
+  bool has_reloc(u64 va) const { return std::binary_search(reloc_sorted.begin(), reloc_sorted.end(), va); }
   size_t reloc_lower_bound(u64 va) const;
 
  private:
