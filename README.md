@@ -140,8 +140,7 @@ ctest --test-dir build -C Release
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
 exact problems it must report, and 27 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key,
-hashing and line splitting. `verifier-compare A.json B.json` diffs two reports field by field (exit 1 when a
-status, category, problem list or total differs), for checking a change to the tool against a known-good report.
+hashing and line splitting.
 
 ## Performance
 

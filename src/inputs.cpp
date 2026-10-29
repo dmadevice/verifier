@@ -226,7 +226,6 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
 }
 
 Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>& sig, bool code) const {
-  if (test.lookup) return test.lookup(key0, sig, code);
   std::string key = norm_name(key0);
   auto it = by_suffix.find(key);
   static const std::vector<std::string_view> none;
@@ -271,7 +270,6 @@ std::optional<u64> Rebuilt::next_symbol(u64 t) const {
 }
 
 u64 Rebuilt::extent(u64 va) const {
-  if (test.extent) return test.extent(va);
   auto e = img.extent(va);
   if (e) return *e;
   auto nxt = next_symbol(va);
@@ -283,13 +281,11 @@ u64 Rebuilt::extent(u64 va) const {
 }
 
 u64 Rebuilt::span(u64 t) const {
-  if (test.span) return test.span(t);
   auto nxt = next_symbol(t);
   return std::min<u64>((nxt ? *nxt : t + MAX_DATA_COMPARE) - t, MAX_DATA_COMPARE);
 }
 
 std::optional<std::pair<u64, u64>> Rebuilt::local_base(u64 t) const {
-  if (test.local_base) return test.local_base(t);
   auto base = containing(t);
   if (base && local_statics.count(*base)) return std::make_pair(*base, t - *base);
   return std::nullopt;

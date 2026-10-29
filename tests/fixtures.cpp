@@ -390,14 +390,33 @@ Problems destructor_pairing() {
 
 Lookup fixed_lookup(const std::map<std::string, u64>& m, const std::string& key) { return {{m.at(key)}, key, 1}; }
 
+// a Rebuilt whose tables a test fills, answering what the test sets in `fake` (the real code for the rest)
+struct FakeRebuilt : Rebuilt {
+  struct {
+    std::function<Lookup(const std::string&, const std::optional<std::string>&, bool)> lookup;
+    std::function<u64(u64)> extent, span;
+    std::function<std::optional<std::pair<u64, u64>>(u64)> local_base;
+    std::function<std::string(std::string_view)> qualified;
+  } fake;
+  std::string qualified(std::string_view d) const override { return fake.qualified ? fake.qualified(d) : Rebuilt::qualified(d); }
+  Lookup lookup(const std::string& k, const std::optional<std::string>& sig, bool code) const override {
+    return fake.lookup ? fake.lookup(k, sig, code) : Rebuilt::lookup(k, sig, code);
+  }
+  u64 extent(u64 va) const override { return fake.extent ? fake.extent(va) : Rebuilt::extent(va); }
+  u64 span(u64 t) const override { return fake.span ? fake.span(t) : Rebuilt::span(t); }
+  std::optional<std::pair<u64, u64>> local_base(u64 t) const override {
+    return fake.local_base ? fake.local_base(t) : Rebuilt::local_base(t);
+  }
+};
+
 Problems folded_annotations() {
   Original orig;
-  Rebuilt reb;
+  FakeRebuilt reb;
   reb.by_va = {{0x100, {"?A@@YAXXZ", "?B@@YAXXZ"}}, {0x200, {"?C@@YAXXZ"}}};
   reb.by_va_order = reb.sym_vas = {0x100, 0x200};
-  reb.test.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
+  reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"A", 0x100}, {"B", 0x100}, {"C", 0x200}};
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   std::vector<Annotation> anns = {{"FUNCTION", 0x1000, "A", {}, "a.cpp", 1}, {"FUNCTION", 0x2000, "B", {}, "b.cpp", 1},
                                   {"FUNCTION", 0x3000, "C", {}, "c.cpp", 1}};
   Pairing p(orig, reb, anns);
@@ -506,11 +525,11 @@ Problems local_static_names() {
 
 Problems stub_pairing() {
   Original orig;
-  Rebuilt reb;
+  FakeRebuilt reb;
   reb.by_va = {{0x100, {"sub_1000"}}, {0x200, {"A"}}};
   reb.by_va_order = reb.sym_vas = {0x100, 0x200};
   std::map<std::string, u64> m{{"sub_1000", 0x100}, {"A", 0x200}};
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb, {{"STUB", 0x1000, "sub_1000", {}, "s.cpp", 1}, {"FUNCTION", 0x2000, "A", {}, "a.cpp", 1}});
   bool ok = !p.paired_o.count(0x1000) && p.paired_o.count(0x2000);
   return bad_if(!ok, "paired", "stub/function paired wrongly");
@@ -589,14 +608,14 @@ Problems failed_inference() {
   }
   Original orig;
   for (auto [va, size] : {std::pair<u64, u64>{fo.A, 13}, {fo.G, 6}, {fo.F, 8}}) orig.functions[va] = IdaFunction{va, size, "", false, false};
-  Rebuilt reb;
+  FakeRebuilt reb;
   reb.sym_vas = {fr.A, fr.G, fr.F, fr.X};
   std::sort(reb.sym_vas.begin(), reb.sym_vas.end());
   for (u64 v : reb.sym_vas) reb.by_va[v] = {};
   std::map<u64, u64> rsize{{fr.A, 13}, {fr.G, 6}, {fr.F, 8}};
-  reb.test.extent = [rsize](u64 va) { return va + rsize.at(va); };
+  reb.fake.extent = [rsize](u64 va) { return va + rsize.at(va); };
   std::map<std::string, u64> m{{"X", fr.X}, {"G", fr.G}, {"F", fr.F}};
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb, {{"GLOBAL", fo.X, "X", {}, "x.cpp", 1}, {"FUNCTION", fo.G, "G", {}, "g.cpp", 1}, {"FUNCTION", fo.F, "F", {}, "f.cpp", 1}});
   Image O = o.image(), R = r.image();
   p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }));
@@ -610,7 +629,7 @@ Problems failed_inference() {
 struct FakeRun {
   Image O, R;
   Original orig;
-  Rebuilt reb;
+  FakeRebuilt reb;
   std::unique_ptr<Pairing> p;
   std::unique_ptr<CodeCache> oc, rc;
   Comparer* c = nullptr;
@@ -646,14 +665,14 @@ Problems prebound_static(bool owner_first) {
   for (u64 v : reb.sym_vas) { reb.by_va[v] = {}; reb.by_va_order.push_back(v); }
   reb.local_statics = {sr.sf, sr.sg};
   reb.static_owner = {{sr.sf, std::set<u64>{sr.F}}, {sr.sg, std::set<u64>{sr.G}}};
-  reb.test.extent = [](u64 va) { return va + 7; };
+  reb.fake.extent = [](u64 va) { return va + 7; };
   std::map<std::string, u64> m{{"F", sr.F}, {"G", sr.G}};
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  reb.test.local_base = [sr](u64 t) -> std::optional<std::pair<u64, u64>> {
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.local_base = [sr](u64 t) -> std::optional<std::pair<u64, u64>> {
     for (u64 b : {sr.sf, sr.sg}) if (b <= t && t < b + 4) return std::make_pair(b, t - b);
     return std::nullopt;
   };
-  reb.test.span = [](u64) { return u64(16); };
+  reb.fake.span = [](u64) { return u64(16); };
   run.start({{"FUNCTION", so.F, "F", {}, "f.cpp", 1}, {"FUNCTION", so.G, "G", {}, "g.cpp", 1}});
   std::vector<std::pair<u64, u64>> order;
   if (owner_first) order.emplace_back(so.G, sr.G);
@@ -691,13 +710,13 @@ Problems consensus_static() {
   for (u64 v : reb.sym_vas) { reb.by_va[v] = {}; reb.by_va_order.push_back(v); }
   reb.local_statics = {rs};
   reb.static_owner = {{rs, std::nullopt}};
-  reb.test.extent = [](u64 va) { return va + 7; };
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  reb.test.local_base = [rs](u64 t) -> std::optional<std::pair<u64, u64>> {
+  reb.fake.extent = [](u64 va) { return va + 7; };
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.local_base = [rs](u64 t) -> std::optional<std::pair<u64, u64>> {
     if (rs <= t && t < rs + 8) return std::make_pair(rs, t - rs);
     return std::nullopt;
   };
-  reb.test.span = [](u64) { return u64(16); };
+  reb.fake.span = [](u64) { return u64(16); };
   run.start(anns);
   std::map<std::string, bool> got;
   for (auto& [n, f] : fns) got[n] = !run.c->function(f.first, f.first + 7, f.second, f.second + 7).empty();
@@ -726,11 +745,11 @@ Problems folded_original(bool same_code) {
   reb.sym_vas = {ra, rb, rG};
   std::sort(reb.sym_vas.begin(), reb.sym_vas.end());
   for (u64 v : reb.sym_vas) { reb.by_va[v] = {}; reb.by_va_order.push_back(v); }
-  reb.test.extent = [rG](u64 va) { return va + (va == rG ? 6 : 4); };
+  reb.fake.extent = [rG](u64 va) { return va + (va == rG ? 6 : 4); };
   std::map<std::string, u64> m{{"A", ra}, {"G", rG}};
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  reb.test.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
-  reb.test.span = [](u64) { return u64(16); };
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
+  reb.fake.span = [](u64) { return u64(16); };
   run.start({{"FUNCTION", oo, "A", {}, "a.cpp", 1}, {"FUNCTION", oG, "G", {}, "g.cpp", 1}});
   return run.c->function(oG, oG + 6, rG, rG + 6);
 }
@@ -740,14 +759,14 @@ Problems addend_across_annotation(u64 off) {
   u64 og = o.put(DATA, Bytes(0x20, '\0'), 16), oy = o.put(DATA, Bytes(4, '\0'), 16);
   u64 rg = r.put(DATA, Bytes(0x40, '\0'), 16), ry = r.put(DATA, Bytes(4, '\0'), 16);
   Original orig;
-  Rebuilt reb;
+  FakeRebuilt reb;
   reb.sym_vas = {rg, ry};
   reb.by_va = {{rg, {"?g@@3HA"}}, {ry, {"?y@@3HA"}}};
   reb.by_va_order = {rg, ry};
-  reb.test.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
+  reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"g", rg}, {"y", ry}};
-  reb.test.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  reb.test.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
   Pairing p(orig, reb, {{"GLOBAL", og, "g", {}, "g.cpp", 1}, {"GLOBAL", oy, "y", {}, "y.cpp", 1}});
   p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
   Key got = p.resolve(rg + off);

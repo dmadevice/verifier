@@ -1,7 +1,6 @@
 // The two sides' inputs: the original image with IDA's functions, vtables, data items and the library
 // attribution; the rebuilt image with its map's symbol tables.
 #pragma once
-#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -55,22 +54,14 @@ class Original {
   void load_items();
 };
 
-class Rebuilt;
 struct Lookup { std::vector<u64> vas; std::string qname; size_t nhits; };
 
-// Tests stand in for parts of a Rebuilt
-struct RebuiltTestHooks {
-  std::function<Lookup(const std::string&, const std::optional<std::string>&, bool)> lookup;
-  std::function<u64(u64)> extent, span;
-  std::function<std::optional<std::pair<u64, u64>>(u64)> local_base;
-  std::function<std::string(std::string_view)> qualified;
-};
-
+// The rebuilt image and its symbols. The virtual methods are what tests stand in for (a subclass with its own
+// answers, the tables filled by hand).
 class Rebuilt {
  public:
   Rebuilt(const std::string& path, const std::string& map_path, NameCache& names);
-  Rebuilt() = default;   // fixtures: fill the fields
-  RebuiltTestHooks test;
+  virtual ~Rebuilt() = default;
   Image img;
   // names are views of strings syms and the NameCache own (both outlive the tables)
   std::vector<std::pair<u64, std::string>> syms;
@@ -87,21 +78,24 @@ class Rebuilt {
   // whose decorated name has the local static form have an entry (owners unknown for the others).
   std::map<u64, std::optional<std::set<u64>>> static_owner;
 
-  std::string qualified(std::string_view dec) const {
-    if (test.qualified) return test.qualified(dec);
-    return names_ ? names_->info(dec).qualified : std::string(dec);
-  }
-  Lookup lookup(const std::string& key, const std::optional<std::string>& sig = std::nullopt, bool code = false) const;
+  // a decorated name's qualified name (the name itself without a name cache)
+  virtual std::string qualified(std::string_view dec) const { return names_ ? names_->info(dec).qualified : std::string(dec); }
+  // the rebuilt addresses an annotation's name (and parameter list) pairs with; code: executable ones only
+  virtual Lookup lookup(const std::string& key, const std::optional<std::string>& sig = std::nullopt, bool code = false) const;
+  virtual u64 extent(u64 va) const;   // a function's end: its .pdata chain, else the next symbol (padding trimmed)
+  virtual u64 span(u64 t) const;      // bytes to the next symbol, at most MAX_DATA_COMPARE
+  // (local static, offset into it) for an address inside a local static
+  virtual std::optional<std::pair<u64, u64>> local_base(u64 t) const;
   std::vector<std::string> overloads_of(const std::string& key) const;
   std::optional<u64> containing(u64 t) const;
   std::optional<u64> next_symbol(u64 t) const;
-  u64 extent(u64 va) const;
-  u64 span(u64 t) const;
-  std::optional<std::pair<u64, u64>> local_base(u64 t) const;
   const std::optional<std::set<u64>>* owners_of(u64 base) const {
     auto it = static_owner.find(base);
     return it == static_owner.end() ? nullptr : &it->second;
   }
+
+ protected:
+  Rebuilt() = default;   // tests: the tables filled by hand
 
  private:
   NameCache* names_ = nullptr;

@@ -39,9 +39,6 @@ endif()
 add_executable(verifier src/main.cpp)
 target_link_libraries(verifier PRIVATE verifier_core)
 
-add_executable(verifier-compare tools/compare_reports.cpp)
-target_link_libraries(verifier-compare PRIVATE verifier_core)
-
 enable_testing()
 add_executable(verifier-tests tests/fixtures.cpp)
 target_link_libraries(verifier-tests PRIVATE verifier_core)
