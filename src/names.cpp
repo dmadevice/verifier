@@ -448,7 +448,8 @@ NameCache::NameCache(std::string path, std::string key, std::string undname)
   try {
     size_t k = 0;
     bool ok = true;
-    for_each_file_line(path_, [&](std::string_view l) {
+    file_ = read_file(path_);
+    for_each_line(file_, [&](std::string_view l) {
       size_t line = k++;
       if (!ok) return;
       if (line == 0) { ok = l == "verifier-names 1"; return; }
@@ -463,30 +464,44 @@ NameCache::NameCache(std::string path, std::string key, std::string undname)
         p = q + 1;
       }
       if (n != 6) return;
-      entries_[std::string(f[0])] = NameInfo{f[1] == "1", std::string(f[2]), std::string(f[3]), std::string(f[4]), std::string(f[5])};
+      entries_[f[0]] = NameInfo{f[1] == "1", f[2], f[3], f[4], f[5]};
     });
-    if (!ok || k < 2) { entries_.clear(); return; }
+    if (!ok || k < 2) { entries_.clear(); file_.clear(); return; }
     loaded_from_file_ = true;
     stored_ = entries_.size();
   } catch (...) {
     entries_.clear();
+    file_.clear();
   }
 }
 
-void NameCache::load(const std::vector<std::string_view>& decorated) {
+std::vector<const NameInfo*> NameCache::load(const std::vector<std::string_view>& decorated) {
+  std::vector<const NameInfo*> infos(decorated.size());
+  used_.assign(decorated.size(), {});
   std::vector<std::string> missing;
-  for (auto& d : decorated) if (entries_.find(d) == entries_.end()) missing.emplace_back(d);
+  for (size_t i = 0; i < decorated.size(); ++i) {
+    auto it = entries_.find(decorated[i]);
+    if (it == entries_.end()) { missing.emplace_back(decorated[i]); continue; }
+    used_[i] = it->first;
+    infos[i] = &it->second;
+  }
+  if (missing.empty()) return infos;
   std::sort(missing.begin(), missing.end());
   missing.erase(std::unique(missing.begin(), missing.end()), missing.end());
   auto und = undecorate(missing, undname_);
   for (auto& d : missing) {
     auto it = und.find(d);
     const std::string& u = it == und.end() ? d : it->second;
-    entries_[d] = NameInfo{it != und.end(), it == und.end() ? "" : it->second, qualified(u), signature(u), static_owner(u)};
+    entries_[own(d)] = NameInfo{it != und.end(), it == und.end() ? "" : own(it->second), own(qualified(u)), own(signature(u)),
+                                own(static_owner(u))};
   }
-  used_.clear();
-  used_.reserve(decorated.size());
-  for (auto& d : decorated) used_.push_back(entries_.find(d)->first);
+  for (size_t i = 0; i < decorated.size(); ++i) {
+    if (infos[i]) continue;
+    auto it = entries_.find(decorated[i]);
+    used_[i] = it->first;
+    infos[i] = &it->second;
+  }
+  return infos;
 }
 
 void NameCache::save() {

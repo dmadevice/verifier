@@ -1,6 +1,7 @@
 // C++ names: undecorating map symbols (undname.exe), and the keys names are paired by (qualified name,
 // normalised parameter list, the function a local static belongs to).
 #pragma once
+#include <deque>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -41,21 +42,26 @@ std::string pick_destructor(const std::string& name, bool in_slot, HasCode has_c
 std::unordered_map<std::string, std::string> undecorate(const std::vector<std::string>& names, const std::string& undname);
 
 // What the name tables need of each map symbol (NameCache): undecorated (if any), qualified, signature, owner
+// (views of text the NameCache keeps for the run)
 struct NameInfo {
   bool has_und = false;
-  std::string und, qualified, signature, owner;
+  std::string_view und, qualified, signature, owner;
 };
 class NameCache {
  public:
   NameCache(std::string path, std::string key, std::string undname);
-  void load(const std::vector<std::string_view>& decorated);   // every name's NameInfo (undname for the new ones)
+  // every name's NameInfo (undname for the new ones), in the order given
+  std::vector<const NameInfo*> load(const std::vector<std::string_view>& decorated);
   const NameInfo& info(std::string_view d) const { return entries_.find(d)->second; }
   void save();
 
  private:
   std::string path_, key_, undname_;
-  SvMap<NameInfo> entries_;
+  std::string file_;                // the cache file's text: the entries read from it are views of it
+  std::deque<std::string> owned_;   // the text of the entries added this run
+  std::unordered_map<std::string_view, NameInfo, SvHash> entries_;
   std::vector<std::string_view> used_;   // this build's names (entries_' keys)
+  std::string_view own(std::string s) { return owned_.emplace_back(std::move(s)); }
   bool loaded_from_file_ = false;
   size_t stored_ = 0;
 };

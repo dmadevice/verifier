@@ -26,6 +26,47 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
   return true;
 }
 
+// the snapshot's fields: little-endian u64s and length-prefixed strings
+struct Writer {
+  std::string out;
+  void u(u64 v) { out.append(reinterpret_cast<const char*>(&v), 8); }
+  void s(std::string_view x) { u(x.size()); out.append(x); }
+};
+struct Reader {
+  std::string_view in;
+  size_t p = 0;
+  bool ok = true;
+  u64 u() {
+    if (!ok || in.size() - p < 8) { ok = false; return 0; }
+    u64 v = le64(in.data() + p);
+    p += 8;
+    return v;
+  }
+  std::string_view s() {
+    u64 n = u();
+    if (!ok || in.size() - p < n) { ok = false; return {}; }
+    std::string_view r = in.substr(p, n);
+    p += n;
+    return r;
+  }
+  // a count of items each at least `min_bytes` long (guards the reservations against a damaged file)
+  u64 count(size_t min_bytes) {
+    u64 n = u();
+    if (ok && n > (in.size() - p) / min_bytes) ok = false;
+    return ok ? n : 0;
+  }
+};
+
+// a file's identity for the snapshot key: its path, size and modification time ("-" when it does not exist)
+std::string file_stamp(const std::string& path) {
+  std::error_code ec;
+  auto size = std::filesystem::file_size(path, ec);
+  if (ec) return path + "\t-";
+  auto time = std::filesystem::last_write_time(path, ec);
+  if (ec) return path + "\t-";
+  return path + "\t" + std::to_string(size) + "\t" + std::to_string(time.time_since_epoch().count());
+}
+
 }  // namespace
 
 // -- Original ------------------------------------------------------------------------------------------------
@@ -43,6 +84,16 @@ Original::Original(const Config& p) : config_(&p) {
     }
   }
   img = Image::load(p.original);
+  // the tables below come from the text exports, which rarely change: a snapshot of them is kept in the cache
+  std::string snapshot = p.cache_dir.empty() ? "" : path_join(p.cache_dir, "original-snapshot.bin");
+  std::string key = snapshot_key(p);
+  if (!snapshot.empty() && load_snapshot(snapshot, key)) return;
+  load_exports();
+  if (!snapshot.empty()) save_snapshot(snapshot, key);
+}
+
+void Original::load_exports() {
+  const Config& p = *config_;
   for_each_file_line(p.functions, [&](std::string_view line) {
     if (strip(line).empty()) return;
     auto v = json::parse(line);
@@ -107,6 +158,112 @@ Original::Original(const Config& p) : config_(&p) {
     }
   }
   load_items();
+}
+
+std::string Original::snapshot_key(const Config& p) {
+  std::string key = "verifier original snapshot 1\n";
+  for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
+                  &p.library_functions, &p.symbols})
+    key += file_stamp(*f) + "\n";
+  return key;
+}
+
+void Original::save_snapshot(const std::string& path, const std::string& key) const {
+  Writer w;
+  w.s(key);
+  w.u(function_order.size());
+  for (u64 ea : function_order) {
+    const IdaFunction& f = functions.at(ea);
+    w.u(f.ea);
+    w.u(f.size);
+    w.s(f.name);
+    w.u(u64(f.lib) | u64(f.thunk) << 1);
+  }
+  w.u(vtables.size());
+  for (auto& [ea, slots] : vtables) {
+    w.u(ea);
+    w.u(slots.size());
+    for (u64 s : slots) w.u(s);
+  }
+  w.u(by_name.size());
+  for (auto& [name, va] : by_name) { w.s(name); w.u(va); }
+  w.u(linked.size());
+  for (auto& [ea, l] : linked) { w.u(ea); w.s(l.lib); w.s(l.symbol); w.u(l.has_symbol); }
+  for (auto* v : {&boundaries_, &align_starts_, &align_ends_}) {
+    w.u(v->size());
+    for (u64 x : *v) w.u(x);
+  }
+  w.u(data_names_.size());
+  for (u64 x : data_names_) w.u(x);
+  w.s("end");
+  std::error_code ec;
+  std::filesystem::create_directories(config_->cache_dir, ec);
+  std::string tmp = path + ".tmp";
+  {
+    std::ofstream f(tmp, std::ios::binary);
+    if (!f) return;
+    f << w.out;
+    if (!f) return;
+  }
+  std::filesystem::rename(tmp, path, ec);   // readers see the old file or the new one
+}
+
+bool Original::load_snapshot(const std::string& path, const std::string& key) {
+  if (!file_exists(path)) return false;
+  std::string data;
+  try { data = read_file(path); } catch (...) { return false; }
+  Reader r{data};
+  if (r.s() != key) return false;
+  Original o;   // filled, then taken only when the whole file reads
+  for (u64 n = r.count(32); n--;) {
+    IdaFunction f;
+    f.ea = r.u();
+    f.size = r.u();
+    f.name = r.s();
+    u64 flags = r.u();
+    f.lib = flags & 1;
+    f.thunk = flags & 2;
+    o.function_order.push_back(f.ea);
+    o.ida_names[f.ea] = f.name;
+    o.functions[f.ea] = std::move(f);
+  }
+  for (u64 n = r.count(16); n--;) {
+    u64 ea = r.u();
+    auto& slots = o.vtables[ea];
+    for (u64 k = r.count(8); k--;) slots.push_back(r.u());
+  }
+  for (u64 n = r.count(16); n--;) {
+    std::string_view name = r.s();
+    o.by_name.emplace(std::string(name), r.u());
+  }
+  for (u64 n = r.count(32); n--;) {
+    u64 ea = r.u();
+    Linked l;
+    l.lib = r.s();
+    l.symbol = r.s();
+    l.has_symbol = r.u() != 0;
+    o.linked[ea] = std::move(l);
+  }
+  for (auto* v : {&o.boundaries_, &o.align_starts_, &o.align_ends_}) {
+    u64 n = r.count(8);
+    v->reserve(n);
+    while (n--) v->push_back(r.u());
+  }
+  u64 n = r.count(8);
+  o.data_names_.reserve(n);
+  while (n--) o.data_names_.insert(r.u());
+  if (r.s() != "end" || !r.ok || r.p != data.size()) return false;
+  functions = std::move(o.functions);
+  function_order = std::move(o.function_order);
+  ida_names = std::move(o.ida_names);
+  by_name = std::move(o.by_name);
+  vtables = std::move(o.vtables);
+  linked = std::move(o.linked);
+  boundaries_ = std::move(o.boundaries_);
+  align_starts_ = std::move(o.align_starts_);
+  align_ends_ = std::move(o.align_ends_);
+  data_names_ = std::move(o.data_names_);
+  return true;
 }
 
 u64 Original::extent(u64 va) const {
@@ -174,13 +331,14 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   std::vector<std::string_view> decs;
   decs.reserve(syms.size());
   for (auto& s : syms) decs.push_back(s.second);
-  nc.load(decs);
+  std::vector<const NameInfo*> infos = nc.load(decs);   // infos[i]: syms[i]'s
   decs = {};
-  for (auto& [va, dec] : syms) {
+  for (size_t i = 0; i < syms.size(); ++i) {
+    auto& [va, dec] = syms[i];
     auto& v = by_va[va];
     if (v.empty()) by_va_order.push_back(va);
     v.push_back(dec);
-    const NameInfo& ni = nc.info(dec);
+    const NameInfo& ni = *infos[i];
     std::string_view q = ni.qualified;
     auto& qv = qual_to_va[q];
     if (qv.empty()) qual_order.push_back(q);
@@ -196,16 +354,18 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
     by_suffix[q].push_back(q);
     for (size_t p = q.find("::"); p != std::string_view::npos; p = q.find("::", p + 2)) by_suffix[q.substr(p + 2)].push_back(q);
   }
-  std::unordered_set<std::string_view> code_names;
+  std::unordered_set<std::string_view, SvHash> code_names;
   SvMap<u64> code_by_dec;
-  for (auto& [va, d] : syms) {
+  for (size_t i = 0; i < syms.size(); ++i) {
+    auto& [va, d] = syms[i];
     if (!img.executable(va)) continue;
-    code_names.insert(nc.info(d).qualified);
+    code_names.insert(infos[i]->qualified);
     code_by_dec[d] = va;
   }
-  for (auto& [va, d] : syms) {
+  for (size_t i = 0; i < syms.size(); ++i) {
+    auto& [va, d] = syms[i];
     if (img.executable(va)) continue;
-    if (local_static_match(d) || code_names.count(nc.info(d).owner)) local_statics.insert(va);
+    if (local_static_match(d) || code_names.count(infos[i]->owner)) local_statics.insert(va);
   }
   for (auto& [va, d] : syms) {
     size_t m = local_statics.count(va) ? local_static_match(d) : 0;

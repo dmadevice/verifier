@@ -24,5 +24,6 @@ data_names = analysis/names.jsonl
 # MSVC's undname.exe, from the toolchain the rebuild uses
 undname = C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64/undname.exe
 
-# where the undecorated-name cache is kept (optional; written by --update)
+# where caches are kept (optional): the undecorated-name cache (written by --update) and a snapshot of the
+# original's exports (rewritten whenever one of them changes)
 cache_dir = .verifier

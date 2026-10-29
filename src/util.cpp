@@ -115,8 +115,6 @@ u64 parse_hex(std::string_view s) {
 
 bool starts_with(std::string_view s, std::string_view p) { return s.substr(0, p.size()) == p; }
 bool ends_with(std::string_view s, std::string_view p) { return s.size() >= p.size() && s.substr(s.size() - p.size()) == p; }
-bool is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-bool is_word(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
 
 std::string strip(std::string_view s) {
   size_t a = 0, b = s.size();

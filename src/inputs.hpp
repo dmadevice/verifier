@@ -51,7 +51,12 @@ class Original {
   const Config* config_ = nullptr;
   std::vector<u64> boundaries_, align_starts_, align_ends_;
   std::unordered_set<u64> data_names_;
+  void load_exports();   // the tables from the text exports
   void load_items();
+  // the tables as a binary file in the cache, valid while every input file keeps its size and modification time
+  static std::string snapshot_key(const Config& c);
+  bool load_snapshot(const std::string& path, const std::string& key);
+  void save_snapshot(const std::string& path, const std::string& key) const;
 };
 
 struct Lookup { std::vector<u64> vas; std::string qname; size_t nhits; };
@@ -67,19 +72,24 @@ class Rebuilt {
   std::vector<std::pair<u64, std::string>> syms;
   std::unordered_map<u64, std::vector<std::string_view>> by_va;   // decorated names at an address, map order
   std::vector<u64> by_va_order;
-  std::unordered_map<std::string_view, std::vector<u64>> qual_to_va;
+  std::unordered_map<std::string_view, std::vector<u64>, SvHash> qual_to_va;
   std::vector<std::string_view> qual_order;
   // (qualified name, address) -> its parameter lists there (sorted, distinct)
-  std::map<std::pair<std::string_view, u64>, std::vector<std::string_view>> sigs_of;
+  struct NameVaHash {
+    size_t operator()(const std::pair<std::string_view, u64>& k) const {
+      return std::hash<std::string_view>()(k.first) ^ (k.second * 0x9E3779B97F4A7C15ull);
+    }
+  };
+  std::unordered_map<std::pair<std::string_view, u64>, std::vector<std::string_view>, NameVaHash> sigs_of;
   std::vector<u64> sym_vas;
-  std::unordered_map<std::string_view, std::vector<std::string_view>> by_suffix;
+  std::unordered_map<std::string_view, std::vector<std::string_view>, SvHash> by_suffix;
   std::unordered_set<u64> local_statics;
   // local static VA -> the rebuilt functions it belongs to; nullopt: an owner without a symbol. Only statics
   // whose decorated name has the local static form have an entry (owners unknown for the others).
   std::map<u64, std::optional<std::set<u64>>> static_owner;
 
   // a decorated name's qualified name (the name itself without a name cache)
-  virtual std::string qualified(std::string_view dec) const { return names_ ? names_->info(dec).qualified : std::string(dec); }
+  virtual std::string qualified(std::string_view dec) const { return names_ ? std::string(names_->info(dec).qualified) : std::string(dec); }
   // the rebuilt addresses an annotation's name (and parameter list) pairs with; code: executable ones only
   virtual Lookup lookup(const std::string& key, const std::optional<std::string>& sig = std::nullopt, bool code = false) const;
   virtual u64 extent(u64 va) const;   // a function's end: its .pdata chain, else the next symbol (padding trimmed)

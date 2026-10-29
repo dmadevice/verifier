@@ -17,7 +17,7 @@ struct Config {
   std::string library_functions;     // other functions attributed to libraries (optional)
   std::string symbols;               // extra `name 0x<va>` lines (optional)
   std::string undname;               // MSVC undname.exe, or a program printing its output
-  std::string cache_dir;             // where the undecorated-name cache is kept (optional)
+  std::string cache_dir;             // where the name cache and the exports snapshot are kept (optional)
 
   std::string names_cache() const;   // the cache file ("" when there is no cache_dir)
   // the file at `path`; exits with a message (code 2) when it is unreadable or a required key is missing

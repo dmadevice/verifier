@@ -50,8 +50,10 @@ bool ends_with(std::string_view s, std::string_view p);
 std::string strip(std::string_view s);        // without leading and trailing whitespace
 std::string rstrip_char(std::string_view s, char c);
 std::vector<std::string> split_ws(std::string_view s);   // whitespace-separated fields
-bool is_space(char c);
-bool is_word(char c);                          // [A-Za-z0-9_]
+inline bool is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+inline bool is_word(char c) {                  // [A-Za-z0-9_]
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
 std::string join(const std::vector<std::string>& v, std::string_view sep);
 std::string replace_all(std::string s, std::string_view from, std::string_view to);
 std::string lower(std::string s);

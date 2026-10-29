@@ -47,9 +47,9 @@ namespace {
 const char* const KINDS[] = {"FUNCTION", "STUB", "SYNTHETIC", "TEMPLATE", "LIBRARY", "GLOBAL", "VTABLE"};
 
 // `//\s*(FUNCTION|...):\s*<module>\s+0x([0-9a-fA-F]+)\s*(.*)$` anywhere in the line: kind, hex, rest
-bool match_annotation(const std::string& line, const std::string& module, std::string& kind, std::string& hexs,
+bool match_annotation(std::string_view line, const std::string& module, std::string& kind, std::string& hexs,
                       std::string& rest) {
-  for (size_t p = line.find("//"); p != std::string::npos; p = line.find("//", p + 1)) {
+  for (size_t p = line.find("//"); p != std::string_view::npos; p = line.find("//", p + 1)) {
     size_t i = p + 2;
     while (i < line.size() && is_space(line[i])) ++i;
     const char* k = nullptr;
@@ -72,8 +72,8 @@ bool match_annotation(const std::string& line, const std::string& module, std::s
     size_t r = h;
     while (r < line.size() && is_space(line[r])) ++r;
     kind = k;
-    hexs = line.substr(j, h - j);
-    rest = line.substr(r);
+    hexs = std::string(line.substr(j, h - j));
+    rest = std::string(line.substr(r));
     return true;
   }
   return false;
@@ -91,7 +91,10 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
       if (!(ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
             ends_with(path, ".inl")))
         continue;
-      auto lines = read_lines(path);
+      std::string data = read_file(path);
+      if (data.find(module) == std::string::npos) continue;   // no annotation of this module here
+      std::vector<std::string_view> lines;
+      for_each_line(data, [&](std::string_view l) { lines.push_back(l); });
       for (size_t i = 0; i < lines.size(); ++i) {
         std::string kind, hexs, rest0;
         if (!match_annotation(lines[i], module, kind, hexs, rest0)) continue;

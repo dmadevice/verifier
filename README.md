@@ -95,7 +95,9 @@ class Player { ... };
 
 All of it goes in a configuration file (`verifier.conf` in the working directory by default); relative
 paths are relative to it, and it marks the project root that source paths in the report are given from. See
-[`verifier.conf.example`](verifier.conf.example).
+[`verifier.conf.example`](verifier.conf.example). With a `cache_dir`, the tables read from the
+disassembler exports and library attribution are kept there as a binary snapshot, used while every one of
+those files keeps its size and modification time.
 
 ## Usage
 
