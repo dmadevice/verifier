@@ -23,11 +23,13 @@ struct Key {
   enum Kind : u8 { VA, CONST, STR, TD, TI, VBT, UNRESOLVED, IMP } kind = UNRESOLVED;
   u64 va = 0;
   std::string name;
-  Import imp;   // IMP only (symbolised tokens)
+  const Import* imp = nullptr;   // IMP only (symbolised tokens): the image's entry
   static Key of_va(u64 v) { Key k; k.kind = VA; k.va = v; return k; }
   static Key named(Kind kd, std::string n) { Key k; k.kind = kd; k.name = std::move(n); return k; }
   bool is_va(u64 v) const { return kind == VA && va == v; }
-  bool operator==(const Key& o) const { return kind == o.kind && va == o.va && name == o.name && imp == o.imp; }
+  bool operator==(const Key& o) const {
+    return kind == o.kind && va == o.va && name == o.name && (imp == o.imp || (imp && o.imp && *imp == *o.imp));
+  }
   std::string text() const;   // what a problem message shows: hex(va) or the name
 };
 
