@@ -147,5 +147,5 @@ hashing and line splitting. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 20 MB binary with 5,500 annotated functions, a run takes about 1.5 seconds and 250 MB on one core
-(with the undname cache warm).
+On a 20 MB binary with 5,500 annotated functions, a run takes about 0.7 to 0.9 seconds and 215 MB on one
+core (with the undname cache and the exports snapshot warm).
