@@ -7,6 +7,7 @@
 #include <cstring>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 
 namespace verifier {
@@ -139,11 +140,9 @@ Layout layout(const u8* b, size_t n, bool has_mem, unsigned addrsz) {
 }
 
 // For a gather/scatter (vector-indexed memory): the VEX/EVEX vector length (0 128-bit, 1 256-bit, 2 512-bit) and
-// the index register's size log2 (4 xmm, 5 ymm, 6 zmm), halved for dword indices of qword elements; nullopt for
-// any other instruction.
+// the index register's size log2 (4 xmm, 5 ymm, 6 zmm), halved (`half`) for dword indices of qword elements.
 struct Vsib { int len, index_sizelg; };
-std::optional<Vsib> vsib_of(const u8* b, size_t n, std::string_view mnemonic) {
-  if (mnemonic.find("gather") == std::string_view::npos && mnemonic.find("scatter") == std::string_view::npos) return std::nullopt;
+Vsib vsib_of(const u8* b, size_t n, bool half) {
   size_t p = 0;
   while (p < n && (b[p] == 0x66 || b[p] == 0x67 || b[p] == 0xf2 || b[p] == 0xf3 || b[p] == 0x2e || b[p] == 0x3e ||
                    b[p] == 0x26 || b[p] == 0x36 || b[p] == 0x64 || b[p] == 0x65))
@@ -152,7 +151,6 @@ std::optional<Vsib> vsib_of(const u8* b, size_t n, std::string_view mnemonic) {
   if (p + 2 < n && b[p] == 0xc4) len = (b[p + 2] >> 2) & 1;
   else if (p + 1 < n && b[p] == 0xc5) len = (b[p + 1] >> 2) & 1;
   else if (p + 3 < n && b[p] == 0x62) len = (b[p + 3] >> 5) & 3;
-  bool half = mnemonic.ends_with("dq") || mnemonic.ends_with("dpd");
   return Vsib{len, 4 + std::max(0, len - (half ? 1 : 0))};
 }
 
@@ -171,21 +169,34 @@ std::string_view mnemonic_of(std::string_view text) {
   }
 }
 
-// An instruction's mnemonic, as fadec's formatter spells it. It depends only on the fields in the key (type,
-// prefixes, operand and address size, the first operand's kind and size, segment), so each is formatted once.
-Mnem mnemonic(const FdInstr& fi) {
+// An instruction's mnemonic, as fadec's formatter spells it, and whether it is a gather/scatter (`vsib`, with
+// `half` for dword indices of qword elements). It depends only on the fields in the key (type, prefixes, operand
+// and address size, the first operand's kind and size, segment), so each is formatted once.
+struct MnemInfo { Mnem mnemonic; bool vsib, half; };
+const MnemInfo& mnemonic(const FdInstr& fi) {
   int t0 = FD_OP_TYPE(&fi, 0);
   u64 key = u64(FD_TYPE(&fi)) | u64(FD_HAS_LOCK(&fi) ? 1 : 0) << 16 | u64(FD_HAS_REP(&fi) ? 1 : 0) << 17 |
             u64(FD_HAS_REPNZ(&fi) ? 1 : 0) << 18 | u64(FD_OPSIZELG(&fi)) << 19 | u64(FD_ADDRSIZELG(&fi)) << 22 |
             u64(t0) << 25 | u64(t0 != FD_OT_NONE ? FD_OP_SIZELG(&fi, 0) + 1 : 0) << 28 |
             u64(t0 == FD_OT_REG ? FD_OP_REG_TYPE(&fi, 0) : 0) << 33 | u64(FD_SEGMENT(&fi)) << 38 |
             u64(FD_HAS_3E(&fi) ? 1 : 0) << 45;
-  static std::unordered_map<u64, Mnem> cache;
+  // a direct-mapped table in front of the map: one probe for almost every instruction
+  struct Slot { u64 key = ~0ull; const MnemInfo* info = nullptr; };
+  static std::array<Slot, 4096> recent;
+  Slot& slot = recent[(key ^ key >> 25 ^ key >> 38) & 4095];
+  if (slot.key == key) return *slot.info;
+  static std::unordered_map<u64, MnemInfo> cache;
   auto it = cache.find(key);
-  if (it != cache.end()) return it->second;
-  char text[128];
-  fd_format(&fi, text, sizeof text);
-  return cache.emplace(key, Mnem(mnemonic_of(text))).first->second;
+  if (it == cache.end()) {
+    char text[128];
+    fd_format(&fi, text, sizeof text);
+    std::string_view m = mnemonic_of(text);
+    bool vsib = m.find("gather") != std::string_view::npos || m.find("scatter") != std::string_view::npos;
+    bool half = m.ends_with("dq") || m.ends_with("dpd");
+    it = cache.emplace(key, MnemInfo{Mnem(m), vsib, half}).first;
+  }
+  slot = {key, &it->second};
+  return it->second;
 }
 
 // One instruction from at most `n` bytes at `p` (address `addr`); false when the bytes do not decode.
@@ -197,10 +208,11 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
   r.address = addr;
   r.size = u8(len);
   r.type = u16(FD_TYPE(&fi));
-  std::memcpy(r.raw, p, size_t(len));
-  r.mnemonic = mnemonic(fi);
+  const MnemInfo& mi = mnemonic(fi);
+  r.mnemonic = mi.mnemonic;
   unsigned addrlg = FD_ADDRSIZELG(&fi);
-  auto vsib = vsib_of(p, size_t(len), r.mnemonic.str());
+  std::optional<Vsib> vsib;
+  if (mi.vsib) vsib = vsib_of(p, size_t(len), mi.half);
   bool has_mem = false;
   for (int k = 0; k < 4; ++k) {
     int t = FD_OP_TYPE(&fi, k);
@@ -214,25 +226,24 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
         break;
       case FD_OT_IMM:
         op.type = OP_IMM;
-        op.imm = FD_OP_IMM(&fi, k);
+        op.value = FD_OP_IMM(&fi, k);
         break;
       case FD_OT_OFF:   // a branch target, relative to the next instruction
         op.type = OP_IMM;
-        op.imm = i64(addr + u64(len) + u64(FD_OP_IMM(&fi, k)));
+        op.value = i64(addr + u64(len) + u64(FD_OP_IMM(&fi, k)));
         break;
       default: {        // memory (also an AVX-512 broadcast)
         has_mem = true;
         op.type = OP_MEM;
-        op.mem = Mem{};
         unsigned base = FD_OP_BASE(&fi, k), index = FD_OP_INDEX(&fi, k);
-        op.mem.base = base == FD_REG_NONE ? 0 : make_reg(FD_RT_GPL, base, addrlg);
-        op.mem.index = index == FD_REG_NONE ? 0
-                       : vsib          ? make_reg(FD_RT_VEC, index, unsigned(vsib->index_sizelg))
-                                       : make_reg(FD_RT_GPL, index, addrlg);
+        op.reg = base == FD_REG_NONE ? 0 : make_reg(FD_RT_GPL, base, addrlg);
+        op.index = index == FD_REG_NONE ? 0
+                   : vsib          ? make_reg(FD_RT_VEC, index, unsigned(vsib->index_sizelg))
+                                   : make_reg(FD_RT_GPL, index, addrlg);
         if (vsib) op.size = u8(16 << vsib->len);   // the vector the elements are gathered from, not one element
-        op.mem.scale = i8(1 << FD_OP_SCALE(&fi, k));
-        op.mem.disp = FD_OP_DISP(&fi, k);
-        op.mem.segment = FD_SEGMENT(&fi) == FD_REG_NONE ? 0 : make_reg(FD_RT_SEG, FD_SEGMENT(&fi), 1);
+        op.scale = i8(1 << FD_OP_SCALE(&fi, k));
+        op.value = FD_OP_DISP(&fi, k);
+        op.segment = FD_SEGMENT(&fi) == FD_REG_NONE ? 0 : u8(FD_SEGMENT(&fi) + 1);
       }
     }
     r.ops.push_back(op);
@@ -260,6 +271,8 @@ const std::string& Mnem::intern(std::string_view s) {
   return *it->second;
 }
 
+static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96, "instructions are kept for the run: keep them flat");
+
 bool Insn::group(u8 g) const { return (gmask & group_bit(g)) != 0; }
 bool Insn::branches() const { return (gmask & 7) != 0; }
 
@@ -284,19 +297,19 @@ std::string Insn::op_str() const {
     if (op.type == OP_REG) {
       out += reg_name(op.reg);
     } else if (op.type == OP_IMM) {
-      out += branches() ? hex(u64(op.imm)) : hex_signed(op.imm);
+      out += branches() ? hex(u64(op.imm())) : hex_signed(op.imm());
     } else {
-      std::string addr = reg_name(op.mem.base);
-      if (op.mem.index) {
+      std::string addr = reg_name(op.base());
+      if (op.index) {
         if (!addr.empty()) addr += "+";
-        addr += reg_name(op.mem.index);
-        if (op.mem.scale > 1) addr += "*" + std::to_string(op.mem.scale);
+        addr += reg_name(op.index);
+        if (op.scale > 1) addr += "*" + std::to_string(op.scale);
       }
-      if (op.mem.disp || addr.empty()) {
-        std::string d = hex_signed(op.mem.disp);
+      if (op.disp() || addr.empty()) {
+        std::string d = hex_signed(op.disp());
         addr += addr.empty() || d[0] == '-' ? d : "+" + d;
       }
-      out += size_ptr(op.size) + (op.mem.segment ? std::string(reg_name(op.mem.segment)) + ":" : "") + "[" + addr + "]";
+      out += size_ptr(op.size) + (op.segment ? std::string(reg_name(segment_reg(op))) + ":" : "") + "[" + addr + "]";
     }
   }
   return out;
@@ -313,6 +326,7 @@ const char* reg_name(u16 reg) {
   }
   return it->second.c_str();
 }
+u16 segment_reg(const Operand& op) { return op.segment ? make_reg(FD_RT_SEG, op.segment - 1u, 1) : 0; }
 u16 reg_canon(u16 reg) {
   static std::unordered_map<u16, u16> canon;
   static std::unordered_map<std::string_view, u16> by_name;
@@ -383,22 +397,25 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
     const u8* p = reinterpret_cast<const u8*>(code.data());
     size_t off = 0;
     Insn ins;
-    insns.reserve(code.size() / 3);
+    static std::vector<Insn> scratch;   // decoded into, then copied at the exact size: functions stay for the run
+    scratch.clear();
     while (off < code.size() && decode_one(p + off, code.size() - off, s + off, ins)) {
       i64 k = i64(off);
       if (k >= cut) break;
       off += ins.size;
       for (auto& op : ins.ops) {
-        if (op.type == OP_MEM && op.mem.base != rip && op.mem.index && frva <= op.mem.disp &&
-            op.mem.disp < erva + i64(TABLE_SLACK)) {
-          i64 t = op.mem.disp - frva;
+        if (op.type == OP_MEM && op.base() != rip && op.index && frva <= op.disp() &&
+            op.disp() < erva + i64(TABLE_SLACK)) {
+          i64 t = op.disp() - frva;
           auto it = tables.find(t);
           tables[t] = std::max(it == tables.end() ? 0 : it->second, int(op.size));
           if (t < cut) cut = std::max(t, i64(ins.address + ins.size - s));
         }
       }
-      insns.push_back(std::move(ins));
+      scratch.push_back(ins);
     }
+    insns.resize(scratch.size());   // Insn is trivially copyable
+    std::memcpy(static_cast<void*>(insns.data()), scratch.data(), scratch.size() * sizeof(Insn));
   }
   // alignment nops after the last ret/jmp (before a switch table) are padding, not code
   while (insns.size() > 1 && insns.back().type == FDI_NOP &&
@@ -431,7 +448,6 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   for (auto& i : insns) decoded += i.size;
   complete = decoded == cut + (resume ? n - *resume : 0);
   image_base = image_base_regs(insns, im.base);
-  insns.shrink_to_fit();   // functions stay decoded for the run: no growth slack
   trim_padding();
 }
 
@@ -501,18 +517,18 @@ std::vector<Field> Code::fields(const Insn& ins) const {
   i64 frva = i64(start - img->base);
   if (ins.branches()) {
     for (auto& op : ins.ops)
-      if (op.type == OP_IMM && !(i64(start) <= op.imm && op.imm < i64(end)) && ins.imm_size)
-        out.push_back({ins.imm_offset, ins.imm_size, F_EXT, op.imm, 0});
+      if (op.type == OP_IMM && !(i64(start) <= op.imm() && op.imm() < i64(end)) && ins.imm_size)
+        out.push_back({ins.imm_offset, ins.imm_size, F_EXT, op.imm(), 0});
   }
   for (auto& op : ins.ops) {
     if (op.type != OP_MEM) continue;
     int size = ins.type == FDI_LEA ? 0 : op.size;   // bytes read there; lea only takes the address
-    if (op.mem.base == reg_rip()) {
-      out.push_back({ins.disp_offset, 4, F_RIP, i64(ins.address + ins.size) + op.mem.disp, size});
-    } else if (op.mem.index && tables.count(op.mem.disp - frva)) {
-      out.push_back({ins.disp_offset, ins.disp_size, F_TBL, op.mem.disp - frva, 0});
+    if (op.base() == reg_rip()) {
+      out.push_back({ins.disp_offset, 4, F_RIP, i64(ins.address + ins.size) + op.disp(), size});
+    } else if (op.index && tables.count(op.disp() - frva)) {
+      out.push_back({ins.disp_offset, ins.disp_size, F_TBL, op.disp() - frva, 0});
     } else if (image_relative(ins, op)) {
-      out.push_back({ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.mem.disp, size});
+      out.push_back({ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.disp(), size});
     }
   }
   if (relocated) {
@@ -539,13 +555,32 @@ bool Code::image_relative(const Insn& ins, const Operand& op) const {
   u32 have = k < image_base.size() ? image_base[k] : 0;
   if (!have) return false;
   u32 regs = 0;
-  for (u16 r : {op.mem.base, op.mem.index}) if (r) { int g = gpr_index(r); if (g >= 0) regs |= 1u << g; }
-  return (have & regs) && op.mem.disp > 0 && img->flags(img->base + u64(op.mem.disp)).has_value();
+  for (u16 r : {op.base(), op.index}) if (r) { int g = gpr_index(r); if (g >= 0) regs |= 1u << g; }
+  return (have & regs) && op.disp() > 0 && img->flags(img->base + u64(op.disp())).has_value();
 }
 
 std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
   // must-analysis over the instructions' control flow: which GPRs hold __ImageBase on entry to each one
   size_t n = insns.size();
+  std::vector<u32> kill(n), gen(n);
+  bool any_gen = false;
+  for (size_t k = 0; k < n; ++k) {
+    const Insn& ins = insns[k];
+    u32 kl = ins.wmask;
+    if (ins.group(GRP_CALL)) kl |= VOLATILE;
+    u32 g = 0;
+    if (ins.type == FDI_LEA && ins.ops.size() == 2 && ins.ops[1].type == OP_MEM) {
+      const Operand& m = ins.ops[1];
+      if (m.base() == reg_rip() && !m.index && u64(i64(ins.address + ins.size) + m.disp()) == base) {
+        int x = gpr_index(ins.ops[0].reg);
+        if (x >= 0) g = 1u << x;
+      }
+    }
+    kill[k] = kl; gen[k] = g;
+    any_gen |= g != 0;
+  }
+  // nothing loads __ImageBase: no register holds it anywhere (an empty vector says so for every instruction)
+  if (!any_gen) return {};
   auto index_of = [&](u64 a) -> long {   // instructions are in address order
     auto it = std::lower_bound(insns.begin(), insns.end(), a, [](const Insn& i, u64 x) { return i.address < x; });
     return it != insns.end() && it->address == a ? long(it - insns.begin()) : -1;
@@ -565,7 +600,7 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
     const Insn& ins = insns[k];
     if (k + 1 < n && falls(ins)) edges.emplace_back(u32(k + 1), u32(k));
     if (ins.group(GRP_JUMP) && !ins.ops.empty() && ins.ops[0].type == OP_IMM) {
-      long t = index_of(u64(ins.ops[0].imm));
+      long t = index_of(u64(ins.ops[0].imm()));
       if (t >= 0) edges.emplace_back(u32(t), u32(k));
     }
     if (ins.type == FDI_JMP && !ins.ops.empty() && ins.ops[0].type == OP_REG) switches.push_back(u32(k));
@@ -583,21 +618,6 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
     else { b = pred.data() + npred[k]; e = pred.data() + npred[k + 1]; }
   };
 
-  std::vector<u32> kill(n), gen(n);
-  for (size_t k = 0; k < n; ++k) {
-    const Insn& ins = insns[k];
-    u32 kl = ins.wmask;
-    if (ins.group(GRP_CALL)) kl |= VOLATILE;
-    u32 g = 0;
-    if (ins.type == FDI_LEA && ins.ops.size() == 2 && ins.ops[1].type == OP_MEM) {
-      const Mem& m = ins.ops[1].mem;
-      if (m.base == reg_rip() && !m.index && u64(i64(ins.address + ins.size) + m.disp) == base) {
-        int x = gpr_index(ins.ops[0].reg);
-        if (x >= 0) g = 1u << x;
-      }
-    }
-    kill[k] = kl; gen[k] = g;
-  }
   constexpr u32 TOP = 0xFFFFFFFFu;   // "not reached yet": every register (must-analysis from the top)
   std::vector<u32> state(n);
   std::vector<char> reached(n);
@@ -645,8 +665,8 @@ std::optional<u64> leaf_extent(const Image& img, u64 va) {
       nxt = ins.address + ins.size;
       for (auto& op : ins.ops)
         if (op.type == OP_IMM && (ins.group(GRP_JUMP) || ins.group(GRP_CALL) || ins.group(GRP_BRANCH_RELATIVE)) &&
-            i64(va) <= op.imm && op.imm < i64(va + MAX_DATA_COMPARE))
-          reach = std::max(reach, u64(op.imm));
+            i64(va) <= op.imm() && op.imm() < i64(va + MAX_DATA_COMPARE))
+          reach = std::max(reach, u64(op.imm()));
       if ((ins.type == FDI_RET || ins.type == FDI_RETF || ins.type == FDI_JMP || ins.type == FDI_INT3) && reach < nxt)
         return ins.type != FDI_INT3 ? nxt : ins.address;
     }

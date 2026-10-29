@@ -19,49 +19,32 @@ constexpr u64 TABLE_SLACK = 0x1000;
 enum OpType : u8 { OP_INVALID = 0, OP_REG = 1, OP_IMM = 2, OP_MEM = 3 };
 enum Group : u8 { GRP_JUMP = 1, GRP_CALL = 2, GRP_BRANCH_RELATIVE = 7 };
 
-struct Mem {
-  i64 disp;
-  u16 base, index, segment;
-  i8 scale;
-};
-
-// the immediate and the memory reference share storage; read the one `type` names
+// An operand in 16 bytes. OP_MEM: [base + index*scale + disp], with a segment override if `segment`.
 struct Operand {
-  union {
-    i64 imm = 0;   // OP_IMM
-    Mem mem;       // OP_MEM
-  };
-  u16 reg = 0;     // OP_REG
+  i64 value = 0;    // OP_IMM: the immediate (a branch's: its target address); OP_MEM: the displacement
+  u16 reg = 0;      // OP_REG: the register; OP_MEM: the base register (0: none)
+  u16 index = 0;    // OP_MEM: the index register (0: none)
+  u8 segment = 0;   // OP_MEM: the decoder's segment number + 1 (0: none); segment_reg() gives the register
+  i8 scale = 0;     // OP_MEM
   u8 type = 0, size = 0;
+  i64 imm() const { return value; }
+  i64 disp() const { return value; }
+  u16 base() const { return reg; }
 };
 
-// An instruction's operands: up to three inline (almost every x86 instruction), all of them on the heap beyond
+// An instruction's operands, all inline (x86 instructions have at most 4); the used ones come first
 class OpVec {
  public:
-  OpVec() = default;
-  OpVec(const OpVec& o) : n_(o.n_) {
-    std::copy(o.inl_, o.inl_ + kInline, inl_);
-    if (o.more_) { more_.reset(new Operand[kMax]); std::copy(o.more_.get(), o.more_.get() + kMax, more_.get()); }
-  }
-  OpVec(OpVec&&) noexcept = default;
-  OpVec& operator=(const OpVec& o) { if (this != &o) { OpVec t(o); *this = std::move(t); } return *this; }
-  OpVec& operator=(OpVec&&) noexcept = default;
-  const Operand* begin() const { return more_ ? more_.get() : inl_; }
-  const Operand* end() const { return begin() + n_; }
-  size_t size() const { return n_; }
-  bool empty() const { return n_ == 0; }
-  const Operand& operator[](size_t i) const { return begin()[i]; }
-  void push_back(const Operand& o) {
-    if (n_ < kInline && !more_) { inl_[n_++] = o; return; }
-    if (!more_) { more_.reset(new Operand[kMax]); std::copy(inl_, inl_ + n_, more_.get()); }
-    if (n_ < kMax) more_[n_++] = o;
-  }
+  const Operand* begin() const { return ops_; }
+  const Operand* end() const { return ops_ + size(); }
+  size_t size() const { size_t n = 0; while (n < kMax && ops_[n].type != OP_INVALID) ++n; return n; }
+  bool empty() const { return ops_[0].type == OP_INVALID; }
+  const Operand& operator[](size_t i) const { return ops_[i]; }
+  void push_back(const Operand& o) { size_t n = size(); if (n < kMax) ops_[n] = o; }
 
  private:
-  static constexpr u8 kInline = 3, kMax = 4;   // x86 instructions have at most 4
-  Operand inl_[kInline];
-  u8 n_ = 0;
-  std::unique_ptr<Operand[]> more_;
+  static constexpr size_t kMax = 4;
+  Operand ops_[kMax];
 };
 
 // A mnemonic: interned (one string per distinct mnemonic for the run), compared and concatenated as a string
@@ -99,15 +82,14 @@ struct Insn {
   u16 wmask = 0;              // 64-bit GPRs written (gpr_index bits)
   u16 type = 0;               // the decoder's instruction type
   Mnem mnemonic;
-  char raw[16] = {};          // the instruction's bytes (at most 15)
   OpVec ops;
-  std::string_view bytes() const { return std::string_view(raw, size); }
   std::string op_str() const; // the operands as text (only reports need it)
   bool group(u8 g) const;
   bool branches() const;      // in GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE
 };
 
 const char* reg_name(u16 reg);       // a register's name ("" for none)
+u16 segment_reg(const Operand& op);  // a memory operand's segment register (0 for none)
 u16 reg_canon(u16 reg);              // the first register id seen with this register's name (0 for none)
 u16 reg_named(std::string_view name); // the canonical id of the general-purpose register with this name (0 if none)
 u16 reg_rip();
@@ -152,8 +134,9 @@ class Code {
   i64 cut = 0;
   std::optional<i64> resume;          // code resumes here after the tables (hand-written switches)
   bool complete = false;
-  std::vector<u32> image_base;        // per instruction: registers holding __ImageBase (bit per GPR)
+  std::vector<u32> image_base;        // image_base_regs() of the instructions
 
+  std::string_view bytes(const Insn& ins) const { return std::string_view(code).substr(size_t(ins.address - start), ins.size); }
   std::vector<Field> fields(const Insn& ins) const;
   std::vector<TableItem> table_region() const;
   std::vector<OutsideTable> outside_tables() const;
@@ -163,6 +146,7 @@ class Code {
   void trim_padding();
 };
 
+// per instruction, the GPRs (bit per gpr_index) that hold __ImageBase on entry; empty when none ever does
 std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base);
 int gpr_index(u16 reg);   // the 64-bit GPR a register is part of (0..15), -1 otherwise
 

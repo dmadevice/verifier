@@ -506,8 +506,8 @@ Problems decode_case() {
       const Want& w = want[i];
       u64 next = at + u64(w.size);
       ok = x.address == at && x.size == w.size && x.mnemonic == w.mnemonic;
-      if (ok && x.branches() && !x.ops.empty() && x.ops[0].type == OP_IMM) ok = x.ops[0].imm == i64(next) + w.target;
-      if (ok && !x.ops.empty() && x.ops[x.ops.size() - 1].type == OP_MEM) ok = x.ops[x.ops.size() - 1].mem.base == reg_rip() && x.ops[x.ops.size() - 1].mem.disp == w.target;
+      if (ok && x.branches() && !x.ops.empty() && x.ops[0].type == OP_IMM) ok = x.ops[0].imm() == i64(next) + w.target;
+      if (ok && !x.ops.empty() && x.ops[x.ops.size() - 1].type == OP_MEM) ok = x.ops[x.ops.size() - 1].base() == reg_rip() && x.ops[x.ops.size() - 1].disp() == w.target;
       at = next;
     }
     if (!ok) bad.push_back({"decode", "at " + hex(address)});

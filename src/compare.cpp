@@ -434,7 +434,7 @@ Comparer::CodeResult Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) 
       if (fa[z].off != fb[z].off || fa[z].size != fb[z].size || fa[z].kind != fb[z].kind) same_layout = false;
     auto enc = [&] { return "@" + std::to_string(k) + ": `" + a.mnemonic + " " + a.op_str() + "` | `" + b.mnemonic + " " + b.op_str() + "`"; };
     if (!same_layout) { probs.push_back({"encoding", enc()}); continue; }
-    Bytes ba(a.bytes()), bb(b.bytes());
+    Bytes ba(oc.bytes(a)), bb(rc.bytes(b));
     for (auto& f : fa) {
       mask(ba, f.off, f.off + f.size);
       mask(bb, f.off, f.off + f.size);

@@ -50,16 +50,16 @@ Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::functi
         o.base = reg_canon(op.reg);
       } else if (op.type == OP_IMM) {
         if (ins.branches()) {
-          i64 t = op.imm;
+          i64 t = op.imm();
           if (i64(lo) <= t && t < i64(hi)) { o.k = Op::REL; o.v = t - i64(lo); }
           else { o.k = Op::SYM; o.key = resolve(u64(t)); }
         } else {
           o.k = Op::I;
-          o.v = op.imm;
+          o.v = op.imm();
         }
       } else if (op.type == OP_MEM) {
-        if (op.mem.base == rip) {
-          u64 t = ins.address + ins.size + u64(op.mem.disp);
+        if (op.base() == rip) {
+          u64 t = ins.address + ins.size + u64(op.disp());
           Key r = resolve(t);
           if (const_by_value && r.kind == Key::CONST) {
             o.k = Op::CONST;
@@ -69,21 +69,21 @@ Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::functi
             o.key = r;
             o.size = op.size;
           }
-        } else if (flo <= op.mem.disp && op.mem.disp < fhi + i64(TABLE_SLACK) && op.mem.index) {
+        } else if (flo <= op.disp() && op.disp() < fhi + i64(TABLE_SLACK) && op.index) {
           o.k = Op::TBL;
-          o.base = reg_canon(op.mem.base);
-          o.index = reg_canon(op.mem.index);
-          o.scale = op.mem.scale;
-          o.v = op.mem.disp - flo;
+          o.base = reg_canon(op.base());
+          o.index = reg_canon(op.index);
+          o.scale = op.scale;
+          o.v = op.disp() - flo;
           o.size = op.size;
         } else {
           o.k = Op::M;
-          o.base = reg_canon(op.mem.base);
-          o.index = reg_canon(op.mem.index);
-          o.scale = op.mem.scale;
-          o.v = op.mem.disp;
+          o.base = reg_canon(op.base());
+          o.index = reg_canon(op.index);
+          o.scale = op.scale;
+          o.v = op.disp();
           o.size = op.size;
-          o.seg = reg_canon(op.mem.segment);
+          o.seg = reg_canon(segment_reg(op));
         }
       } else {
         continue;
