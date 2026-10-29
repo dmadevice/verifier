@@ -85,10 +85,6 @@ const std::map<u64, std::vector<u64>>& no_vtables() {
   static const std::map<u64, std::vector<u64>> none;
   return none;
 }
-const NameMap& no_names() {
-  static const NameMap none;
-  return none;
-}
 
 // zero buf[lo, hi) (the part inside the buffer)
 void mask(Bytes& buf, i64 lo, i64 hi) {
@@ -100,8 +96,9 @@ void mask(Bytes& buf, i64 lo, i64 hi) {
 }  // namespace
 
 Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res, const std::map<u64, std::vector<u64>>* vt,
-                   const NameMap* nm)
-    : O(o), R(r), resolve(std::move(res)), vtables(vt ? *vt : no_vtables()), names(nm ? *nm : no_names()) {
+                   NameOf nm)
+    : O(o), R(r), resolve(std::move(res)), vtables(vt ? *vt : no_vtables()),
+      names(nm ? std::move(nm) : NameOf([](u64) { return std::string_view(); })) {
   orig_code = [this](u64 s, u64 e) { return std::make_shared<const Code>(*O, s, e); };
   rebuilt_code = [this](u64 s, u64 e) { return std::make_shared<const Code>(*R, s, e); };
 }
@@ -465,11 +462,11 @@ Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth
   auto ob = O->pdata_in(ostart, oend), rb = R->pdata_in(rstart, rend);
   bool same = ob.size() == rb.size();
   for (size_t i = 0; same && i < ob.size(); ++i)
-    if (ob[i] - ostart != rb[i] - rstart || O->pdata.at(ob[i]).first - ostart != R->pdata.at(rb[i]).first - rstart) same = false;
+    if (ob[i] - ostart != rb[i] - rstart || O->pdata_at(ob[i])->end - ostart != R->pdata_at(rb[i])->end - rstart) same = false;
   if (!same) return {{"unwind", ".pdata ranges differ"}};
   Problems probs;
   for (size_t i = 0; i < ob.size(); ++i) {
-    auto p = unwind_info(O->pdata.at(ob[i]).second, R->pdata.at(rb[i]).second, ostart, oend, rstart, rend, depth);
+    auto p = unwind_info(O->pdata_at(ob[i])->unwind, R->pdata_at(rb[i])->unwind, ostart, oend, rstart, rend, depth);
     probs.insert(probs.end(), p.begin(), p.end());
   }
   return probs;
@@ -488,8 +485,7 @@ Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart,
   if (!o.handler) return {};
   Key got = resolve(*r.handler);
   if (!got.is_va(*o.handler)) return {{"unwind", "handler " + hex(*o.handler) + " vs " + got.text()}};
-  auto it = names.find(*o.handler);
-  return handler_data(it == names.end() ? "" : it->second, *o.hdata, *r.hdata, ostart, oend, rstart, rend, depth);
+  return handler_data(names(*o.handler), *o.hdata, *r.hdata, ostart, oend, rstart, rend, depth);
 }
 
 // -- EH ----------------------------------------------------------------------------------------------------------
@@ -526,7 +522,7 @@ class EHContext {
       return;
     }
     auto oe = extent_or_leaf(*O, o), re = extent_or_leaf(*R, r);
-    if (O->pdata.count(o) != R->pdata.count(r)) { probs.push_back({"eh", "funclet " + hex(o) + ": .pdata presence differs"}); return; }
+    if (!O->pdata_at(o) != !R->pdata_at(r)) { probs.push_back({"eh", "funclet " + hex(o) + ": .pdata presence differs"}); return; }
     if (!oe || !re) { probs.push_back({"eh", "funclet " + hex(o) + " has no .pdata"}); return; }
     if (depth >= MAX_FUNCLET_DEPTH) { probs.push_back({"eh", "funclet nesting too deep"}); return; }
     for (auto& [cat, why] : c->function(o, *oe, r, *re, depth + 1))

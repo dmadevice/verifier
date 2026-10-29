@@ -65,7 +65,7 @@ void const_by_value(Tok& o, const Tok& r, const Image& O) {
     if (r.ops[z].k == Op::CONST && o.ops[z].k == Op::MSYM) {
       Op c{};
       c.k = Op::CONST;
-      c.bytes = O.bytes(o.ops[z].key.va, i64(r.ops[z].bytes.size()));
+      c.key.name = O.bytes(o.ops[z].key.va, i64(r.ops[z].bytes().size()));
       o.ops[z] = c;
     }
   }
@@ -129,13 +129,10 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
   bool same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
-  std::vector<Insn> oi, ri;   // decoded again, with their tokens, only when the report shows instructions
-  Toks ot, rt;
+  Toks ot, rt;   // only when the report shows instructions
   if (!same || show) {
-    oi = oc.decoded();
-    ri = rc.decoded();
-    ot = symbolise(oi, ova, oend, by_va(), orig.img, false);
-    rt = symbolise(ri, rva, rend, resolve, reb.img, true);
+    ot = symbolise(oc, by_va(), false);
+    rt = symbolise(rc, resolve, true);
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
     unresolved.clear();
     for (auto& t : rt) add_unresolved(t, unresolved);
@@ -151,19 +148,22 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   if (!same) {
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
       if (ot[k] == rt[k]) continue;
-      rec.first_diff = Result::FirstDiff{i64(k), oi[k].text(), ri[k].text()};
+      rec.first_diff = Result::FirstDiff{i64(k), oc.insn(oc.insns[k]).text(), rc.insn(rc.insns[k]).text()};
       break;
     }
     rec.has_diff = true;
-    if (want_diff) rec.diff = insn_diff(oi, ri, ot, rt, cmp.names);
+    if (want_diff) {
+      auto offsets = [](const Code& c) { std::vector<u32> v; for (auto& l : c.insns) v.push_back(l.off); return v; };
+      rec.diff = insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
+    }
   }
   if (show) {
     out.print("--- " + lk.qname + "  orig " + std::to_string(oend - ova) + "B | rebuilt " + std::to_string(rend - rva) + "B  " +
               (probs.empty() ? "MATCH" : "DIFF"));
     for (auto& [c, d] : probs) out.print("  problem " + c + ": " + d);
-    for (size_t k = 0; k < std::max(oi.size(), ri.size()); ++k) {
-      std::string x = k < oi.size() ? oi[k].text() : "";
-      std::string y = k < ri.size() ? ri[k].text() : "";
+    for (size_t k = 0; k < std::max(oc.insns.size(), rc.insns.size()); ++k) {
+      std::string x = k < oc.insns.size() ? oc.insn(oc.insns[k]).text() : "";
+      std::string y = k < rc.insns.size() ? rc.insn(rc.insns[k]).text() : "";
       bool eq = k < ot.size() && k < rt.size() && ot[k] == rt[k];
       out.print(std::string(eq ? " " : "*") + " " + pad_right(x, 48) + " | " + y);
     }

@@ -83,14 +83,14 @@ i64 literal_size(const Image& img, u64 start, const Key& key);
 
 class Comparer {
  public:
-  // vtables and names (if given) outlive the Comparer
+  // vtables (if given) outlive the Comparer
   Comparer(const Image* O, const Image* R, std::function<Key(u64)> resolve,
-           const std::map<u64, std::vector<u64>>* vtables = nullptr, const NameMap* names = nullptr);
+           const std::map<u64, std::vector<u64>>* vtables = nullptr, NameOf names = nullptr);
 
   const Image *O, *R;
   std::function<Key(u64)> resolve;
   const std::map<u64, std::vector<u64>>& vtables;   // original vtable VA -> slot VAs
-  const NameMap& names;                              // original VA -> IDA name
+  NameOf names;                                      // original VA -> IDA name
 
   Journal journal;
   // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;

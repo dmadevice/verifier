@@ -158,7 +158,6 @@ class Code {
   std::span<const Field> fields(const Lean& i) const { return {field_list.data() + i.field, i.nfields}; }
   Mnem mnemonic(const Lean& i) const { return Mnem::from_id(i.mnem); }
   Insn insn(const Lean& i) const;     // decoded again
-  std::vector<Insn> decoded() const;  // every instruction, decoded again
   std::vector<TableItem> table_region() const;
   std::vector<OutsideTable> outside_tables() const;
 

@@ -38,11 +38,14 @@ class Original {
   Image img;
   std::unordered_map<u64, IdaFunction> functions;
   std::vector<u64> function_order;                 // in the order of the export file
-  NameMap ida_names;
   SvViewMap<u64> by_name;
   std::map<u64, std::vector<u64>> vtables;
   std::unordered_map<u64, Linked> linked;
 
+  std::string_view ida_name(u64 va) const {   // "" for none
+    auto it = functions.find(va);
+    return it == functions.end() ? std::string_view() : it->second.name;
+  }
   u64 extent(u64 va) const;
   u64 object_end(u64 va) const;
   bool named_data(u64 va) const;
@@ -54,7 +57,7 @@ class Original {
   std::deque<std::string> text_;   // or the names from the exports
   std::string_view keep(std::string s) { return text_.emplace_back(std::move(s)); }
   std::vector<u64> boundaries_, align_starts_, align_ends_;
-  std::unordered_set<u64> data_names_;
+  std::vector<u64> data_names_;   // sorted, distinct
   void load_exports();   // the tables from the text exports
   void load_items();
   // the tables as a binary file in the cache, valid while every input file keeps its size and modification time

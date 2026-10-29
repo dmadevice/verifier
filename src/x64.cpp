@@ -487,13 +487,6 @@ Insn Code::insn(const Lean& l) const {
   return ins;
 }
 
-std::vector<Insn> Code::decoded() const {
-  std::vector<Insn> out;
-  out.reserve(insns.size());
-  for (auto& l : insns) out.push_back(insn(l));
-  return out;
-}
-
 void Code::trim_padding() {
   i64 n = i64(code.size());
   if (cut < n && !resume) {

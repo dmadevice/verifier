@@ -29,6 +29,11 @@ struct Import {
   bool operator==(const Import& o) const { return dll == o.dll && name == o.name && ordinal == o.ordinal; }
 };
 
+struct PData {   // a .pdata entry
+  u64 begin, end;   // VAs
+  u32 unwind;       // UNWIND_INFO RVA
+};
+
 struct Unwind {
   Bytes body;                      // header + unwind codes
   std::optional<u64> handler, hdata;
@@ -46,13 +51,13 @@ class Image {
   u64 base = 0;
   std::string_view img;                  // the memory-mapped image (offset = VA - base)
   std::vector<Section> sections;
-  std::map<u64, std::pair<u64, u32>> pdata;   // begin VA -> (end VA, UNWIND_INFO RVA); first entry wins
-  std::vector<u64> pdata_sorted;
+  std::vector<PData> pdata;               // by begin, one per begin (the first entry wins)
   std::vector<u64> reloc_sorted;          // the 64-bit relocation sites, sorted, distinct
   std::unordered_map<u64, Import> imports;   // IAT slot VA -> import
   std::map<std::string, std::pair<u64, u64>> pogo;   // subsection -> (start VA, end VA)
 
-  std::vector<u64> pdata_in(u64 lo, u64 hi) const;
+  const PData* pdata_at(u64 begin) const;   // the entry beginning at `begin`, or nullptr
+  std::vector<u64> pdata_in(u64 lo, u64 hi) const;   // the begins in [lo, hi)
   std::string_view bytes(u64 va, i64 n) const;   // short (or empty) past the end of the image
   u32 u32_at(u64 va) const;
   i32 i32_at(u64 va) const;

@@ -34,6 +34,11 @@ using json::Value;
 
 namespace {
 
+using NameMap = std::unordered_map<u64, std::string_view>;
+NameOf name_of(const NameMap& m) {   // a lookup in m ("" for none)
+  return [&m](u64 va) { auto it = m.find(va); return it == m.end() ? std::string_view() : it->second; };
+}
+
 bool verbose = false;
 
 // a name for temporary files no other run uses at the same time
@@ -157,7 +162,7 @@ Problems replay(const Value& c) {
     auto it = keys->find(t);
     return it != keys->end() ? it->second : Key::named(Key::UNRESOLVED, hex(t));
   };
-  Comparer cmp(&O, &R, resolve, &vtables, &names);
+  Comparer cmp(&O, &R, resolve, &vtables, name_of(names));
   std::map<u64, std::vector<u64>> folded, refs;
   for (auto& f : m["folded"].arr) folded[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
   for (auto& f : m["refs"].arr) refs[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
@@ -446,22 +451,18 @@ Problems folded_annotations() {
 }
 
 Problems instruction_diff() {
-  auto insns = [](std::vector<u64> as) {
-    std::vector<Insn> v;
-    for (u64 a : as) { Insn i; i.address = a; v.push_back(i); }
-    return v;
-  };
+  auto insns = [](std::vector<u32> offsets) { return offsets; };
   Toks o_toks = {{"push", {opr("rbx")}}, {"je", {oprel(7)}}, {"call", {opsym(Key::of_va(0x180001000))}}, {"pop", {opr("rbx")}}};
   Toks r_toks = {{"push", {opr("rbx")}}, {"je", {oprel(10)}}, {"nop", {}}, {"call", {opsym(Key::named(Key::UNRESOLVED, "Foo"))}},
                  {"pop", {opr("rbx")}}};
   auto oi = insns({0, 1, 3, 7}), ri = insns({0, 1, 3, 4, 10});
   NameMap names{{0x180001000, "Bar"}};
   Problems bad;
-  auto got = insn_diff(oi, ri, o_toks, r_toks, names, 1);
+  auto got = insn_diff(oi, ri, o_toks, r_toks, name_of(names), 1);
   std::vector<std::string> want = {"@1", "  je <+0x7>", "- call Bar", "+ nop", "+ call Foo", "  pop rbx"};
   if (got != want) bad.push_back({"diff", join(got, " | ")});
   r_toks[1] = {"je", {oprel(0)}};
-  got = insn_diff(oi, ri, o_toks, r_toks, names, 0);
+  got = insn_diff(oi, ri, o_toks, r_toks, name_of(names), 0);
   want = {"@1", "- je <+0x7>", "+ je <+0x0>", "- call Bar", "+ nop", "+ call Foo"};
   if (got != want) bad.push_back({"diff", join(got, " | ")});
   return bad;
@@ -948,7 +949,7 @@ Problems malformed_unwind() {
   auto end = R.extent(fr);
   Comparer c(&O, &R, [](u64 t) { return Key::named(Key::UNRESOLVED, hex(t)); });
   c.unwinds(fo, fo + 13, fr, fr + 13);
-  c.unwind_info(R.pdata.at(fr + 8).second, R.pdata.at(fr + 8).second, fo, fo + 13, fr, fr + 13, 0);
+  c.unwind_info(R.pdata_at(fr + 8)->unwind, R.pdata_at(fr + 8)->unwind, fo, fo + 13, fr, fr + 13, 0);
   return bad_if(!(end && *end == fr + 8), "extent", end ? hex(*end) : "None");
 }
 

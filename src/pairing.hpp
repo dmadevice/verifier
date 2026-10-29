@@ -40,7 +40,7 @@ class Pairing {
   const Original& orig;
   const Rebuilt& reb;
   std::unique_ptr<Comparer> cmp;
-  SvViewMap<u64> by_name;
+  std::optional<u64> named(std::string_view n) const;   // the original address the name has (the original's names, then vftables')
   std::unordered_map<u64, u64> reb_to_orig;
   std::unordered_map<u64, std::set<u64>> reb_to_origs;
   std::vector<u64> annotated_o;   // sorted
@@ -71,6 +71,7 @@ class Pairing {
 
  private:
   void pair_vftables();
+  SvViewMap<u64> vftables_;   // rebuilt vftable names of classes with several bases, not among the original's names
   void prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn);
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   std::unordered_set<u64> named_;

@@ -50,7 +50,6 @@ std::string reb_mi_vftable(std::string_view n) {
 }  // namespace
 
 Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotation>& anns) : orig(o), reb(r) {
-  by_name = orig.by_name;
   pair_vftables();
   for (auto& a : anns) {
     std::string key = a.kind == "VTABLE" ? a.name + "::`vftable'" : a.name;
@@ -66,20 +65,26 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
 }
 
 Pairing::Pairing(const Pairing& b)
-    : orig(b.orig), reb(b.reb), by_name(b.by_name), reb_to_orig(b.reb_to_orig), reb_to_origs(b.reb_to_origs),
-      annotated_o(b.annotated_o), paired_o(b.paired_o) {}
+    : orig(b.orig), reb(b.reb), reb_to_orig(b.reb_to_orig), reb_to_origs(b.reb_to_origs),
+      annotated_o(b.annotated_o), paired_o(b.paired_o), vftables_(b.vftables_) {}
+
+std::optional<u64> Pairing::named(std::string_view n) const {
+  if (auto it = orig.by_name.find(n); it != orig.by_name.end()) return it->second;
+  if (auto it = vftables_.find(n); it != vftables_.end()) return it->second;
+  return std::nullopt;
+}
 
 void Pairing::pair_vftables() {
   const Image &O = orig.img, &R = reb.img;
   std::unordered_map<std::string, std::vector<u64>> mi;
-  for (auto& [n, ea] : by_name) {
+  for (auto& [n, ea] : orig.by_name) {
     auto g = orig_mi_vftable(n);
     if (!g.empty()) mi[g].push_back(ea);
   }
   for (u64 va : reb.by_va_order) {
     for (auto& n : reb.by_va.at(va)) {
       auto g = reb_mi_vftable(n);
-      if (g.empty() || by_name.count(n) || !mi.count(g)) continue;
+      if (g.empty() || named(n) || !mi.count(g)) continue;
       u64 r_col = R.u64_at(va - 8);
       if (!R.flags(r_col)) continue;
       Bytes offsets(R.bytes(r_col + 4, 8));
@@ -88,7 +93,7 @@ void Pairing::pair_vftables() {
         u64 col = O.u64_at(ea - 8);
         if (O.flags(col) && Bytes(O.bytes(col + 4, 8)) == offsets) hits.push_back(ea);
       }
-      if (hits.size() == 1) by_name[n] = hits[0];
+      if (hits.size() == 1) vftables_[n] = hits[0];
     }
   }
 }
@@ -100,7 +105,8 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
 }
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
-  use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables, &orig.ida_names));
+  use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables,
+                                   [this](u64 va) { return orig.ida_name(va); }));
   Comparer& c = *cmp;
   orig_cache_ = &oc;
   rebuilt_cache_ = &rc;
@@ -118,7 +124,8 @@ Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<st
   c.containing = [this](u64 t) { return reb.containing(t); };
   c.end_of_previous = [this](u64 t) { return end_of_previous(t); };
   c.annotated_between = [this](u64 lo, u64 hi) { return annotated_between(lo, hi); };
-  for (auto& [n, ea] : by_name) named_.insert(ea);
+  for (auto& [n, ea] : orig.by_name) named_.insert(ea);
+  for (auto& [n, ea] : vftables_) named_.insert(ea);
   for (auto& [r, o] : reb_to_orig) named_.insert(o);
   for (auto& [v, s] : orig.vtables) named_.insert(v);
   c.orig_named = [this](u64 t) { return named_.count(t) || orig.named_data(t); };
@@ -271,8 +278,8 @@ Key Pairing::resolve_symbol(u64 t) const {
   const auto& names = bv == reb.by_va.end() ? none : bv->second;
   for (auto& n : names) if (is_const_name(n)) return Key::named_view(Key::CONST, n);
   for (auto& n : names) if (starts_with(n, "??_C@")) return Key::named_view(Key::STR, n);
-  for (auto& n : names) if (auto it = by_name.find(n); it != by_name.end()) return Key::of_va(it->second);
-  for (auto& n : names) if (auto it = by_name.find(reb.qualified(n)); it != by_name.end()) return Key::of_va(it->second);
+  for (auto& n : names) if (auto va = named(n)) return Key::of_va(*va);
+  for (auto& n : names) if (auto va = named(reb.qualified(n))) return Key::of_va(*va);
   for (auto& n : names) if (starts_with(n, "??_R0")) return Key::named_view(Key::TD, n);
   for (auto& n : names) if (starts_with(n, "_TI")) return Key::named_view(Key::TI, n);
   for (auto& n : names) if (starts_with(n, "??_8")) return Key::named_view(Key::VBT, n);
@@ -318,8 +325,8 @@ std::vector<u64> Pairing::alternates(u64 t) const {
   auto bv = reb.by_va.find(t);
   if (bv == reb.by_va.end() || bv->second.size() < 2) return {};
   std::set<u64> named;
-  for (auto& n : bv->second) if (auto it = by_name.find(n); it != by_name.end()) named.insert(it->second);
-  for (auto& n : bv->second) if (auto it = by_name.find(reb.qualified(n)); it != by_name.end()) named.insert(it->second);
+  for (auto& n : bv->second) if (auto va = this->named(n)) named.insert(*va);
+  for (auto& n : bv->second) if (auto va = this->named(reb.qualified(n))) named.insert(*va);
   if (auto it = reb_to_origs.find(t); it != reb_to_origs.end()) named.insert(it->second.begin(), it->second.end());
   return std::vector<u64>(named.begin(), named.end());
 }

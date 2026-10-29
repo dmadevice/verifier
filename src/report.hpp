@@ -15,19 +15,23 @@ namespace verifier {
 // One symbolised operand:
 //   r(reg) i(imm) rel(off) sym(key) msym(key, size) const(bytes) tbl(base, index, scale, off, size)
 //   m(base, index, scale, disp, size, seg)
-// Registers are canonical ids (reg_canon): equal exactly when their names are. Plain data.
+// Registers are canonical ids (reg_canon): equal exactly when their names are. Plain data, 64 bytes (a large
+// function's diff holds a token per instruction).
 struct Op {
-  enum K : u8 { R, I, REL, SYM, MSYM, CONST, TBL, M } k;
-  u16 base = 0, index = 0, seg = 0;   // R: base = the register
-  std::string_view bytes;             // CONST: the constant's bytes (a view of the image)
-  Key key;                            // SYM, MSYM (kind IMP for imports)
+  enum K : u8 { R, I, REL, SYM, MSYM, CONST, TBL, M };
+  Key key;                            // SYM, MSYM (kind IMP for imports); CONST: the bytes as key.name
   i64 v = 0;                          // I: imm; REL: offset; TBL: offset; M: disp
-  int scale = 0, size = 0;
+  u16 base = 0, index = 0, seg = 0;   // R: base = the register
+  u16 size = 0;
+  K k;
+  u8 scale = 0;
+  std::string_view bytes() const { return key.name; }   // CONST: the constant's bytes (a view of the image)
   bool operator==(const Op& o) const {
-    return k == o.k && base == o.base && index == o.index && seg == o.seg && bytes == o.bytes && key == o.key && v == o.v &&
-           scale == o.scale && size == o.size;
+    return k == o.k && base == o.base && index == o.index && seg == o.seg && key == o.key && v == o.v && scale == o.scale &&
+           size == o.size;
   }
 };
+static_assert(sizeof(Op) <= 64);
 // An instruction's operands, inline (at most 4)
 class OpList {
  public:
@@ -55,9 +59,9 @@ using Toks = std::vector<Tok>;
 
 Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
                   bool const_by_value);
-Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
-               bool const_by_value);
-std::string tok_text(const Tok& t, const NameMap& names);
+// every instruction of `c`, decoded again one at a time
+Toks symbolise(const Code& c, const std::function<Key(u64)>& resolve, bool const_by_value);
+std::string tok_text(const Tok& t, const NameOf& names);
 std::string classify(const Toks& a, const Toks& b);
 
 struct LongestMatch { size_t i, j, k; };
@@ -65,7 +69,8 @@ LongestMatch find_longest_match(const std::vector<int>& a, const std::vector<int
 struct Opcode { char tag; size_t i1, i2, j1, j2; };   // tag: e(qual) r(eplace) d(elete) i(nsert)
 std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int>& b);   // sequence alignment (report.cpp)
 
-std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vector<Insn>& ri, const Toks& ot, const Toks& rt,
-                                   const NameMap& names, int context = 2, size_t limit = 200);
+// the instructions' offsets in their functions and their tokens
+std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot, const Toks& rt,
+                                   const NameOf& names, int context = 2, size_t limit = 200);
 
 }  // namespace verifier

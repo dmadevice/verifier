@@ -79,7 +79,7 @@ Image Image::load(const std::string& path) {
   auto [exc_va, exc_size] = dir(3);
   for (u32 off = exc_va; off + 12 <= u64(exc_va) + exc_size / 12 * 12 && off + 12 <= img.size(); off += 12) {
     u64 b = base + rd32(img, off);
-    im.pdata.emplace(b, std::pair<u64, u32>(base + rd32(img, off + 4), rd32(img, off + 8)));
+    im.pdata.push_back({b, base + rd32(img, off + 4), rd32(img, off + 8)});
   }
   auto [rel_va, rel_size] = dir(5);
   for (u64 off = rel_va; off + 8 <= u64(rel_va) + rel_size;) {
@@ -141,7 +141,7 @@ Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections
   if (!mem.empty()) std::memcpy(im.mem_->data(), mem.data(), mem.size());
   im.img = std::string_view(im.mem_->data(), mem.size());
   im.sections = std::move(sections);
-  im.pdata = std::move(pdata);
+  for (auto& [b, e] : pdata) im.pdata.push_back({b, e.first, e.second});
   im.reloc_sorted = std::move(relocs);
   im.imports = std::move(imports);
   im.finish();
@@ -151,14 +151,24 @@ Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections
 void Image::finish() {
   std::sort(reloc_sorted.begin(), reloc_sorted.end());
   reloc_sorted.erase(std::unique(reloc_sorted.begin(), reloc_sorted.end()), reloc_sorted.end());
-  pdata_sorted.clear();
-  for (auto& kv : pdata) pdata_sorted.push_back(kv.first);
+  auto by_begin = [](const PData& a, const PData& b) { return a.begin < b.begin; };
+  std::stable_sort(pdata.begin(), pdata.end(), by_begin);
+  pdata.erase(std::unique(pdata.begin(), pdata.end(), [](const PData& a, const PData& b) { return a.begin == b.begin; }),
+              pdata.end());
+  pdata.shrink_to_fit();
+}
+
+const PData* Image::pdata_at(u64 begin) const {
+  auto it = std::lower_bound(pdata.begin(), pdata.end(), begin, [](const PData& p, u64 v) { return p.begin < v; });
+  return it != pdata.end() && it->begin == begin ? &*it : nullptr;
 }
 
 std::vector<u64> Image::pdata_in(u64 lo, u64 hi) const {
-  auto a = std::lower_bound(pdata_sorted.begin(), pdata_sorted.end(), lo);
-  auto b = std::lower_bound(pdata_sorted.begin(), pdata_sorted.end(), hi);
-  return a < b ? std::vector<u64>(a, b) : std::vector<u64>();
+  auto below = [](const PData& p, u64 v) { return p.begin < v; };
+  std::vector<u64> out;
+  for (auto it = std::lower_bound(pdata.begin(), pdata.end(), lo, below); it != pdata.end() && it->begin < hi; ++it)
+    out.push_back(it->begin);
+  return out;
 }
 
 size_t Image::reloc_lower_bound(u64 va) const {
@@ -205,17 +215,16 @@ Bytes Image::cstring(u64 va, bool wide) const {
 }
 
 std::optional<u64> Image::extent(u64 va) const {
-  auto it = pdata.find(va);
-  if (it == pdata.end()) return std::nullopt;
-  u64 end = it->second.first;
+  const PData* p = pdata_at(va);
+  if (!p) return std::nullopt;
+  u64 end = p->end;
   for (;;) {
-    auto nx = pdata.find(end);
-    if (nx == pdata.end()) break;
-    u32 u = nx->second.second;
-    unsigned char vf = u < img.size() ? static_cast<unsigned char>(img[u]) : 0;
+    const PData* nx = pdata_at(end);
+    if (!nx) break;
+    unsigned char vf = nx->unwind < img.size() ? static_cast<unsigned char>(img[nx->unwind]) : 0;
     if (!((vf >> 3) & 0x4)) break;               // UNW_FLAG_CHAININFO: continuation of the same function
-    if (nx->second.first <= end) break;          // an empty or backward range: malformed
-    end = nx->second.first;
+    if (nx->end <= end) break;                   // an empty or backward range: malformed
+    end = nx->end;
   }
   return end;
 }

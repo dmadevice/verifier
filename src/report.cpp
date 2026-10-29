@@ -52,7 +52,7 @@ void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::functi
         Key r = resolve(t);
         if (const_by_value && r.kind == Key::CONST) {
           o.k = Op::CONST;
-          o.bytes = img.bytes(t, op.size ? op.size : 4);
+          o.key.name = img.bytes(t, op.size ? op.size : 4);
         } else {
           o.k = Op::MSYM;
           o.key = r;
@@ -84,19 +84,18 @@ Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>
   return tok;
 }
 
-Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
-               bool const_by_value) {
-  Toks toks(insns.size());
-  for (size_t k = 0; k < insns.size(); ++k) symbolise_into(toks[k], insns[k], lo, hi, resolve, img, const_by_value);
+Toks symbolise(const Code& c, const std::function<Key(u64)>& resolve, bool const_by_value) {
+  Toks toks(c.insns.size());
+  for (size_t k = 0; k < c.insns.size(); ++k) symbolise_into(toks[k], c.insn(c.insns[k]), c.start, c.end, resolve, *c.img, const_by_value);
   return toks;
 }
 
-std::string tok_text(const Tok& tok, const NameMap& names) {
+std::string tok_text(const Tok& tok, const NameOf& names) {
   std::string out = tok.mnemonic.str();
   auto target = [&](const Key& r) {
     if (r.kind == Key::VA) {
-      auto it = names.find(r.va);
-      out += it != names.end() && !it->second.empty() ? it->second : hex(r.va);
+      std::string_view n = names(r.va);
+      out += n.empty() ? hex(r.va) : std::string(n);
     } else {
       out += r.kind == Key::IMP ? imp_str(r.imp) : r.name;
     }
@@ -114,7 +113,7 @@ std::string tok_text(const Tok& tok, const NameMap& names) {
       case Op::REL: out += "<+" + hex_signed(op.v) + ">"; break;   // an offset into the function
       case Op::SYM: target(op.key); break;
       case Op::MSYM: size_of(op.size); out += '['; target(op.key); out += ']'; break;
-      case Op::CONST: out += "[const "; out += hex_bytes(op.bytes.substr(0, 8)); out += ']'; break;
+      case Op::CONST: out += "[const "; out += hex_bytes(op.bytes().substr(0, 8)); out += ']'; break;
       case Op::TBL:
         size_of(op.size);
         out += "[table+" + hex_signed(op.v) + " + " + reg_name(op.index) + "*" + std::to_string(op.scale) + "]";
@@ -368,14 +367,14 @@ std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int
   return out;
 }
 
-std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vector<Insn>& ri, const Toks& ot, const Toks& rt,
-                                   const NameMap& names, int context, size_t limit) {
-  auto index = [](const std::vector<Insn>& insns) {
+std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot, const Toks& rt,
+                                   const NameOf& names, int context, size_t limit) {
+  auto index = [](const std::vector<u32>& off) {
     std::unordered_map<i64, size_t> m;
-    for (size_t k = 0; k < insns.size(); ++k) m[i64(insns[k].address - insns[0].address)] = k;
+    for (size_t k = 0; k < off.size(); ++k) m[i64(off[k]) - i64(off[0])] = k;
     return m;
   };
-  auto o_at = index(oi), r_at = index(ri);
+  auto o_at = index(o_off), r_at = index(r_off);
   // tokens as small ints (equal exactly when the tokens are), branch targets inside the function left open ("rel",)
   struct WildHash {
     size_t operator()(const Tok* t) const {
@@ -385,7 +384,6 @@ std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vecto
         mix(o.k);
         if (o.k == Op::REL) continue;
         mix(size_t(o.base) << 32 | size_t(o.index) << 16 | o.seg);
-        mix(std::hash<std::string_view>()(o.bytes));
         mix(std::hash<std::string_view>()(o.key.name));
         mix(size_t(o.key.va));
         mix(size_t(o.v));

@@ -81,7 +81,7 @@ struct SvHash {
 };
 template <class V>
 using SvMap = std::unordered_map<std::string, V, SvHash, std::equal_to<>>;
-using NameMap = std::unordered_map<u64, std::string_view>;   // VA -> name (views of text kept for the run)
+using NameOf = std::function<std::string_view(u64)>;   // VA -> name ("" for none; views of text kept for the run)
 // keyed by views of text kept elsewhere
 template <class V>
 using SvViewMap = std::unordered_map<std::string_view, V, SvHash>;

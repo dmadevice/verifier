@@ -124,10 +124,7 @@ void Original::load_exports() {
     if (!functions.count(f.ea)) function_order.push_back(f.ea);
     functions[f.ea] = f;
   });
-  for (u64 ea : function_order) {
-    ida_names[ea] = functions[ea].name;
-    by_name[functions[ea].name] = ea;
-  }
+  for (u64 ea : function_order) by_name[functions[ea].name] = ea;
   std::vector<json::Value> matches;
   if (file_exists(p.library_matches)) matches = json::parse(read_file(p.library_matches))["matches"].arr;
   if (file_exists(p.vtables)) {
@@ -236,7 +233,6 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
     f.lib = flags & 1;
     f.thunk = flags & 2;
     o.function_order.push_back(f.ea);
-    o.ida_names[f.ea] = f.name;
     o.functions[f.ea] = std::move(f);
   }
   for (u64 n = r.count(16); n--;) {
@@ -263,7 +259,9 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   }
   u64 n = r.count(8);
   o.data_names_.reserve(n);
-  while (n--) o.data_names_.insert(r.u());
+  while (n--) o.data_names_.push_back(r.u());
+  if (std::adjacent_find(o.data_names_.begin(), o.data_names_.end(), std::greater_equal<u64>()) != o.data_names_.end())
+    return false;   // not sorted and distinct
   if (r.s() != "end" || !r.ok || r.p != data.size()) return false;
   o.digest = std::move(digest);
   o.img = std::move(img);
@@ -303,9 +301,11 @@ void Original::load_items() {
       u64 ea;
       size_t e;
       if (!lead_ea(line, ea, e)) ea = u64(json::parse(line)["ea"].as_int());
-      data_names_.insert(ea);
+      data_names_.push_back(ea);
     });
   }
+  std::sort(data_names_.begin(), data_names_.end());
+  data_names_.erase(std::unique(data_names_.begin(), data_names_.end()), data_names_.end());
   for (u64 x : data_names_) b.insert(x);
   boundaries_.assign(b.begin(), b.end());
   for (auto& [s, e] : align) { align_starts_.push_back(s); align_ends_.push_back(e); }
@@ -316,7 +316,7 @@ u64 Original::object_end(u64 va) const {
   return it != boundaries_.end() ? *it : va;
 }
 
-bool Original::named_data(u64 va) const { return data_names_.count(va) != 0; }
+bool Original::named_data(u64 va) const { return std::binary_search(data_names_.begin(), data_names_.end(), va); }
 
 bool Original::in_padding(u64 va) const {
   long i = long(std::upper_bound(align_starts_.begin(), align_starts_.end(), va) - align_starts_.begin()) - 1;
