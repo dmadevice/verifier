@@ -9,12 +9,18 @@
 
 namespace verifier {
 
+struct AnnotationFlags {
+  bool folded = false;   // FOLDED: identical-code folding gave several functions the address
+  bool dtor = false;     // the definition is a destructor
+  std::string sig;       // the parameter list it pairs with (normalised; "" for any)
+};
+
 struct Annotation {
   std::string kind;       // FUNCTION STUB SYNTHETIC TEMPLATE LIBRARY GLOBAL VTABLE
   u64 va = 0;
   std::string name;
-  std::set<std::string> flags;   // FOLDED, DTOR, SIG=<params>
-  std::string path;
+  AnnotationFlags flags;
+  std::string_view path;  // text kept for the run (keep_text)
   int line = 0;
 };
 
@@ -26,7 +32,7 @@ struct Ignored {
 
 bool is_counted(const std::string& kind);   // FUNCTION SYNTHETIC TEMPLATE
 bool is_paired(const std::string& kind);    // counted + LIBRARY
-std::optional<std::string> sig_flag(const std::set<std::string>& flags);
+std::optional<std::string> sig_flag(const AnnotationFlags& flags);   // the parameter list, if any
 
 // The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name).
 std::vector<std::string> walk_files(const std::string& root);

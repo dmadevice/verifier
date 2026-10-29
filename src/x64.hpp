@@ -130,9 +130,12 @@ struct Lean {
   u32 off;          // from the function's start
   u32 field;        // its first field in Code::field_list
   u16 mnem;         // Mnem::id()
-  u8 size, nfields;
-  bool addressed;   // its operands depend on where it is: a branch, a RIP-relative or indexed memory operand, or a field
+  u8 size;
+  u8 nfields : 7;   // at most 4: a branch target, a memory operand, two relocations
+  // its operands depend on where it is: a branch, a RIP-relative or indexed memory operand, or a field
+  u8 addressed : 1;
 };
+static_assert(sizeof(Lean) == 12, "a function's code keeps one per instruction");
 
 // same size, and fields at the same places with the same kinds
 bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::span<const Field> fb);

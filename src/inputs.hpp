@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -25,6 +26,42 @@ struct IdaFunction {
   bool lib = false, thunk = false;
 };
 
+// IDA's functions, by address (a sorted vector)
+class FunctionTable {
+ public:
+  const IdaFunction* find(u64 ea) const;
+  bool contains(u64 ea) const { return find(ea) != nullptr; }
+  const IdaFunction& at(u64 ea) const;      // throws std::out_of_range when there is none
+  void set(const IdaFunction& f);           // adds it, or replaces the function at its address
+  void assign(std::vector<IdaFunction> fs);   // in any order; of several at one address, the last
+  size_t size() const { return fs_.size(); }
+  const IdaFunction* begin() const { return fs_.data(); }
+  const IdaFunction* end() const { return fs_.data() + fs_.size(); }
+
+ private:
+  std::vector<IdaFunction> fs_;
+};
+
+// The rebuilt map's symbols: the decorated names at each address, in map order (CSR: sorted addresses, each with
+// a range of the names)
+class Symbols {
+ public:
+  Symbols() = default;
+  explicit Symbols(const std::vector<std::pair<u64, std::string_view>>& syms);   // (address, name) in map order
+  // tests: each address with its names, in map order
+  static Symbols grouped(const std::vector<std::pair<u64, std::vector<std::string_view>>>& by_va);
+  std::span<const std::string_view> names(u64 va) const;   // empty when no symbol is there
+  bool contains(u64 va) const { return index(va) >= 0; }
+  const std::vector<u64>& vas() const { return vas_; }         // sorted
+  const std::vector<u64>& map_order() const { return order_; }   // the addresses as the map first has them
+
+ private:
+  std::vector<u64> vas_, order_;
+  std::vector<u32> first_;   // vas_[i]'s names are names_[first_[i], first_[i + 1])
+  std::vector<std::string_view> names_;
+  long index(u64 va) const;
+};
+
 struct Linked {
   std::string lib, symbol;
   bool has_symbol = false;
@@ -36,15 +73,14 @@ class Original {
   Original() = default;                 // fixtures: fill the fields
   std::string digest;
   Image img;
-  std::unordered_map<u64, IdaFunction> functions;
-  std::vector<u64> function_order;                 // in the order of the export file
-  SvViewMap<u64> by_name;
+  FunctionTable functions;
+  NameTable by_name;
   std::map<u64, std::vector<u64>> vtables;
   std::unordered_map<u64, Linked> linked;
 
   std::string_view ida_name(u64 va) const {   // "" for none
-    auto it = functions.find(va);
-    return it == functions.end() ? std::string_view() : it->second.name;
+    const IdaFunction* f = functions.find(va);
+    return f ? f->name : std::string_view();
   }
   u64 extent(u64 va) const;
   u64 object_end(u64 va) const;
@@ -75,11 +111,7 @@ class Rebuilt {
   Rebuilt(const std::string& path, const std::string& map_path, NameCache& names);
   virtual ~Rebuilt() = default;
   Image img;
-  // names are views of strings the NameCache owns (it outlives the tables)
-  std::vector<std::pair<u64, std::string_view>> syms;
-  std::unordered_map<u64, std::vector<std::string_view>> by_va;   // decorated names at an address, map order
-  std::vector<u64> by_va_order;
-  std::vector<u64> sym_vas;
+  Symbols symbols;   // names are views of strings the NameCache owns (it outlives the tables)
   std::unordered_set<u64> local_statics;
   // local static VA -> the rebuilt functions it belongs to; nullopt: an owner without a symbol. Only statics
   // whose decorated name has the local static form have an entry (owners unknown for the others).

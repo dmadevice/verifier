@@ -45,11 +45,11 @@ std::string head_chars(const std::string& s, size_t n) {
 }
 
 // a source path as the report gives it (relative to the root); many annotations share a file
-const std::string& where_of(const std::string& path, const std::string& root) {
+const std::string& where_of(std::string_view path, const std::string& root) {
   static std::unordered_map<std::string, std::string> memo;
-  std::string key = root + '\0' + path;
+  std::string key = root + '\0' + std::string(path);
   auto it = memo.find(key);
-  if (it == memo.end()) it = memo.emplace(std::move(key), relpath(path, root)).first;
+  if (it == memo.end()) it = memo.emplace(std::move(key), relpath(std::string(path), root)).first;
   return it->second;
 }
 
@@ -110,7 +110,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.src = where_of(ann.path, root) + ":" + std::to_string(ann.line);
   auto lk = reb.lookup(ann.name, sig_flag(ann.flags), true);
   rec.overloads = reb.overloads_of(ann.name);
-  if (!orig.functions.count(ova)) { rec.status = "BADADDR"; return rec; }
+  if (!orig.functions.contains(ova)) { rec.status = "BADADDR"; return rec; }
   if (is_counted(ann.kind) && orig.linked.count(ova)) {
     rec.status = "LIBCODE";
     auto& l = orig.linked.at(ova);
@@ -294,8 +294,8 @@ Totals summarize(const std::vector<Result>& results, const Original& orig, Out& 
   if (auto it = orig.img.pogo.find(".text$x"); it != orig.img.pogo.end()) funclets = it->second;
   size_t universe = 0;
   u64 ubytes = 0, mbytes = 0, lib_bytes = 0;
-  for (u64 ea : orig.function_order) {
-    auto& f = orig.functions.at(ea);
+  for (const IdaFunction& f : orig.functions) {
+    u64 ea = f.ea;
     if (f.lib || f.thunk || orig.linked.count(ea) || (funclets.first <= ea && ea < funclets.second)) continue;
     ++universe;
     ubytes += f.size;
@@ -554,7 +554,7 @@ int run(int argc, char** argv) {
   for (auto& [v, ss] : orig.vtables) slots.insert(ss.begin(), ss.end());
   auto has_code = [&](const std::string& n) { return !reb.lookup(n, std::nullopt, true).vas.empty(); };
   for (auto& ann : anns)
-    if (ann.flags.count("DTOR")) ann.name = pick_destructor(ann.name, slots.count(ann.va) != 0, has_code);
+    if (ann.flags.dtor) ann.name = pick_destructor(ann.name, slots.count(ann.va) != 0, has_code);
   Pairing pairing(orig, reb, anns);
   CodeCache orig_cache(&orig.img), rebuilt_cache(&reb.img);
   ph.mark("pairing");

@@ -86,6 +86,27 @@ using NameOf = std::function<std::string_view(u64)>;   // VA -> name ("" for non
 template <class V>
 using SvViewMap = std::unordered_map<std::string_view, V, SvHash>;
 
+// text kept for the run, each distinct string once
+std::string_view keep_text(std::string_view s);
+
+// name (a view of text kept elsewhere) -> u64, flat: the entries in the order first set, and an open-addressing
+// index over them
+class NameTable {
+ public:
+  using Entry = std::pair<std::string_view, u64>;
+  void set(std::string_view name, u64 v);   // adds the name, or replaces its value (keeping its place)
+  const u64* find(std::string_view name) const;
+  bool contains(std::string_view name) const { return find(name) != nullptr; }
+  size_t size() const { return entries_.size(); }
+  const Entry* begin() const { return entries_.data(); }
+  const Entry* end() const { return entries_.data() + entries_.size(); }
+
+ private:
+  std::vector<Entry> entries_;
+  std::vector<u32> index_;   // entry + 1 (0: empty); a power of two, at least twice the entries
+  size_t slot(std::string_view name) const;   // the name's slot, or the empty one where it would go
+};
+
 inline u32 le32(const char* p) { u32 v; std::memcpy(&v, p, 4); return v; }
 inline u64 le64(const char* p) { u64 v; std::memcpy(&v, p, 8); return v; }
 inline u16 le16(const char* p) { u16 v; std::memcpy(&v, p, 2); return v; }

@@ -74,7 +74,7 @@ class Pairing {
   SvViewMap<u64> vftables_;   // rebuilt vftable names of classes with several bases, not among the original's names
   void prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn);
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
-  std::unordered_set<u64> named_;
+  std::vector<u64> named_;   // original addresses with a name (sorted, distinct)
   JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
   JMap<u64, u64> inferred_r_;
   int infer_depth_ = 0;

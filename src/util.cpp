@@ -1,11 +1,13 @@
 #include "util.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <new>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -180,6 +182,41 @@ std::string replace_all(std::string s, std::string_view from, std::string_view t
 std::string lower(std::string s) {
   for (auto& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
   return s;
+}
+
+std::string_view keep_text(std::string_view s) {
+  static std::unordered_set<std::string, SvHash, std::equal_to<>> kept;
+  auto it = kept.find(s);
+  if (it == kept.end()) it = kept.emplace(s).first;
+  return *it;
+}
+
+size_t NameTable::slot(std::string_view name) const {
+  size_t mask = index_.size() - 1;
+  size_t i = std::hash<std::string_view>()(name) & mask;
+  while (index_[i] && entries_[index_[i] - 1].first != name) i = (i + 1) & mask;
+  return i;
+}
+
+const u64* NameTable::find(std::string_view name) const {
+  if (index_.empty()) return nullptr;
+  u32 e = index_[slot(name)];
+  return e ? &entries_[e - 1].second : nullptr;
+}
+
+void NameTable::set(std::string_view name, u64 v) {
+  if (!index_.empty()) {
+    if (u32 e = index_[slot(name)]) { entries_[e - 1].second = v; return; }
+  }
+  entries_.emplace_back(name, v);
+  if (index_.size() < 2 * entries_.size()) {   // grow, and index every entry again
+    size_t n = 16;
+    while (n < 4 * entries_.size()) n *= 2;
+    index_.assign(n, 0);
+    for (size_t k = 0; k < entries_.size(); ++k) index_[slot(entries_[k].first)] = u32(k + 1);
+  } else {
+    index_[slot(name)] = u32(entries_.size());
+  }
 }
 
 ZeroBuffer::ZeroBuffer(size_t n) : n_(n) {

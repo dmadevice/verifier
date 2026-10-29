@@ -87,6 +87,85 @@ std::string file_stamp(const std::string& path) {
 
 }  // namespace
 
+// -- tables ------------------------------------------------------------------------------------------------
+
+namespace {
+bool ea_below(const IdaFunction& f, u64 ea) { return f.ea < ea; }
+}  // namespace
+
+const IdaFunction* FunctionTable::find(u64 ea) const {
+  auto it = std::lower_bound(fs_.begin(), fs_.end(), ea, ea_below);
+  return it != fs_.end() && it->ea == ea ? &*it : nullptr;
+}
+
+const IdaFunction& FunctionTable::at(u64 ea) const {
+  if (const IdaFunction* f = find(ea)) return *f;
+  throw std::out_of_range("no function at " + hex(ea));
+}
+
+void FunctionTable::set(const IdaFunction& f) {
+  auto it = std::lower_bound(fs_.begin(), fs_.end(), f.ea, ea_below);
+  if (it != fs_.end() && it->ea == f.ea) *it = f;
+  else fs_.insert(it, f);
+}
+
+void FunctionTable::assign(std::vector<IdaFunction> fs) {
+  std::stable_sort(fs.begin(), fs.end(), [](const IdaFunction& a, const IdaFunction& b) { return a.ea < b.ea; });
+  fs_.clear();
+  for (auto& f : fs) {
+    if (!fs_.empty() && fs_.back().ea == f.ea) fs_.back() = f;   // the later one
+    else fs_.push_back(f);
+  }
+  fs_.shrink_to_fit();
+}
+
+Symbols::Symbols(const std::vector<std::pair<u64, std::string_view>>& syms) {
+  // the symbols by address (map order within one), then the addresses in the order of their first symbol
+  std::vector<u32> by_addr(syms.size());
+  for (u32 i = 0; i < by_addr.size(); ++i) by_addr[i] = i;
+  std::stable_sort(by_addr.begin(), by_addr.end(), [&](u32 a, u32 b) { return syms[a].first < syms[b].first; });
+  std::vector<std::pair<u32, u64>> first_seen;   // (first symbol, address)
+  names_.reserve(syms.size());
+  for (u32 i : by_addr) {
+    u64 va = syms[i].first;
+    if (vas_.empty() || vas_.back() != va) {
+      vas_.push_back(va);
+      first_.push_back(u32(names_.size()));
+      first_seen.emplace_back(i, va);
+    }
+    names_.push_back(syms[i].second);
+  }
+  first_.push_back(u32(names_.size()));
+  std::sort(first_seen.begin(), first_seen.end());
+  for (auto& [i, va] : first_seen) order_.push_back(va);
+}
+
+Symbols Symbols::grouped(const std::vector<std::pair<u64, std::vector<std::string_view>>>& by_va) {
+  Symbols s;
+  for (auto& [va, names] : by_va) s.order_.push_back(va);
+  std::vector<size_t> by_addr(by_va.size());
+  for (size_t i = 0; i < by_addr.size(); ++i) by_addr[i] = i;
+  std::stable_sort(by_addr.begin(), by_addr.end(), [&](size_t a, size_t b) { return by_va[a].first < by_va[b].first; });
+  for (size_t i : by_addr) {
+    s.vas_.push_back(by_va[i].first);
+    s.first_.push_back(u32(s.names_.size()));
+    s.names_.insert(s.names_.end(), by_va[i].second.begin(), by_va[i].second.end());
+  }
+  s.first_.push_back(u32(s.names_.size()));
+  return s;
+}
+
+long Symbols::index(u64 va) const {
+  auto it = std::lower_bound(vas_.begin(), vas_.end(), va);
+  return it != vas_.end() && *it == va ? long(it - vas_.begin()) : -1;
+}
+
+std::span<const std::string_view> Symbols::names(u64 va) const {
+  long i = index(va);
+  if (i < 0) return {};
+  return {names_.data() + first_[size_t(i)], names_.data() + first_[size_t(i) + 1]};
+}
+
 // -- Original ------------------------------------------------------------------------------------------------
 
 Original::Original(const Config& p) : config_(&p) {
@@ -112,6 +191,7 @@ Original::Original(const Config& p) : config_(&p) {
 
 void Original::load_exports() {
   const Config& p = *config_;
+  std::vector<IdaFunction> fs;   // in the file's order
   for_each_file_line(p.functions, [&](std::string_view line) {
     if (strip(line).empty()) return;
     auto v = json::parse(line);
@@ -121,10 +201,15 @@ void Original::load_exports() {
     f.name = keep(v["name"].as_str());
     f.lib = v["lib"].as_bool();
     f.thunk = v["thunk"].as_bool();
-    if (!functions.count(f.ea)) function_order.push_back(f.ea);
-    functions[f.ea] = f;
+    fs.push_back(f);
   });
-  for (u64 ea : function_order) by_name[functions[ea].name] = ea;
+  functions.assign(fs);
+  {
+    // by name, in the order the file first has each address
+    std::unordered_set<u64> seen;
+    for (auto& f : fs)
+      if (seen.insert(f.ea).second) by_name.set(functions.at(f.ea).name, f.ea);
+  }
   std::vector<json::Value> matches;
   if (file_exists(p.library_matches)) matches = json::parse(read_file(p.library_matches))["matches"].arr;
   if (file_exists(p.vtables)) {
@@ -132,7 +217,7 @@ void Original::load_exports() {
       if (strip(line).empty()) continue;
       auto v = json::parse(line);
       u64 ea = u64(v["vtable_ea"].as_int());
-      by_name[keep(v["name"].as_str())] = ea;
+      by_name.set(keep(v["name"].as_str()), ea);
       std::vector<u64> slots;
       for (auto& s : v["slots"].arr) slots.push_back(u64(s.as_int()));
       vtables[ea] = slots;
@@ -148,20 +233,20 @@ void Original::load_exports() {
   for (auto& [sym, eas] : s2e) {
     if (eas.size() != 1) continue;
     u64 ea = *eas.begin();
-    auto it = by_name.find(sym);
-    if (e2s[ea].size() == 1 && (it == by_name.end() || it->second == ea)) by_name[keep(sym)] = ea;
+    const u64* at = by_name.find(sym);
+    if (e2s[ea].size() == 1 && (!at || *at == ea)) by_name.set(keep(sym), ea);
   }
   if (file_exists(p.symbols)) {
     for (auto& line : read_lines(p.symbols)) {
       if (strip(line).empty() || starts_with(line, "#")) continue;
       auto w = split_ws(line);
-      by_name[keep(w[0])] = parse_hex(w[1]);
+      by_name.set(keep(w[0]), parse_hex(w[1]));
     }
   }
-  by_name["__ImageBase"] = img.base;
+  by_name.set("__ImageBase", img.base);
   for (auto& m : matches) {
     u64 ea = u64(m["ea"].as_int());
-    if (!functions.count(ea)) continue;
+    if (!functions.contains(ea)) continue;
     linked[ea] = Linked{m["lib"].as_str(), m["symbol"].as_str(), true};
   }
   if (file_exists(p.library_functions)) {
@@ -184,9 +269,8 @@ std::string Original::snapshot_key(const Config& p) {
 
 void Original::save_snapshot(const std::string& path, const std::string& key) const {
   Writer w;
-  w.u(function_order.size());
-  for (u64 ea : function_order) {
-    const IdaFunction& f = functions.at(ea);
+  w.u(functions.size());
+  for (const IdaFunction& f : functions) {
     w.u(f.ea);
     w.u(f.size);
     w.s(f.name);
@@ -224,6 +308,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   std::string_view strings = r.raw();
   o.snapshot_.assign(strings.begin(), strings.end());   // the names are views of it
   r.strings = std::string_view(o.snapshot_.data(), o.snapshot_.size());
+  std::vector<IdaFunction> fs;
   for (u64 n = r.count(32); n--;) {
     IdaFunction f;
     f.ea = r.u();
@@ -232,9 +317,9 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
     u64 flags = r.u();
     f.lib = flags & 1;
     f.thunk = flags & 2;
-    o.function_order.push_back(f.ea);
-    o.functions[f.ea] = std::move(f);
+    fs.push_back(f);
   }
+  o.functions.assign(std::move(fs));
   for (u64 n = r.count(16); n--;) {
     u64 ea = r.u();
     auto& slots = o.vtables[ea];
@@ -242,7 +327,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   }
   for (u64 n = r.count(16); n--;) {
     std::string_view name = r.s();
-    o.by_name.emplace(name, r.u());
+    o.by_name.set(name, r.u());
   }
   for (u64 n = r.count(32); n--;) {
     u64 ea = r.u();
@@ -327,6 +412,7 @@ bool Original::in_padding(u64 va) const {
 
 Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc) : names_(&nc) {
   img = Image::load(path);
+  std::vector<std::pair<u64, std::string_view>> syms;   // (address, decorated name) in map order
   std::vector<NameIds> infos;   // infos[i]: syms[i]'s
   {
     std::string map_text = read_file(map_path);
@@ -338,14 +424,7 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
     // the names as the NameCache keeps them, and the map's text freed
     for (size_t i = 0; i < syms.size(); ++i) syms[i].second = nc.text(infos[i].decorated);
   }
-  by_va.reserve(syms.size());
-  for (auto& [va, dec] : syms) {
-    auto& v = by_va[va];
-    if (v.empty()) by_va_order.push_back(va);
-    v.push_back(dec);
-  }
-  sym_vas = by_va_order;
-  std::sort(sym_vas.begin(), sym_vas.end());
+  symbols = Symbols(syms);
   // the symbols by qualified name (counting sort by id: map order within each)
   u32 nids = nc.string_count();
   qual_first_.assign(size_t(nids) + 1, 0);
@@ -445,16 +524,18 @@ std::vector<std::string> Rebuilt::overloads_of(const std::string& key) const {
 }
 
 std::optional<u64> Rebuilt::containing(u64 t) const {
-  auto it = std::upper_bound(sym_vas.begin(), sym_vas.end(), t);
-  if (it == sym_vas.begin()) return std::nullopt;
+  const auto& vas = symbols.vas();
+  auto it = std::upper_bound(vas.begin(), vas.end(), t);
+  if (it == vas.begin()) return std::nullopt;
   u64 s = *(it - 1);
   if (t - s < MAX_SYM_OFFSET) return s;
   return std::nullopt;
 }
 
 std::optional<u64> Rebuilt::next_symbol(u64 t) const {
-  auto it = std::upper_bound(sym_vas.begin(), sym_vas.end(), t);
-  if (it == sym_vas.end()) return std::nullopt;
+  const auto& vas = symbols.vas();
+  auto it = std::upper_bound(vas.begin(), vas.end(), t);
+  if (it == vas.end()) return std::nullopt;
   return *it;
 }
 

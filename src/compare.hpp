@@ -18,9 +18,6 @@
 
 namespace verifier {
 
-// text kept for the run, each distinct string once (names made while comparing)
-std::string_view keep_text(std::string_view s);
-
 // What a rebuilt address stands for: ('va', original VA) / ('const'|'str'|'td'|'ti'|'vbt'|'unresolved', name). Plain
 // data: the name is a view of text that outlives the comparisons.
 struct Key {

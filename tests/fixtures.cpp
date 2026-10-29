@@ -35,6 +35,12 @@ using json::Value;
 namespace {
 
 using NameMap = std::unordered_map<u64, std::string_view>;
+Symbols symbols_at(std::vector<u64> vas) {   // a symbol without names at each address, in address order
+  std::sort(vas.begin(), vas.end());
+  std::vector<std::pair<u64, std::vector<std::string_view>>> by_va;
+  for (u64 v : vas) by_va.push_back({v, {}});
+  return Symbols::grouped(by_va);
+}
 NameOf name_of(const NameMap& m) {   // a lookup in m ("" for none)
   return [&m](u64 va) { auto it = m.find(va); return it == m.end() ? std::string_view() : it->second; };
 }
@@ -437,8 +443,7 @@ struct FakeRebuilt : Rebuilt {
 Problems folded_annotations() {
   Original orig;
   FakeRebuilt reb;
-  reb.by_va = {{0x100, {"?A@@YAXXZ", "?B@@YAXXZ"}}, {0x200, {"?C@@YAXXZ"}}};
-  reb.by_va_order = reb.sym_vas = {0x100, 0x200};
+  reb.symbols = Symbols::grouped({{0x100, {"?A@@YAXXZ", "?B@@YAXXZ"}}, {0x200, {"?C@@YAXXZ"}}});
   reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"A", 0x100}, {"B", 0x100}, {"C", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
@@ -554,8 +559,7 @@ Problems local_static_names() {
 Problems stub_pairing() {
   Original orig;
   FakeRebuilt reb;
-  reb.by_va = {{0x100, {"sub_1000"}}, {0x200, {"A"}}};
-  reb.by_va_order = reb.sym_vas = {0x100, 0x200};
+  reb.symbols = Symbols::grouped({{0x100, {"sub_1000"}}, {0x200, {"A"}}});
   std::map<std::string, u64> m{{"sub_1000", 0x100}, {"A", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb, {{"STUB", 0x1000, "sub_1000", {}, "s.cpp", 1}, {"FUNCTION", 0x2000, "A", {}, "a.cpp", 1}});
@@ -634,11 +638,9 @@ Problems failed_inference() {
     s->write(f->F, lea_rcx(f->F, f->X) + "\xc3");
   }
   Original orig;
-  for (auto [va, size] : {std::pair<u64, u64>{fo.A, 13}, {fo.G, 6}, {fo.F, 8}}) orig.functions[va] = IdaFunction{va, size, "", false, false};
+  for (auto [va, size] : {std::pair<u64, u64>{fo.A, 13}, {fo.G, 6}, {fo.F, 8}}) orig.functions.set(IdaFunction{va, size, "", false, false});
   FakeRebuilt reb;
-  reb.sym_vas = {fr.A, fr.G, fr.F, fr.X};
-  std::sort(reb.sym_vas.begin(), reb.sym_vas.end());
-  for (u64 v : reb.sym_vas) reb.by_va[v] = {};
+  reb.symbols = symbols_at({fr.A, fr.G, fr.F, fr.X});
   std::map<u64, u64> rsize{{fr.A, 13}, {fr.G, 6}, {fr.F, 8}};
   reb.fake.extent = [rsize](u64 va) { return va + rsize.at(va); };
   std::map<std::string, u64> m{{"X", fr.X}, {"G", fr.G}, {"F", fr.F}};
@@ -685,11 +687,9 @@ Problems prebound_static(bool owner_first) {
   FakeRun run;
   run.O = o.image();
   run.R = r.image();
-  for (u64 va : {so.F, so.G}) run.orig.functions[va] = IdaFunction{va, 7, "", false, false};
+  for (u64 va : {so.F, so.G}) run.orig.functions.set(IdaFunction{va, 7, "", false, false});
   auto& reb = run.reb;
-  reb.sym_vas = {sr.F, sr.G, sr.sf, sr.sg};
-  std::sort(reb.sym_vas.begin(), reb.sym_vas.end());
-  for (u64 v : reb.sym_vas) { reb.by_va[v] = {}; reb.by_va_order.push_back(v); }
+  reb.symbols = symbols_at({sr.F, sr.G, sr.sf, sr.sg});
   reb.local_statics = {sr.sf, sr.sg};
   reb.static_owner = {{sr.sf, std::set<u64>{sr.F}}, {sr.sg, std::set<u64>{sr.G}}};
   reb.fake.extent = [](u64 va) { return va + 7; };
@@ -726,15 +726,15 @@ Problems consensus_static() {
   auto& reb = run.reb;
   std::map<std::string, u64> m;
   std::vector<Annotation> anns;
+  std::vector<u64> vas;
   for (auto& [n, f] : fns) {
-    run.orig.functions[f.first] = IdaFunction{f.first, 7, "", false, false};
-    reb.sym_vas.push_back(f.second);
+    run.orig.functions.set(IdaFunction{f.first, 7, "", false, false});
+    vas.push_back(f.second);
     m[n] = f.second;
     anns.push_back({"FUNCTION", f.first, n, {}, n + ".cpp", 1});
   }
-  reb.sym_vas.push_back(rs);
-  std::sort(reb.sym_vas.begin(), reb.sym_vas.end());
-  for (u64 v : reb.sym_vas) { reb.by_va[v] = {}; reb.by_va_order.push_back(v); }
+  vas.push_back(rs);
+  reb.symbols = symbols_at(vas);
   reb.local_statics = {rs};
   reb.static_owner = {{rs, std::nullopt}};
   reb.fake.extent = [](u64 va) { return va + 7; };
@@ -766,12 +766,10 @@ Problems folded_original(bool same_code) {
   FakeRun run;
   run.O = o.image();
   run.R = r.image();
-  run.orig.functions[oo] = IdaFunction{oo, 4, "", false, false};
-  run.orig.functions[oG] = IdaFunction{oG, 6, "", false, false};
+  run.orig.functions.set(IdaFunction{oo, 4, "", false, false});
+  run.orig.functions.set(IdaFunction{oG, 6, "", false, false});
   auto& reb = run.reb;
-  reb.sym_vas = {ra, rb, rG};
-  std::sort(reb.sym_vas.begin(), reb.sym_vas.end());
-  for (u64 v : reb.sym_vas) { reb.by_va[v] = {}; reb.by_va_order.push_back(v); }
+  reb.symbols = symbols_at({ra, rb, rG});
   reb.fake.extent = [rG](u64 va) { return va + (va == rG ? 6 : 4); };
   std::map<std::string, u64> m{{"A", ra}, {"G", rG}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
@@ -787,9 +785,7 @@ Problems addend_across_annotation(u64 off) {
   u64 rg = r.put(DATA, Bytes(0x40, '\0'), 16), ry = r.put(DATA, Bytes(4, '\0'), 16);
   Original orig;
   FakeRebuilt reb;
-  reb.sym_vas = {rg, ry};
-  reb.by_va = {{rg, {"?g@@3HA"}}, {ry, {"?y@@3HA"}}};
-  reb.by_va_order = {rg, ry};
+  reb.symbols = Symbols::grouped({{rg, {"?g@@3HA"}}, {ry, {"?y@@3HA"}}});
   reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"g", rg}, {"y", ry}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
@@ -971,6 +967,24 @@ Problems sha256_paths() {
 }
 
 // unit check: line splitting (\n, \r\n, \r), in memory and streamed in blocks
+// the name table against a std::map, through many growths: a value set again keeps its place
+Problems name_table() {
+  NameTable t;
+  std::map<std::string, u64> want;
+  std::vector<std::string> names;
+  for (int i = 0; i < 20000; ++i) names.push_back("?name" + std::to_string(i * 7919 % 20000) + "@@");
+  for (size_t i = 0; i < names.size(); ++i) { t.set(names[i], i); want[names[i]] = i; }
+  for (size_t i = 0; i < names.size(); i += 3) { t.set(names[i], i + 1); want[names[i]] = i + 1; }
+  Problems bad;
+  if (t.size() != want.size()) bad.push_back({"names", "size " + std::to_string(t.size())});
+  for (auto& [n, v] : want)
+    if (const u64* got = t.find(n); !got || *got != v) { bad.push_back({"names", "lookup " + n}); break; }
+  if (t.find("?absent@@") || t.contains("")) bad.push_back({"names", "found a name never set"});
+  size_t k = 0;
+  for (auto& [n, v] : t) if (n != names[k++]) { bad.push_back({"names", "order at " + std::to_string(k - 1)}); break; }
+  return bad;
+}
+
 Problems line_splitting() {
   Problems bad;
   std::string text = "a\nbb\r\nccc\rdddd\n\neee";
@@ -1039,6 +1053,7 @@ int main(int argc, char** argv) {
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
       {"unit: line splitting", nullptr, line_splitting},
+      {"unit: name table", nullptr, name_table},
       {"local static paired by consensus", nullptr, consensus_static},
       {"callee folded in the original, same code", nullptr, [] { return folded_original(true); }},
       {"callee folded in the original, other code", "reference", [] { return folded_original(false); }},

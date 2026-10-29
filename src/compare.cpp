@@ -11,13 +11,6 @@ constexpr int MAX_CHAIN = 32;
 
 std::string Key::text() const { return kind == VA ? hex(va) : std::string(name); }
 
-std::string_view keep_text(std::string_view s) {
-  static std::unordered_set<std::string, SvHash, std::equal_to<>> kept;
-  auto it = kept.find(s);
-  if (it == kept.end()) it = kept.emplace(s).first;
-  return *it;
-}
-
 bool Journal::speculate(const std::function<bool()>& attempt) {
   size_t mark = log.size();
   auto undo = [&] {

@@ -69,7 +69,7 @@ Pairing::Pairing(const Pairing& b)
       annotated_o(b.annotated_o), paired_o(b.paired_o), vftables_(b.vftables_) {}
 
 std::optional<u64> Pairing::named(std::string_view n) const {
-  if (auto it = orig.by_name.find(n); it != orig.by_name.end()) return it->second;
+  if (const u64* va = orig.by_name.find(n)) return *va;
   if (auto it = vftables_.find(n); it != vftables_.end()) return it->second;
   return std::nullopt;
 }
@@ -81,8 +81,8 @@ void Pairing::pair_vftables() {
     auto g = orig_mi_vftable(n);
     if (!g.empty()) mi[g].push_back(ea);
   }
-  for (u64 va : reb.by_va_order) {
-    for (auto& n : reb.by_va.at(va)) {
+  for (u64 va : reb.symbols.map_order()) {
+    for (auto& n : reb.symbols.names(va)) {
       auto g = reb_mi_vftable(n);
       if (g.empty() || named(n) || !mi.count(g)) continue;
       u64 r_col = R.u64_at(va - 8);
@@ -124,16 +124,17 @@ Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<st
   c.containing = [this](u64 t) { return reb.containing(t); };
   c.end_of_previous = [this](u64 t) { return end_of_previous(t); };
   c.annotated_between = [this](u64 lo, u64 hi) { return annotated_between(lo, hi); };
-  for (auto& [n, ea] : orig.by_name) named_.insert(ea);
-  for (auto& [n, ea] : vftables_) named_.insert(ea);
-  for (auto& [r, o] : reb_to_orig) named_.insert(o);
-  for (auto& [v, s] : orig.vtables) named_.insert(v);
-  c.orig_named = [this](u64 t) { return named_.count(t) || orig.named_data(t); };
+  for (auto& [n, ea] : orig.by_name) named_.push_back(ea);
+  for (auto& [n, ea] : vftables_) named_.push_back(ea);
+  for (auto& [r, o] : reb_to_orig) named_.push_back(o);
+  for (auto& [v, s] : orig.vtables) named_.push_back(v);
+  std::sort(named_.begin(), named_.end());
+  named_.erase(std::unique(named_.begin(), named_.end()), named_.end());
+  c.orig_named = [this](u64 t) { return std::binary_search(named_.begin(), named_.end(), t) || orig.named_data(t); };
   c.folded_locals = [this](u64 base) {
-    auto it = reb.by_va.find(base);
-    return it == reb.by_va.end() ? 0 : int(it->second.size());
+    return int(reb.symbols.names(base).size());
   };
-  c.symbol_start = [this](u64 t) { return reb.by_va.count(t) != 0; };
+  c.symbol_start = [this](u64 t) { return reb.symbols.contains(t); };
   prebind_locals(votes_fn);
   return c;
 }
@@ -162,13 +163,13 @@ void Pairing::prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>
 std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
   std::map<u64, u64> pairs;
   for (auto& [rva, ova] : reb_to_orig)
-    if (reb.img.executable(rva) && orig.functions.count(ova)) pairs.emplace(rva, ova);
+    if (reb.img.executable(rva) && orig.functions.contains(ova)) pairs.emplace(rva, ova);
   // owners of local statics that resolve by their own names (an annotation's pairing comes first)
   for (auto& [base, owners] : reb.static_owner) {
     if (!owners) continue;
     for (u64 owner : *owners) {
       Key k = resolve_symbol(owner);
-      if (k.kind == Key::VA && orig.functions.count(k.va)) pairs.emplace(owner, k.va);
+      if (k.kind == Key::VA && orig.functions.contains(k.va)) pairs.emplace(owner, k.va);
     }
   }
   return std::vector<std::pair<u64, u64>>(pairs.begin(), pairs.end());
@@ -256,7 +257,7 @@ std::optional<std::vector<u64>> Pairing::static_home(u64 base) const {
   std::vector<u64> homes;
   for (u64 owner : **owners) {
     Key r = resolve_symbol(owner);
-    if (!(r.kind == Key::VA && orig.functions.count(r.va))) return std::nullopt;
+    if (!(r.kind == Key::VA && orig.functions.contains(r.va))) return std::nullopt;
     homes.push_back(r.va);
   }
   return homes;
@@ -273,9 +274,7 @@ std::vector<u64> Pairing::orig_refs(u64 f) {
 
 Key Pairing::resolve_symbol(u64 t) const {
   if (auto it = reb_to_orig.find(t); it != reb_to_orig.end()) return Key::of_va(it->second);
-  static const std::vector<std::string_view> none;
-  auto bv = reb.by_va.find(t);
-  const auto& names = bv == reb.by_va.end() ? none : bv->second;
+  auto names = reb.symbols.names(t);
   for (auto& n : names) if (is_const_name(n)) return Key::named_view(Key::CONST, n);
   for (auto& n : names) if (starts_with(n, "??_C@")) return Key::named_view(Key::STR, n);
   for (auto& n : names) if (auto va = named(n)) return Key::of_va(*va);
@@ -294,13 +293,13 @@ Key Pairing::resolve(u64 t) const {
       if (auto b = cmp->bound.find(at->first)) return Key::of_va(*b + at->second);
     }
   }
-  if (r.kind != Key::UNRESOLVED || reb.by_va.count(t)) return r;
+  if (r.kind != Key::UNRESOLVED || reb.symbols.contains(t)) return r;
   auto base = reb.containing(t);
   if (base) {
     Key b = resolve_symbol(*base);
     if (b.kind == Key::VA) {
       if (annotated_between(b.va, b.va + t - *base))
-        return Key::named(Key::UNRESOLVED, std::string(reb.by_va.at(*base)[0]) + "+" + hex(t - *base));
+        return Key::named(Key::UNRESOLVED, std::string(reb.symbols.names(*base)[0]) + "+" + hex(t - *base));
       return Key::of_va(b.va + t - *base);
     }
   }
@@ -313,7 +312,7 @@ bool Pairing::annotated_between(u64 lo, u64 hi) const {
 }
 
 std::optional<u64> Pairing::end_of_previous(u64 t) const {
-  if (!reb.by_va.count(t)) return std::nullopt;
+  if (!reb.symbols.contains(t)) return std::nullopt;
   auto prev = reb.containing(t - 1);
   if (!prev) return std::nullopt;
   Key b = resolve_symbol(*prev);
@@ -322,13 +321,13 @@ std::optional<u64> Pairing::end_of_previous(u64 t) const {
 }
 
 std::vector<u64> Pairing::alternates(u64 t) const {
-  auto bv = reb.by_va.find(t);
-  if (bv == reb.by_va.end() || bv->second.size() < 2) return {};
-  std::set<u64> named;
-  for (auto& n : bv->second) if (auto va = this->named(n)) named.insert(*va);
-  for (auto& n : bv->second) if (auto va = this->named(reb.qualified(n))) named.insert(*va);
-  if (auto it = reb_to_origs.find(t); it != reb_to_origs.end()) named.insert(it->second.begin(), it->second.end());
-  return std::vector<u64>(named.begin(), named.end());
+  auto names = reb.symbols.names(t);
+  if (names.size() < 2) return {};
+  std::set<u64> vas;
+  for (auto& n : names) if (auto va = named(n)) vas.insert(*va);
+  for (auto& n : names) if (auto va = named(reb.qualified(n))) vas.insert(*va);
+  if (auto it = reb_to_origs.find(t); it != reb_to_origs.end()) vas.insert(it->second.begin(), it->second.end());
+  return std::vector<u64>(vas.begin(), vas.end());
 }
 
 std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
@@ -343,7 +342,7 @@ std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
 bool Pairing::infer(u64 o_t, u64 r_t) {
   if (inferred_.contains({o_t, r_t})) return true;
   if (inferred_r_.contains(r_t) || reb_to_orig.count(r_t)) return false;
-  if (!orig.functions.count(o_t) || !reb.by_va.count(r_t) || infer_depth_ >= 4) return false;
+  if (!orig.functions.contains(o_t) || !reb.symbols.contains(r_t) || infer_depth_ >= 4) return false;
   u64 oend = orig.extent(o_t), rend = reb.extent(r_t);
   return cmp->journal.speculate([&] {
     inferred_.set({o_t, r_t}, true);

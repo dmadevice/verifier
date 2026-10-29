@@ -15,10 +15,9 @@ namespace verifier {
 bool is_counted(const std::string& k) { return k == "FUNCTION" || k == "SYNTHETIC" || k == "TEMPLATE"; }
 bool is_paired(const std::string& k) { return is_counted(k) || k == "LIBRARY"; }
 
-std::optional<std::string> sig_flag(const std::set<std::string>& flags) {
-  // a flags set holds at most one SIG= entry
-  for (auto& f : flags) if (starts_with(f, "SIG=")) return f.substr(4);
-  return std::nullopt;
+std::optional<std::string> sig_flag(const AnnotationFlags& flags) {
+  if (flags.sig.empty()) return std::nullopt;
+  return flags.sig;
 }
 
 std::vector<std::string> walk_files(const std::string& root) {
@@ -92,6 +91,7 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
         continue;
       std::string data = read_file(path);
       if (data.find(module) == std::string::npos) continue;   // no annotation of this module here
+      std::string_view kept_path = keep_text(path);
       std::vector<std::string_view> lines;
       for_each_line(data, [&](std::string_view l) { lines.push_back(l); });
       for (size_t i = 0; i < lines.size(); ++i) {
@@ -99,8 +99,8 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
         if (!match_annotation(lines[i], module, kind, hexs, rest0)) continue;
         u64 va = parse_hex(hexs);
         std::string rest = strip(rest0);
-        std::set<std::string> flags;
-        if (starts_with(rest, "FOLDED")) { flags.insert("FOLDED"); rest = strip(rest.substr(6)); }
+        AnnotationFlags flags;
+        if (starts_with(rest, "FOLDED")) { flags.folded = true; rest = strip(rest.substr(6)); }
         std::vector<std::string> following(lines.begin() + long(i) + 1, lines.begin() + long(std::min(lines.size(), i + 4)));
         size_t before = out.size();
         if (kind == "SYNTHETIC" || kind == "TEMPLATE" || kind == "LIBRARY") {
@@ -113,27 +113,27 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
           }
           long p = param_start(name);
           if (p > 0 && ends_with(name, ")")) {   // `Name(params)`: pairs with that overload only
-            flags.insert("SIG=" + norm_params(name.substr(size_t(p))));
+            flags.sig = norm_params(name.substr(size_t(p)));
             name = strip(name.substr(0, size_t(p)));
           }
-          out.push_back({kind, va, name, flags, path, int(i + 1)});
+          out.push_back({kind, va, name, flags, kept_path, int(i + 1)});
           continue;
         }
-        if (starts_with(rest, "(") && ends_with(rest, ")")) flags.insert("SIG=" + norm_params(rest));
+        if (starts_with(rest, "(") && ends_with(rest, ")")) flags.sig = norm_params(rest);
         if (kind == "GLOBAL") {
           for (auto& nxt : following) {
-            if (auto name = global_decl_name(nxt)) { out.push_back({kind, va, *name, flags, path, int(i + 1)}); break; }
+            if (auto name = global_decl_name(nxt)) { out.push_back({kind, va, *name, flags, kept_path, int(i + 1)}); break; }
           }
         } else if (kind == "VTABLE") {
           for (auto& nxt : following) {
-            if (auto name = class_decl_name(nxt)) { out.push_back({kind, va, *name, flags, path, int(i + 1)}); break; }
+            if (auto name = class_decl_name(nxt)) { out.push_back({kind, va, *name, flags, kept_path, int(i + 1)}); break; }
           }
         } else {
           for (auto& nxt : following) {
             auto name = definition_name(nxt);
             if (name) {
-              if (name->find('~') != std::string::npos) flags.insert("DTOR");
-              out.push_back({kind, va, *name, flags, path, int(i + 1)});
+              if (name->find('~') != std::string::npos) flags.dtor = true;
+              out.push_back({kind, va, *name, flags, kept_path, int(i + 1)});
               break;
             }
           }
@@ -149,14 +149,14 @@ void check_duplicates(const std::vector<Annotation>& anns) {
   std::map<u64, std::pair<std::string, bool>> seen;
   for (auto& a : anns) {
     if (!is_paired(a.kind)) continue;
-    bool folded = a.flags.count("FOLDED") != 0;
+    bool folded = a.flags.folded;
     auto it = seen.find(a.va);
     if (it != seen.end() && !(folded && it->second.second)) {
       std::fprintf(stderr, "duplicate annotation %s: %s and %s:%d (mark /OPT:ICF folds FOLDED)\n", hex(a.va).c_str(),
-                   it->second.first.c_str(), a.path.c_str(), a.line);
+                   it->second.first.c_str(), std::string(a.path).c_str(), a.line);
       std::exit(1);
     }
-    seen[a.va] = {a.path + ":" + std::to_string(a.line), folded};
+    seen[a.va] = {std::string(a.path) + ":" + std::to_string(a.line), folded};
   }
 }
 

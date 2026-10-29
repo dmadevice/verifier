@@ -141,11 +141,11 @@ ctest --test-dir build -C Release
 ```
 
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 28 cases in code: pairing (inference taken back when it fails, local
+exact problems it must report, and 29 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key,
-hashing and line splitting. `ctest` also runs fadec's own decoder tests.
+hashing, line splitting and the name table. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 20 MB binary with 5,500 annotated functions, a run takes about 0.5 to 0.7 seconds and 95 MB on one
+On a 20 MB binary with 5,500 annotated functions, a run takes about 0.5 to 0.7 seconds and 85 MB on one
 core (with the undname cache and the exports snapshot warm).
