@@ -39,7 +39,7 @@ class Pairing {
   const Original& orig;
   const Rebuilt& reb;
   std::unique_ptr<Comparer> cmp;
-  SvMap<u64> by_name;
+  SvViewMap<u64> by_name;
   std::unordered_map<u64, u64> reb_to_orig;
   std::unordered_map<u64, std::set<u64>> reb_to_origs;
   std::vector<u64> annotated_o;   // sorted

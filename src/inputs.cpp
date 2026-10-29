@@ -100,7 +100,7 @@ void Original::load_exports() {
     IdaFunction f;
     f.ea = u64(v["ea"].as_int());
     f.size = u64(v["size"].as_int());
-    f.name = v["name"].as_str();
+    f.name = keep(v["name"].as_str());
     f.lib = v["lib"].as_bool();
     f.thunk = v["thunk"].as_bool();
     if (!functions.count(f.ea)) function_order.push_back(f.ea);
@@ -118,7 +118,7 @@ void Original::load_exports() {
       if (strip(line).empty()) continue;
       auto v = json::parse(line);
       u64 ea = u64(v["vtable_ea"].as_int());
-      by_name[v["name"].as_str()] = ea;
+      by_name[keep(v["name"].as_str())] = ea;
       std::vector<u64> slots;
       for (auto& s : v["slots"].arr) slots.push_back(u64(s.as_int()));
       vtables[ea] = slots;
@@ -135,13 +135,13 @@ void Original::load_exports() {
     if (eas.size() != 1) continue;
     u64 ea = *eas.begin();
     auto it = by_name.find(sym);
-    if (e2s[ea].size() == 1 && (it == by_name.end() || it->second == ea)) by_name[sym] = ea;
+    if (e2s[ea].size() == 1 && (it == by_name.end() || it->second == ea)) by_name[keep(sym)] = ea;
   }
   if (file_exists(p.symbols)) {
     for (auto& line : read_lines(p.symbols)) {
       if (strip(line).empty() || starts_with(line, "#")) continue;
       auto w = split_ws(line);
-      by_name[w[0]] = parse_hex(w[1]);
+      by_name[keep(w[0])] = parse_hex(w[1]);
     }
   }
   by_name["__ImageBase"] = img.base;
@@ -234,7 +234,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   }
   for (u64 n = r.count(16); n--;) {
     std::string_view name = r.s();
-    o.by_name.emplace(std::string(name), r.u());
+    o.by_name.emplace(name, r.u());
   }
   for (u64 n = r.count(32); n--;) {
     u64 ea = r.u();
@@ -253,6 +253,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   o.data_names_.reserve(n);
   while (n--) o.data_names_.insert(r.u());
   if (r.s() != "end" || !r.ok || r.p != data.size()) return false;
+  snapshot_ = std::move(data);   // the names are views of it
   functions = std::move(o.functions);
   function_order = std::move(o.function_order);
   ida_names = std::move(o.ida_names);
@@ -335,42 +336,44 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   std::vector<const NameInfo*> infos = nc.load(decs);   // infos[i]: syms[i]'s
   decs = {};
   by_va.reserve(syms.size());
-  qual_to_va.reserve(syms.size());
-  sigs_of.reserve(syms.size());
-  by_suffix.reserve(2 * syms.size());
-  for (size_t i = 0; i < syms.size(); ++i) {
-    auto& [va, dec] = syms[i];
+  for (auto& [va, dec] : syms) {
     auto& v = by_va[va];
     if (v.empty()) by_va_order.push_back(va);
     v.push_back(dec);
-    const NameInfo& ni = *infos[i];
-    std::string_view q = ni.qualified;
-    auto& qv = qual_to_va[q];
-    if (qv.empty()) qual_order.push_back(q);
-    qv.push_back(va);
-    auto& sv = sigs_of[{q, va}];
-    std::string_view sig = ni.signature;
-    auto at = std::lower_bound(sv.begin(), sv.end(), sig);
-    if (at == sv.end() || *at != sig) sv.insert(at, sig);
   }
   sym_vas = by_va_order;
   std::sort(sym_vas.begin(), sym_vas.end());
-  for (auto q : qual_order) {
-    by_suffix[q].push_back(q);
-    for (size_t p = q.find("::"); p != std::string_view::npos; p = q.find("::", p + 2)) by_suffix[q.substr(p + 2)].push_back(q);
+  // the symbols by qualified name (counting sort by id: map order within each)
+  u32 nids = nc.string_count();
+  qual_first_.assign(size_t(nids) + 1, 0);
+  for (auto* ni : infos) ++qual_first_[ni->qualified_id + 1];
+  for (u32 q = 0; q < nids; ++q) qual_first_[q + 1] += qual_first_[q];
+  qual_syms_.resize(syms.size());
+  {
+    std::vector<u32> fill(qual_first_.begin(), qual_first_.end() - 1);
+    for (size_t i = 0; i < syms.size(); ++i) qual_syms_[fill[infos[i]->qualified_id]++] = {syms[i].first, infos[i]->signature};
   }
-  std::unordered_set<std::string_view, SvHash> code_names;
-  SvMap<u64> code_by_dec;
+  // the qualified names by last one and two components, in map order
+  std::vector<char> seen(nids), code_q(nids);
+  for (auto& c : by_last_) c.first = c.last = c.next = std::vector<u32>(nids, 0);
+  for (auto* ni : infos) {
+    u32 q = ni->qualified_id;
+    if (seen[q]) continue;
+    seen[q] = 1;
+    by_last_[0].add(ni->last1_id, q);
+    by_last_[1].add(ni->last2_id, q);
+  }
+  std::unordered_map<std::string_view, u64, SvHash> code_by_dec;
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, d] = syms[i];
     if (!img.executable(va)) continue;
-    code_names.insert(infos[i]->qualified);
-    code_by_dec[std::string(d)] = va;
+    code_q[infos[i]->qualified_id] = 1;
+    code_by_dec[d] = va;
   }
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, d] = syms[i];
     if (img.executable(va)) continue;
-    if (local_static_match(d) || code_names.count(infos[i]->owner)) local_statics.insert(va);
+    if (local_static_match(d) || code_q[infos[i]->owner_id]) local_statics.insert(va);
   }
   for (auto& [va, d] : syms) {
     size_t m = local_statics.count(va) ? local_static_match(d) : 0;
@@ -381,42 +384,60 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
     for (size_t i = 0; i < rest.size(); ++i) {
       if (rest[i] != '@') continue;
       probe.assign("?").append(rest, 0, i);
-      if (code_by_dec.count(probe)) { k = i; break; }
+      if (code_by_dec.count(std::string_view(probe))) { k = i; break; }
     }
     auto it = static_owner.find(va);
     if (it == static_owner.end()) it = static_owner.emplace(va, std::set<u64>()).first;
     if (!k || !it->second) it->second = std::nullopt;
-    else it->second->insert(code_by_dec["?" + rest.substr(0, *k)]);
+    else it->second->insert(code_by_dec.at("?" + rest.substr(0, *k)));
   }
+}
+
+void Rebuilt::Chain::add(u32 k, u32 q) {
+  if (last[k]) next[last[k] - 1] = q + 1;
+  else first[k] = q + 1;
+  last[k] = q + 1;
+}
+
+std::vector<u32> Rebuilt::matching(const std::string& key) const {
+  // `key` names q when it is q or the part of q after one of its "::" (found left to right): then its last one
+  // and two components are q's
+  std::vector<u32> out;
+  if (!names_) return out;
+  int n = last_components(key, 1).size() == key.size() ? 1 : 2;
+  const Chain& c = by_last_[n - 1];
+  auto k = names_->id_of(last_components(key, n));
+  if (!k || *k >= c.first.size()) return out;
+  for (u32 q1 = c.first[*k]; q1; q1 = c.next[q1 - 1]) {
+    std::string_view q = names_->text(q1 - 1);
+    bool hit = q == key;
+    if (!hit && q.size() > key.size() + 1 && q.ends_with(key))
+      for (size_t p = q.find("::"); !hit && p != std::string_view::npos; p = q.find("::", p + 2)) hit = q.substr(p + 2) == key;
+    if (hit) out.push_back(q1 - 1);
+  }
+  return out;
 }
 
 Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>& sig, bool code) const {
   std::string key = norm_name(key0);
-  auto it = by_suffix.find(key);
-  static const std::vector<std::string_view> none;
-  const auto& hits = it == by_suffix.end() ? none : it->second;
+  std::vector<u32> hits = matching(key);
   std::set<u64> vas;
-  for (auto& q : hits) {
-    for (u64 va : qual_to_va.at(q)) {
-      if (sig) {
-        auto s = sigs_of.find({q, va});
-        if (s == sigs_of.end() || !std::binary_search(s->second.begin(), s->second.end(), std::string_view(*sig))) continue;
-      }
-      if (code && !img.executable(va)) continue;
-      vas.insert(va);
+  for (u32 q : hits) {
+    for (u32 k = qual_first_[q]; k < qual_first_[q + 1]; ++k) {
+      const QualSym& s = qual_syms_[k];
+      if (sig && s.sig != *sig) continue;
+      if (code && !img.executable(s.va)) continue;
+      vas.insert(s.va);
     }
   }
-  return {std::vector<u64>(vas.begin(), vas.end()), hits.size() == 1 ? std::string(hits[0]) : key, hits.size()};
+  return {std::vector<u64>(vas.begin(), vas.end()), hits.size() == 1 ? std::string(names_->text(hits[0])) : key, hits.size()};
 }
 
 std::vector<std::string> Rebuilt::overloads_of(const std::string& key) const {
-  auto it = by_suffix.find(norm_name(key));
   std::set<std::string_view> out;
-  if (it != by_suffix.end())
-    for (auto& q : it->second)
-      for (u64 va : qual_to_va.at(q))
-        if (img.executable(va))
-          for (auto& s : sigs_of.at({q, va})) out.insert(s);
+  for (u32 q : matching(norm_name(key)))
+    for (u32 k = qual_first_[q]; k < qual_first_[q + 1]; ++k)
+      if (img.executable(qual_syms_[k].va)) out.insert(qual_syms_[k].sig);
   return std::vector<std::string>(out.begin(), out.end());
 }
 

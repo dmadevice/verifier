@@ -23,8 +23,11 @@ const char* size_name(int n) {
 
 }  // namespace
 
-Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve0, const Image& img,
-                  bool const_by_value) {
+namespace {
+
+// symbolise_one() into a fresh token
+void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve0, const Image& img,
+                    bool const_by_value) {
   i64 flo = i64(lo - img.base), fhi = i64(hi - img.base);
   auto resolve = [&](u64 t) {
     auto it = img.imports.find(t);
@@ -32,8 +35,7 @@ Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>
     return resolve0(t);
   };
   u16 rip = reg_rip();
-  Tok tok{ins.mnemonic, {}};
-  tok.ops.reserve(ins.ops.size());
+  tok.mnemonic = ins.mnemonic;
   for (auto& op : ins.ops) {
     Op o{};
     if (op.type == OP_REG) {
@@ -54,7 +56,7 @@ Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>
         Key r = resolve(t);
         if (const_by_value && r.kind == Key::CONST) {
           o.k = Op::CONST;
-          o.hex = hex_bytes(img.bytes(t, op.size ? op.size : 4));
+          o.bytes = img.bytes(t, op.size ? op.size : 4);
         } else {
           o.k = Op::MSYM;
           o.key = r;
@@ -79,20 +81,27 @@ Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>
     } else {
       continue;
     }
-    tok.ops.push_back(std::move(o));
+    tok.ops.push_back(o);
   }
+}
+
+}  // namespace
+
+Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
+                  bool const_by_value) {
+  Tok tok;
+  symbolise_into(tok, ins, lo, hi, resolve, img, const_by_value);
   return tok;
 }
 
 Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
                bool const_by_value) {
-  Toks toks;
-  toks.reserve(insns.size());
-  for (auto& ins : insns) toks.push_back(symbolise_one(ins, lo, hi, resolve, img, const_by_value));
+  Toks toks(insns.size());
+  for (size_t k = 0; k < insns.size(); ++k) symbolise_into(toks[k], insns[k], lo, hi, resolve, img, const_by_value);
   return toks;
 }
 
-std::string tok_text(const Tok& tok, const std::unordered_map<u64, std::string>& names) {
+std::string tok_text(const Tok& tok, const NameMap& names) {
   std::string out = tok.mnemonic.str();
   auto target = [&](const Key& r) {
     if (r.kind == Key::VA) {
@@ -115,7 +124,7 @@ std::string tok_text(const Tok& tok, const std::unordered_map<u64, std::string>&
       case Op::REL: out += "<+" + hex_signed(op.v) + ">"; break;   // an offset into the function
       case Op::SYM: target(op.key); break;
       case Op::MSYM: size_of(op.size); out += '['; target(op.key); out += ']'; break;
-      case Op::CONST: out += "[const "; out.append(op.hex, 0, 16); out += ']'; break;
+      case Op::CONST: out += "[const "; out += hex_bytes(op.bytes.substr(0, 8)); out += ']'; break;
       case Op::TBL:
         size_of(op.size);
         out += "[table+" + hex_signed(op.v) + " + " + reg_name(op.index) + "*" + std::to_string(op.scale) + "]";
@@ -384,7 +393,7 @@ std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int
 }
 
 std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vector<Insn>& ri, const Toks& ot, const Toks& rt,
-                                   const std::unordered_map<u64, std::string>& names, int context, size_t limit) {
+                                   const NameMap& names, int context, size_t limit) {
   auto index = [](const std::vector<Insn>& insns) {
     std::unordered_map<i64, size_t> m;
     for (size_t k = 0; k < insns.size(); ++k) m[i64(insns[k].address - insns[0].address)] = k;
@@ -400,8 +409,8 @@ std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vecto
         mix(o.k);
         if (o.k == Op::REL) continue;
         mix(size_t(o.base) << 32 | size_t(o.index) << 16 | o.seg);
-        mix(std::hash<std::string>()(o.hex));
-        mix(std::hash<std::string>()(o.key.name));
+        mix(std::hash<std::string_view>()(o.bytes));
+        mix(std::hash<std::string_view>()(o.key.name));
         mix(size_t(o.key.va));
         mix(size_t(o.v));
         mix(size_t(o.size) * 31 + size_t(o.scale) * 7 + o.key.kind);

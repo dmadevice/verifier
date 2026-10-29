@@ -18,14 +18,19 @@
 
 namespace verifier {
 
-// What a rebuilt address stands for: ('va', original VA) / ('const'|'str'|'td'|'ti'|'vbt'|'unresolved', name)
+// text kept for the run, each distinct string once (names made while comparing)
+std::string_view keep_text(std::string_view s);
+
+// What a rebuilt address stands for: ('va', original VA) / ('const'|'str'|'td'|'ti'|'vbt'|'unresolved', name). Plain
+// data: the name is a view of text that outlives the comparisons.
 struct Key {
   enum Kind : u8 { VA, CONST, STR, TD, TI, VBT, UNRESOLVED, IMP } kind = UNRESOLVED;
   u64 va = 0;
-  std::string name;
+  std::string_view name;
   const Import* imp = nullptr;   // IMP only (symbolised tokens): the image's entry
   static Key of_va(u64 v) { Key k; k.kind = VA; k.va = v; return k; }
-  static Key named(Kind kd, std::string n) { Key k; k.kind = kd; k.name = std::move(n); return k; }
+  static Key named(Kind kd, std::string_view n) { return named_view(kd, keep_text(n)); }   // copies the name
+  static Key named_view(Kind kd, std::string_view n) { Key k; k.kind = kd; k.name = n; return k; }   // n outlives the run
   bool is_va(u64 v) const { return kind == VA && va == v; }
   bool operator==(const Key& o) const {
     return kind == o.kind && va == o.va && name == o.name && (imp == o.imp || (imp && o.imp && *imp == *o.imp));
@@ -84,18 +89,19 @@ struct FnMemo {
 
 using NamePairs = std::vector<std::pair<Bytes, Bytes>>;   // (original decorated name, rebuilt one)
 
-i64 const_size(const std::string& name);
+i64 const_size(std::string_view name);
 i64 literal_size(const Image& img, u64 start, const Key& key);
 
 class Comparer {
  public:
+  // vtables and names (if given) outlive the Comparer
   Comparer(const Image* O, const Image* R, std::function<Key(u64)> resolve,
-           std::map<u64, std::vector<u64>> vtables = {}, std::unordered_map<u64, std::string> names = {});
+           const std::map<u64, std::vector<u64>>* vtables = nullptr, const NameMap* names = nullptr);
 
   const Image *O, *R;
   std::function<Key(u64)> resolve;
-  std::map<u64, std::vector<u64>> vtables;          // original vtable VA -> slot VAs
-  std::unordered_map<u64, std::string> names;       // original VA -> IDA name
+  const std::map<u64, std::vector<u64>>& vtables;   // original vtable VA -> slot VAs
+  const NameMap& names;                              // original VA -> IDA name
 
   Journal journal;
   // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;
@@ -151,8 +157,8 @@ class Comparer {
   CodeResult code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   bool same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<bool> wide = std::nullopt);
   std::optional<Problem> accessed(u64 o_t, u64 r_t, int n);
-  std::optional<Problem> throw_info_cmp(u64 o_t, u64 r_t, const std::string& name);
-  Problems handler_data(const std::string& handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth);
+  std::optional<Problem> throw_info_cmp(u64 o_t, u64 r_t, std::string_view name);
+  Problems handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth);
   friend class EHContext;
 };
 

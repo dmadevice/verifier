@@ -65,6 +65,10 @@ struct SvHash {
 };
 template <class V>
 using SvMap = std::unordered_map<std::string, V, SvHash, std::equal_to<>>;
+using NameMap = std::unordered_map<u64, std::string_view>;   // VA -> name (views of text kept for the run)
+// keyed by views of text kept elsewhere
+template <class V>
+using SvViewMap = std::unordered_map<std::string_view, V, SvHash>;
 
 inline u32 le32(const char* p) { u32 v; std::memcpy(&v, p, 4); return v; }
 inline u64 le64(const char* p) { u64 v; std::memcpy(&v, p, 8); return v; }

@@ -1,6 +1,7 @@
 // The two sides' inputs: the original image with IDA's functions, vtables, data items and the library
 // attribution; the rebuilt image with its map's symbol tables.
 #pragma once
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -20,7 +21,7 @@ constexpr u64 MAX_SYM_OFFSET = 0x10000;   // containing-symbol resolution: large
 
 struct IdaFunction {
   u64 ea = 0, size = 0;
-  std::string name;
+  std::string_view name;   // a view of text the Original keeps
   bool lib = false, thunk = false;
 };
 
@@ -37,8 +38,8 @@ class Original {
   Image img;
   std::unordered_map<u64, IdaFunction> functions;
   std::vector<u64> function_order;                 // in the order of the export file
-  std::unordered_map<u64, std::string> ida_names;
-  SvMap<u64> by_name;
+  NameMap ida_names;
+  SvViewMap<u64> by_name;
   std::map<u64, std::vector<u64>> vtables;
   std::unordered_map<u64, Linked> linked;
 
@@ -49,6 +50,9 @@ class Original {
 
  private:
   const Config* config_ = nullptr;
+  std::string snapshot_;           // the snapshot's bytes, when read from it: the names are views of it
+  std::deque<std::string> text_;   // or the names from the exports
+  std::string_view keep(std::string s) { return text_.emplace_back(std::move(s)); }
   std::vector<u64> boundaries_, align_starts_, align_ends_;
   std::unordered_set<u64> data_names_;
   void load_exports();   // the tables from the text exports
@@ -73,17 +77,7 @@ class Rebuilt {
   std::vector<std::pair<u64, std::string_view>> syms;
   std::unordered_map<u64, std::vector<std::string_view>> by_va;   // decorated names at an address, map order
   std::vector<u64> by_va_order;
-  std::unordered_map<std::string_view, std::vector<u64>, SvHash> qual_to_va;
-  std::vector<std::string_view> qual_order;
-  // (qualified name, address) -> its parameter lists there (sorted, distinct)
-  struct NameVaHash {
-    size_t operator()(const std::pair<std::string_view, u64>& k) const {
-      return std::hash<std::string_view>()(k.first) ^ (k.second * 0x9E3779B97F4A7C15ull);
-    }
-  };
-  std::unordered_map<std::pair<std::string_view, u64>, std::vector<std::string_view>, NameVaHash> sigs_of;
   std::vector<u64> sym_vas;
-  std::unordered_map<std::string_view, std::vector<std::string_view>, SvHash> by_suffix;
   std::unordered_set<u64> local_statics;
   // local static VA -> the rebuilt functions it belongs to; nullopt: an owner without a symbol. Only statics
   // whose decorated name has the local static form have an entry (owners unknown for the others).
@@ -110,6 +104,17 @@ class Rebuilt {
 
  private:
   NameCache* names_ = nullptr;
+  // what lookup() reads: by qualified name (its NameCache id), the address and parameter list of each symbol with
+  // that name, in map order (CSR); and the qualified names by their last one and two components, in map order
+  struct QualSym { u64 va; std::string_view sig; };
+  std::vector<u32> qual_first_;
+  std::vector<QualSym> qual_syms_;
+  struct Chain {   // by the id of the last components: the qualified names with them, a list through `next` (id + 1)
+    std::vector<u32> first, last, next;
+    void add(u32 k, u32 q);
+  };
+  Chain by_last_[2];
+  std::vector<u32> matching(const std::string& key) const;   // the qualified names `key` names, in map order
 };
 
 }  // namespace verifier

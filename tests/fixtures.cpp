@@ -151,13 +151,13 @@ Problems replay(const Value& c) {
   for (auto& k : m["keys"].arr) (*keys)[u64(k.arr[0].as_int())] = key_of(k.arr[1].as_str(), k.arr[2]);
   std::map<u64, std::vector<u64>> vtables;
   for (auto& v : c["vtables"].arr) vtables[u64(v.arr[0].as_int())] = u64s(&v.arr[1]);
-  std::unordered_map<u64, std::string> names;
+  NameMap names;
   for (auto& n : c["names"].arr) names[u64(n.arr[0].as_int())] = n.arr[1].as_str();
   auto resolve = [keys](u64 t) {
     auto it = keys->find(t);
     return it != keys->end() ? it->second : Key::named(Key::UNRESOLVED, hex(t));
   };
-  Comparer cmp(&O, &R, resolve, vtables, names);
+  Comparer cmp(&O, &R, resolve, &vtables, &names);
   std::map<u64, std::vector<u64>> folded, refs;
   for (auto& f : m["folded"].arr) folded[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
   for (auto& f : m["refs"].arr) refs[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
@@ -455,7 +455,7 @@ Problems instruction_diff() {
   Toks r_toks = {{"push", {opr("rbx")}}, {"je", {oprel(10)}}, {"nop", {}}, {"call", {opsym(Key::named(Key::UNRESOLVED, "Foo"))}},
                  {"pop", {opr("rbx")}}};
   auto oi = insns({0, 1, 3, 7}), ri = insns({0, 1, 3, 4, 10});
-  std::unordered_map<u64, std::string> names{{0x180001000, "Bar"}};
+  NameMap names{{0x180001000, "Bar"}};
   Problems bad;
   auto got = insn_diff(oi, ri, o_toks, r_toks, names, 1);
   std::vector<std::string> want = {"@1", "  je <+0x7>", "- call Bar", "+ nop", "+ call Foo", "  pop rbx"};
@@ -800,6 +800,61 @@ Problems addend_across_annotation(u64 off) {
   return bad_if(!got.is_va(og + off), "reference", "g+" + hex(off) + " resolves to " + got.text());
 }
 
+// the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
+// ids equal exactly when the strings are), and a damaged file is ignored. Names without a leading '?' need no
+// undname.
+Problems name_cache() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-names-" + unique_suffix());
+  fs::create_directories(d);
+  std::string file = (d / "names.bin").string();
+  auto infos_of = [](NameCache& nc, const std::vector<std::string_view>& names) {
+    std::vector<std::string> out;
+    for (auto* ni : nc.load(names))
+      out.push_back(std::string(ni->decorated) + "|" + std::string(ni->qualified) + "|" + std::string(ni->signature) + "|" +
+                    std::string(ni->owner) + "|" + std::string(nc.text(ni->last1_id)) + "|" + std::string(nc.text(ni->last2_id)));
+    return out;
+  };
+  Problems bad;
+  std::vector<std::string_view> first = {"N::A::f", "N::B::f", "g", "N::A::f", "M::N::A::f"};
+  std::vector<std::string_view> second = {"h", "N::B::f", "M::N::A::f", "N::A::f", "N::C::f"};
+  std::vector<std::string> want1, want2;
+  {
+    NameCache nc(file, "key", "");
+    want1 = infos_of(nc, first);
+    nc.save();
+  }
+  {
+    NameCache nc(file, "key", "");
+    if (infos_of(nc, first) != want1) bad.push_back({"names", "reloaded entries differ"});
+    auto infos = nc.load(second);
+    want2 = infos_of(nc, second);
+    nc.save();
+    // the same qualified name, the same id; f is every name's last component
+    if (infos[1]->last1_id != infos[3]->last1_id || infos[1]->qualified_id == infos[3]->qualified_id ||
+        nc.text(infos[1]->qualified_id) != infos[1]->qualified)
+      bad.push_back({"names", "ids"});
+    if (!nc.id_of("f") || nc.id_of("no such string")) bad.push_back({"names", "id_of"});
+  }
+  {
+    NameCache nc(file, "key", "");
+    if (infos_of(nc, second) != want2) bad.push_back({"names", "entries after adding names differ"});
+  }
+  {
+    NameCache nc(file, "other key", "");   // another undname: the file is not used
+    if (nc.string_count() != 0) bad.push_back({"names", "file of another key read"});
+  }
+  fs::resize_file(file, fs::file_size(file) - 3);
+  {
+    NameCache nc(file, "key", "");
+    if (nc.string_count() != 0) bad.push_back({"names", "truncated file read"});
+    if (infos_of(nc, second) != want2) bad.push_back({"names", "entries without the file differ"});
+  }
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 Problems ignored_annotations() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-ann-" + unique_suffix());
@@ -910,6 +965,7 @@ int main(int argc, char** argv) {
       {"qualified names", nullptr, qualified_names},
       {"definition names", nullptr, definition_names},
       {"long names", nullptr, long_names},
+      {"name cache file", nullptr, name_cache},
       {"destructor pairing", nullptr, destructor_pairing},
       {"folded annotations", nullptr, folded_annotations},
       {"instruction diff", nullptr, instruction_diff},

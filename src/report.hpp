@@ -1,6 +1,9 @@
 // What a DIFF reports: instructions as symbolised tokens, the mismatch category, and a unified diff.
 #pragma once
+#include <algorithm>
+#include <array>
 #include <functional>
+#include <initializer_list>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -10,24 +13,42 @@
 namespace verifier {
 
 // One symbolised operand:
-//   r(reg) i(imm) rel(off) sym(key) msym(key, size) const(hex) tbl(base, index, scale, off, size)
+//   r(reg) i(imm) rel(off) sym(key) msym(key, size) const(bytes) tbl(base, index, scale, off, size)
 //   m(base, index, scale, disp, size, seg)
-// Registers are canonical ids (reg_canon): equal exactly when their names are.
+// Registers are canonical ids (reg_canon): equal exactly when their names are. Plain data.
 struct Op {
   enum K : u8 { R, I, REL, SYM, MSYM, CONST, TBL, M } k;
   u16 base = 0, index = 0, seg = 0;   // R: base = the register
-  std::string hex;                    // CONST: the bytes in hex
+  std::string_view bytes;             // CONST: the constant's bytes (a view of the image)
   Key key;                            // SYM, MSYM (kind IMP for imports)
   i64 v = 0;                          // I: imm; REL: offset; TBL: offset; M: disp
   int scale = 0, size = 0;
   bool operator==(const Op& o) const {
-    return k == o.k && base == o.base && index == o.index && seg == o.seg && hex == o.hex && key == o.key && v == o.v &&
+    return k == o.k && base == o.base && index == o.index && seg == o.seg && bytes == o.bytes && key == o.key && v == o.v &&
            scale == o.scale && size == o.size;
   }
 };
+// An instruction's operands, inline (at most 4)
+class OpList {
+ public:
+  OpList() = default;
+  OpList(std::initializer_list<Op> ops) { for (auto& o : ops) push_back(o); }
+  void push_back(const Op& o) { if (n_ < ops_.size()) ops_[n_++] = o; }
+  size_t size() const { return n_; }
+  bool empty() const { return n_ == 0; }
+  Op& operator[](size_t i) { return ops_[i]; }
+  const Op& operator[](size_t i) const { return ops_[i]; }
+  const Op* begin() const { return ops_.data(); }
+  const Op* end() const { return ops_.data() + n_; }
+  bool operator==(const OpList& o) const { return n_ == o.n_ && std::equal(begin(), end(), o.begin()); }
+
+ private:
+  std::array<Op, 4> ops_{};
+  u8 n_ = 0;
+};
 struct Tok {
   Mnem mnemonic;
-  std::vector<Op> ops;
+  OpList ops;
   bool operator==(const Tok& o) const { return mnemonic == o.mnemonic && ops == o.ops; }
 };
 using Toks = std::vector<Tok>;
@@ -36,7 +57,7 @@ Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>
                   bool const_by_value);
 Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
                bool const_by_value);
-std::string tok_text(const Tok& t, const std::unordered_map<u64, std::string>& names);
+std::string tok_text(const Tok& t, const NameMap& names);
 std::string classify(const Toks& a, const Toks& b);
 
 struct LongestMatch { size_t i, j, k; };
@@ -45,6 +66,6 @@ struct Opcode { char tag; size_t i1, i2, j1, j2; };   // tag: e(qual) r(eplace) 
 std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int>& b);   // sequence alignment (report.cpp)
 
 std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vector<Insn>& ri, const Toks& ot, const Toks& rt,
-                                   const std::unordered_map<u64, std::string>& names, int context = 2, size_t limit = 200);
+                                   const NameMap& names, int context = 2, size_t limit = 200);
 
 }  // namespace verifier

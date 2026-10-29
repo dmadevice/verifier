@@ -72,7 +72,7 @@ void const_by_value(Tok& o, const Tok& r, const Image& O) {
     if (r.ops[z].k == Op::CONST && o.ops[z].k == Op::MSYM) {
       Op c{};
       c.k = Op::CONST;
-      c.hex = hex_bytes(O.bytes(o.ops[z].key.va, i64(r.ops[z].hex.size() / 2)));
+      c.bytes = O.bytes(o.ops[z].key.va, i64(r.ops[z].bytes.size()));
       o.ops[z] = c;
     }
   }
@@ -80,7 +80,7 @@ void const_by_value(Tok& o, const Tok& r, const Image& O) {
 
 void add_unresolved(const Tok& t, std::set<std::string>& out) {
   for (auto& op : t.ops)
-    if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) out.insert(op.key.name);
+    if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) out.insert(std::string(op.key.name));
 }
 
 // Whether the two functions' tokens are equal, decided from their kept form: instructions with the same size,

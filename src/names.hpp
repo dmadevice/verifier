@@ -32,6 +32,9 @@ std::string strip_declspec(const std::string& line);                  // each __
 std::string fnptr_inner(const std::string& und);                      // `R (__cc*__cc f(p))(q)` -> `__cc f(p)`
 // `dynamic initializer/atexit destructor for 'x''(void), with the owning function's text when x is a local static
 bool dynamic_thunk(const std::string& und, std::optional<std::string>& owner, std::string& name);
+// the last n components: the part after the n-th last "::" (occurrences found left to right, as lookups split
+// names), or the whole name when it has fewer
+std::string_view last_components(std::string_view q, int n);
 size_t local_static_match(std::string_view dec);    // end of the local static prefix of a decorated name, 0 if it is not one
 
 // pick_destructor(name, va, va is a vtable slot, has_code)
@@ -50,28 +53,44 @@ std::string pick_destructor(const std::string& name, bool in_slot, HasCode has_c
 std::unordered_map<std::string, std::string> undecorate(const std::vector<std::string>& names, const std::string& undname);
 
 // What the name tables need of each map symbol (NameCache): undecorated (if any), qualified, signature, owner
-// (views of text the NameCache keeps for the run)
+// (views of text the NameCache keeps for the run), and the ids of the last three and of the qualified name's last
+// one and two components (last_components): equal exactly when the strings are
 struct NameInfo {
+  bool set = false;
   bool has_und = false;
-  std::string_view und, qualified, signature, owner;
+  std::string_view decorated, und, qualified, signature, owner;
+  u32 qualified_id = 0, signature_id = 0, owner_id = 0, last1_id = 0, last2_id = 0;
 };
 class NameCache {
  public:
   NameCache(std::string path, std::string key, std::string undname);
   // every name's NameInfo (undname for the new ones), in the order given
   std::vector<const NameInfo*> load(const std::vector<std::string_view>& decorated);
-  const NameInfo& info(std::string_view d) const { return entries_.find(d)->second; }
+  const NameInfo& info(std::string_view d) const { return *find(d); }
+  std::string_view text(u32 id) const;
+  std::optional<u32> id_of(std::string_view s) const;   // the string's id, if it has one
+  u32 string_count() const { return nstr_ + u32(new_text_.size()); }   // the ids are below it
   void save();
 
  private:
   std::string path_, key_, undname_;
-  std::string file_;                // the cache file's text: the entries read from it are views of it
-  std::deque<std::string> owned_;   // the text of the entries added this run
-  std::unordered_map<std::string_view, NameInfo, SvHash> entries_;
-  std::vector<std::string_view> used_;   // this build's names (entries_' keys)
-  std::string_view own(std::string s) { return owned_.emplace_back(std::move(s)); }
+  std::string file_;   // the cache file, used in place
+  const char* text_ = nullptr;
+  const u32 *str_end_ = nullptr, *ent_ = nullptr, *eidx_ = nullptr, *sidx_ = nullptr;
+  u32 nstr_ = 0, nent_ = 0, eslots_ = 0, sslots_ = 0;
+  mutable std::vector<NameInfo> file_info_;   // the file's entries, made when first looked up
+  // added this run: strings (ids from nstr_ on) and entries
+  std::deque<std::string> owned_;
+  std::vector<std::string_view> new_text_;
+  std::unordered_map<std::string_view, u32, SvHash> new_ids_;
+  std::unordered_map<std::string_view, NameInfo, SvHash> new_entries_;
+  std::vector<std::string_view> used_;   // this build's names
   bool loaded_from_file_ = false;
-  size_t stored_ = 0;
+  const NameInfo* find(std::string_view d) const;
+  long find_entry(std::string_view d) const;   // the file's entry for a name, -1 if none
+  const NameInfo* file_entry(u32 k) const;
+  std::optional<u32> find_string(std::string_view s) const;
+  u32 intern(std::string s);
 };
 
 }  // namespace verifier

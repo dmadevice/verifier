@@ -87,7 +87,7 @@ void Pairing::pair_vftables() {
         u64 col = O.u64_at(ea - 8);
         if (O.flags(col) && Bytes(O.bytes(col + 4, 8)) == offsets) hits.push_back(ea);
       }
-      if (hits.size() == 1) by_name[std::string(n)] = hits[0];
+      if (hits.size() == 1) by_name[n] = hits[0];
     }
   }
 }
@@ -99,7 +99,7 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
 }
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
-  cmp = std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, orig.vtables, orig.ida_names);
+  cmp = std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables, &orig.ida_names);
   Comparer& c = *cmp;
   inferred_.attach(&c.journal);
   inferred_r_.attach(&c.journal);
@@ -268,14 +268,14 @@ Key Pairing::resolve_symbol(u64 t) const {
   static const std::vector<std::string_view> none;
   auto bv = reb.by_va.find(t);
   const auto& names = bv == reb.by_va.end() ? none : bv->second;
-  for (auto& n : names) if (is_const_name(n)) return Key::named(Key::CONST, std::string(n));
-  for (auto& n : names) if (starts_with(n, "??_C@")) return Key::named(Key::STR, std::string(n));
+  for (auto& n : names) if (is_const_name(n)) return Key::named_view(Key::CONST, n);
+  for (auto& n : names) if (starts_with(n, "??_C@")) return Key::named_view(Key::STR, n);
   for (auto& n : names) if (auto it = by_name.find(n); it != by_name.end()) return Key::of_va(it->second);
   for (auto& n : names) if (auto it = by_name.find(reb.qualified(n)); it != by_name.end()) return Key::of_va(it->second);
-  for (auto& n : names) if (starts_with(n, "??_R0")) return Key::named(Key::TD, std::string(n));
-  for (auto& n : names) if (starts_with(n, "_TI")) return Key::named(Key::TI, std::string(n));
-  for (auto& n : names) if (starts_with(n, "??_8")) return Key::named(Key::VBT, std::string(n));
-  return Key::named(Key::UNRESOLVED, names.empty() ? hex(t) : std::string(names[0]));
+  for (auto& n : names) if (starts_with(n, "??_R0")) return Key::named_view(Key::TD, n);
+  for (auto& n : names) if (starts_with(n, "_TI")) return Key::named_view(Key::TI, n);
+  for (auto& n : names) if (starts_with(n, "??_8")) return Key::named_view(Key::VBT, n);
+  return names.empty() ? Key::named(Key::UNRESOLVED, hex(t)) : Key::named_view(Key::UNRESOLVED, names[0]);
 }
 
 Key Pairing::resolve(u64 t) const {
