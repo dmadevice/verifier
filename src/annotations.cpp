@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
-#include <regex>
 
 #include "names.hpp"
 
@@ -83,8 +82,6 @@ bool match_annotation(std::string_view line, const std::string& module, std::str
 
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
                                           std::vector<Ignored>* ignored) {
-  static const std::regex global_decl(R"(([A-Za-z_]\w*)\s*(?:\[[^\]]*\])*\s*(?:=|;|\{))");
-  static const std::regex class_decl(R"(\b(?:class|struct)\s+(?:__declspec\(\w+\)\s+)?([A-Za-z_][\w:]*))");
   std::vector<Annotation> out;
   for (auto& root : roots) {
     for (auto& path : walk_files(root)) {
@@ -123,13 +120,11 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
         if (starts_with(rest, "(") && ends_with(rest, ")")) flags.insert("SIG=" + norm_params(rest));
         if (kind == "GLOBAL") {
           for (auto& nxt : following) {
-            std::smatch m;
-            if (std::regex_search(nxt, m, global_decl)) { out.push_back({kind, va, m[1].str(), flags, path, int(i + 1)}); break; }
+            if (auto name = global_decl_name(nxt)) { out.push_back({kind, va, *name, flags, path, int(i + 1)}); break; }
           }
         } else if (kind == "VTABLE") {
           for (auto& nxt : following) {
-            std::smatch m;
-            if (std::regex_search(nxt, m, class_decl)) { out.push_back({kind, va, m[1].str(), flags, path, int(i + 1)}); break; }
+            if (auto name = class_decl_name(nxt)) { out.push_back({kind, va, *name, flags, path, int(i + 1)}); break; }
           }
         } else {
           for (auto& nxt : following) {

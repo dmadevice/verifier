@@ -24,6 +24,14 @@ std::optional<std::string> definition_name(const std::string& line);
 std::string static_owner(const std::string& und);
 std::string signature(const std::string& und);
 std::string qualified(const std::string& und);        // memoised
+// Scanners for the patterns declarations and undecorated names are read by; each gives what the regular
+// expression in its comment (names.cpp) gives, in linear time and without recursion.
+std::optional<std::string> global_decl_name(std::string_view line);   // `int g_x[4] = ...` -> g_x
+std::optional<std::string> class_decl_name(std::string_view line);    // `class __declspec(x) N::C : ...` -> N::C
+std::string strip_declspec(const std::string& line);                  // each __declspec(...) -> " "
+std::string fnptr_inner(const std::string& und);                      // `R (__cc*__cc f(p))(q)` -> `__cc f(p)`
+// `dynamic initializer/atexit destructor for 'x''(void), with the owning function's text when x is a local static
+bool dynamic_thunk(const std::string& und, std::optional<std::string>& owner, std::string& name);
 size_t local_static_match(std::string_view dec);    // end of the local static prefix of a decorated name, 0 if it is not one
 
 // pick_destructor(name, va, va is a vtable slot, has_code)

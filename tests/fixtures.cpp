@@ -373,6 +373,26 @@ Problems definition_names() {
   return bad;
 }
 
+// names far longer than the recursion of a backtracking regex engine allows (real builds have undecorated
+// names tens of thousands of characters long)
+Problems long_names() {
+  const std::string x(200000, 'x');
+  Problems bad;
+  std::string dyn = "void __cdecl `dynamic initializer for 'N::g<" + x + ">''(void)";
+  if (qualified(dyn) != "`dynamic initializer for 'N::g<" + x + ">''") bad.push_back({"name", "dynamic initializer"});
+  std::string local = "void __cdecl `int __cdecl N::f<" + x + ">(void)'::`2'::`dynamic atexit destructor for 's''(void)";
+  if (qualified(local) != "N::f<" + x + ">::`dynamic atexit destructor for 's''") bad.push_back({"name", "local atexit destructor"});
+  std::string params;
+  for (int i = 0; i < 20000; ++i) params += i ? ",struct box * __ptr64" : "struct box * __ptr64";
+  std::string fp = "int (__cdecl*__cdecl select_printer(" + params + "))(struct _iobuf * __ptr64,int)";
+  if (qualified(fp) != "select_printer") bad.push_back({"name", "function returning a function pointer"});
+  if (global_decl_name("static int " + x + "[4][2] = {};") != x) bad.push_back({"global", "declaration"});
+  if (global_decl_name(x + " " + x)) bad.push_back({"global", "no declaration"});
+  if (class_decl_name("class __declspec(novtable) N::" + x + " : public B {") != "N::" + x) bad.push_back({"class", "declaration"});
+  if (definition_name("__declspec(noinline) void N::" + x + "(int)") != "N::" + x) bad.push_back({"name", "definition"});
+  return bad;
+}
+
 Problems destructor_pairing() {
   std::string dd = "N::X::`scalar deleting destructor'";
   auto both = [](const std::string&) { return true; };
@@ -889,6 +909,7 @@ int main(int argc, char** argv) {
       {"build hashes pair one-to-one", nullptr, build_hashes},
       {"qualified names", nullptr, qualified_names},
       {"definition names", nullptr, definition_names},
+      {"long names", nullptr, long_names},
       {"destructor pairing", nullptr, destructor_pairing},
       {"folded annotations", nullptr, folded_annotations},
       {"instruction diff", nullptr, instruction_diff},

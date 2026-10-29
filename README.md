@@ -141,7 +141,7 @@ ctest --test-dir build -C Release
 ```
 
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 27 cases in code: pairing (inference taken back when it fails, local
+exact problems it must report, and 28 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key,
 hashing and line splitting. `ctest` also runs fadec's own decoder tests.
 
