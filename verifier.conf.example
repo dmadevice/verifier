@@ -1,0 +1,28 @@
+# verifier configuration. Relative paths are relative to this file, which also marks the project root
+# (source paths in the report are given from here).
+
+# annotation tag: `// FUNCTION: GAME 0x140012340`
+module = GAME
+
+# the original binary, and optionally its SHA-256 (checked on every run)
+original = orig/game.exe
+# original_sha256 = 0123456789abcdef...
+
+# disassembler exports (JSON Lines); only `functions` is required
+functions = analysis/functions.jsonl
+vtables = analysis/vtables.jsonl
+data_items = analysis/data.jsonl
+data_names = analysis/names.jsonl
+
+# library attribution (optional)
+# library_matches = analysis/libmatch.json
+# library_functions = analysis/library_functions.json
+
+# extra `<decorated name> 0x<va>` lines (optional)
+# symbols = analysis/symbols.txt
+
+# MSVC's undname.exe, from the toolchain the rebuild uses
+undname = C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64/undname.exe
+
+# where the undecorated-name cache is kept (optional; written by --update)
+cache_dir = .verifier

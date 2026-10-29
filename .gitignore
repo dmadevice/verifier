@@ -1,0 +1,3 @@
+build/
+.verifier/
+verifier.conf
