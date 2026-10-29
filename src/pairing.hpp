@@ -19,6 +19,7 @@ class CodeCache {
  public:
   explicit CodeCache(const Image* img) : img_(img) {}
   std::shared_ptr<const Code> code(u64 start, u64 end);
+  void release(u64 start, u64 end) { live_.erase({start, end}); }
   struct Stats { size_t functions = 0, insns = 0, code_bytes = 0; };
   Stats stats() const {
     Stats s;
@@ -51,6 +52,8 @@ class Pairing {
   Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache,
                      const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn = nullptr);
   void use(std::unique_ptr<Comparer> c);   // fixtures: a Comparer with hooks of their own
+  // a compared pair's code is no longer needed (its comparison is kept): free it, if the caches hold it
+  void release_code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   Key resolve_symbol(u64 t) const;
   Key resolve(u64 t) const;
   bool annotated_between(u64 lo, u64 hi) const;
@@ -69,6 +72,7 @@ class Pairing {
  private:
   void pair_vftables();
   void prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn);
+  CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   std::unordered_set<u64> named_;
   JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
   JMap<u64, u64> inferred_r_;

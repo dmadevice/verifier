@@ -426,12 +426,10 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
   return res;
 }
 
-FnMemo Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
-  FnMemo cr;
-  cr.oc = orig_code(ostart, oend);
-  cr.rc = rebuilt_code(rstart, rend);
-  const Code &oc = *cr.oc, &rc = *cr.rc;
-  Problems& probs = cr.probs;
+Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
+  auto ocp = orig_code(ostart, oend), rcp = rebuilt_code(rstart, rend);
+  const Code &oc = *ocp, &rc = *rcp;
+  Problems probs;
   auto decoded = [](const Code& c) { i64 s = 0; for (auto& i : c.insns) s += i.size; return s; };
   if (!oc.complete || !rc.complete)
     probs.push_back({"undecodable", "decoded " + std::to_string(decoded(oc)) + "/" + std::to_string(oc.cut) + " | " +
@@ -439,7 +437,7 @@ FnMemo Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
   if (oc.code.size() != rc.code.size() || oc.cut != rc.cut || oc.resume != rc.resume || oc.insns.size() != rc.insns.size()) {
     probs.push_back({"length", std::to_string(oc.code.size()) + "/" + std::to_string(rc.code.size()) + " bytes, code " +
                                    std::to_string(oc.cut) + "/" + std::to_string(rc.cut)});
-    return cr;
+    return probs;
   }
   for (size_t k = 0; k < oc.insns.size(); ++k) {
     const Lean &a = oc.insns[k], &b = rc.insns[k];
@@ -460,7 +458,7 @@ FnMemo Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
   }
   if (!(oc.table_region() == rc.table_region())) probs.push_back({"encoding", "switch table region differs"});
   if (!(oc.outside_tables() == rc.outside_tables())) probs.push_back({"encoding", "switch tables after the function differ"});
-  return cr;
+  return probs;
 }
 
 Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth) {
@@ -655,12 +653,11 @@ Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 os
 
 Problems Comparer::function(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth) {
   auto k = std::make_pair(ostart, rstart);
-  if (auto m = memo_fn.find(k)) return m->probs;
-  memo_fn.set(k, FnMemo{});
-  FnMemo m = code(ostart, oend, rstart, rend);
-  if (m.probs.empty()) m.probs = unwinds(ostart, oend, rstart, rend, depth);
-  Problems probs = m.probs;
-  memo_fn.set(k, std::move(m));
+  if (auto m = memo_fn.find(k)) return *m;
+  memo_fn.set(k, Problems{});
+  Problems probs = code(ostart, oend, rstart, rend);
+  if (probs.empty()) probs = unwinds(ostart, oend, rstart, rend, depth);
+  memo_fn.set(k, probs);
   return probs;
 }
 

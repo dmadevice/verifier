@@ -23,14 +23,30 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
   return line.substr(0, head.size()) == head && member_int(line, head.size(), ea, end);
 }
 
-// the snapshot's fields: little-endian u64s and length-prefixed strings
+// The snapshot: the key and the string table (each length-prefixed), then the fields: little-endian u64s, and
+// strings as (offset, length) in the table, which holds each distinct string once. Only the table is kept once read.
 struct Writer {
-  std::string out;
+  std::string out, strings;
+  std::unordered_map<std::string, u64> at;   // string -> offset in `strings`
   void u(u64 v) { out.append(reinterpret_cast<const char*>(&v), 8); }
-  void s(std::string_view x) { u(x.size()); out.append(x); }
+  void s(std::string_view x) {
+    auto [it, fresh] = at.try_emplace(std::string(x), strings.size());
+    if (fresh) strings += x;
+    u(it->second);
+    u(x.size());
+  }
+  std::string file(std::string_view key) const {
+    std::string f;
+    for (std::string_view part : {key, std::string_view(strings)}) {
+      u64 n = part.size();
+      f.append(reinterpret_cast<const char*>(&n), 8);
+      f += part;
+    }
+    return f + out;
+  }
 };
 struct Reader {
-  std::string_view in;
+  std::string_view in, strings;
   size_t p = 0;
   bool ok = true;
   u64 u() {
@@ -39,12 +55,17 @@ struct Reader {
     p += 8;
     return v;
   }
-  std::string_view s() {
+  std::string_view raw() {   // a length-prefixed part
     u64 n = u();
     if (!ok || in.size() - p < n) { ok = false; return {}; }
     std::string_view r = in.substr(p, n);
     p += n;
     return r;
+  }
+  std::string_view s() {   // a string in the table
+    u64 off = u(), n = u();
+    if (!ok || off > strings.size() || strings.size() - off < n) { ok = false; return {}; }
+    return strings.substr(off, n);
   }
   // a count of items each at least `min_bytes` long (guards the reservations against a damaged file)
   u64 count(size_t min_bytes) {
@@ -157,7 +178,7 @@ void Original::load_exports() {
 }
 
 std::string Original::snapshot_key(const Config& p) {
-  std::string key = "verifier original snapshot 1\n";
+  std::string key = "verifier original snapshot 2\n";
   for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
                   &p.library_functions, &p.symbols})
     key += file_stamp(*f) + "\n";
@@ -166,7 +187,6 @@ std::string Original::snapshot_key(const Config& p) {
 
 void Original::save_snapshot(const std::string& path, const std::string& key) const {
   Writer w;
-  w.s(key);
   w.u(function_order.size());
   for (u64 ea : function_order) {
     const IdaFunction& f = functions.at(ea);
@@ -194,16 +214,19 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
   w.s("end");
   std::error_code ec;
   std::filesystem::create_directories(config_->cache_dir, ec);
-  write_file_atomic(path, w.out);
+  write_file_atomic(path, w.file(key));
 }
 
 bool Original::load_snapshot(const std::string& path, const std::string& key) {
   if (!file_exists(path)) return false;
   std::string data;
   try { data = read_file(path); } catch (...) { return false; }
-  Reader r{data};
-  if (r.s() != key) return false;
+  Reader r{data, {}};
+  if (r.raw() != key) return false;
   Original o;   // filled, then taken only when the whole file reads
+  std::string_view strings = r.raw();
+  o.snapshot_.assign(strings.begin(), strings.end());   // the names are views of it
+  r.strings = std::string_view(o.snapshot_.data(), o.snapshot_.size());
   for (u64 n = r.count(32); n--;) {
     IdaFunction f;
     f.ea = r.u();
@@ -245,8 +268,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   o.digest = std::move(digest);
   o.img = std::move(img);
   o.config_ = config_;
-  o.snapshot_ = std::move(data);   // the names are views of it
-  *this = std::move(o);
+  *this = std::move(o);   // a vector keeps its buffer when moved: the views stay valid
   return true;
 }
 
@@ -305,13 +327,17 @@ bool Original::in_padding(u64 va) const {
 
 Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc) : names_(&nc) {
   img = Image::load(path);
-  map_text = read_file(map_path);
-  syms = parse_map(map_text);
-  std::vector<std::string_view> decs;
-  decs.reserve(syms.size());
-  for (auto& s : syms) decs.push_back(s.second);
-  std::vector<const NameInfo*> infos = nc.load(decs);   // infos[i]: syms[i]'s
-  decs = {};
+  std::vector<NameIds> infos;   // infos[i]: syms[i]'s
+  {
+    std::string map_text = read_file(map_path);
+    syms = parse_map(map_text);
+    std::vector<std::string_view> decs;
+    decs.reserve(syms.size());
+    for (auto& s : syms) decs.push_back(s.second);
+    infos = nc.load(decs);
+    // the names as the NameCache keeps them, and the map's text freed
+    for (size_t i = 0; i < syms.size(); ++i) syms[i].second = nc.text(infos[i].decorated);
+  }
   by_va.reserve(syms.size());
   for (auto& [va, dec] : syms) {
     auto& v = by_va[va];
@@ -323,34 +349,34 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   // the symbols by qualified name (counting sort by id: map order within each)
   u32 nids = nc.string_count();
   qual_first_.assign(size_t(nids) + 1, 0);
-  for (auto* ni : infos) ++qual_first_[ni->qualified_id + 1];
+  for (auto& ni : infos) ++qual_first_[ni.qualified + 1];
   for (u32 q = 0; q < nids; ++q) qual_first_[q + 1] += qual_first_[q];
   qual_syms_.resize(syms.size());
   {
     std::vector<u32> fill(qual_first_.begin(), qual_first_.end() - 1);
-    for (size_t i = 0; i < syms.size(); ++i) qual_syms_[fill[infos[i]->qualified_id]++] = {syms[i].first, infos[i]->signature};
+    for (size_t i = 0; i < syms.size(); ++i) qual_syms_[fill[infos[i].qualified]++] = {syms[i].first, nc.text(infos[i].signature)};
   }
   // the qualified names by last one and two components, in map order
   std::vector<char> seen(nids), code_q(nids);
   for (auto& c : by_last_) c.first = c.last = c.next = std::vector<u32>(nids, 0);
-  for (auto* ni : infos) {
-    u32 q = ni->qualified_id;
+  for (auto& ni : infos) {
+    u32 q = ni.qualified;
     if (seen[q]) continue;
     seen[q] = 1;
-    by_last_[0].add(ni->last1_id, q);
-    by_last_[1].add(ni->last2_id, q);
+    by_last_[0].add(ni.last1, q);
+    by_last_[1].add(ni.last2, q);
   }
   std::unordered_map<std::string_view, u64, SvHash> code_by_dec;
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, d] = syms[i];
     if (!img.executable(va)) continue;
-    code_q[infos[i]->qualified_id] = 1;
+    code_q[infos[i].qualified] = 1;
     code_by_dec[d] = va;
   }
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, d] = syms[i];
     if (img.executable(va)) continue;
-    if (local_static_match(d) || code_q[infos[i]->owner_id]) local_statics.insert(va);
+    if (local_static_match(d) || code_q[infos[i].owner]) local_statics.insert(va);
   }
   for (auto& [va, d] : syms) {
     size_t m = local_statics.count(va) ? local_static_match(d) : 0;

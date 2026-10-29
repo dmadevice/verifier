@@ -704,7 +704,6 @@ NameCache::NameCache(std::string path, std::string key, std::string undname)
     nent_ = u32(ne);
     eslots_ = u32(es);
     sslots_ = u32(ss);
-    file_info_.resize(nent_);
     loaded_from_file_ = true;
   } catch (...) {
     file_.clear();
@@ -739,30 +738,33 @@ long NameCache::find_entry(std::string_view d) const {
   return probe(eidx_, eslots_, d, [&](u32 k) { return text(ent_[ROW * size_t(k)]) == d; });
 }
 
-const NameInfo* NameCache::file_entry(u32 k) const {
-  NameInfo& ni = file_info_[k];
-  if (!ni.set) {
-    const u32* e = ent_ + ROW * size_t(k);
-    ni = NameInfo{true, e[1] != 0, text(e[0]), text(e[2]), text(e[3]), text(e[4]), text(e[5]), e[3], e[4], e[5], e[6], e[7]};
-  }
-  return &ni;
+NameIds NameCache::file_entry(u32 k) const {
+  const u32* e = ent_ + ROW * size_t(k);
+  return NameIds{e[0], e[2], e[3], e[4], e[5], e[6], e[7], e[1] != 0};
 }
 
-const NameInfo* NameCache::find(std::string_view d) const {
+NameInfo NameCache::info(const NameIds& n) const {
+  return NameInfo{n.has_und, text(n.decorated), text(n.und), text(n.qualified), text(n.signature), text(n.owner)};
+}
+
+std::optional<NameIds> NameCache::find(std::string_view d) const {
   long k = find_entry(d);
   if (k >= 0) return file_entry(u32(k));
   auto it = new_entries_.find(d);
-  return it == new_entries_.end() ? nullptr : &it->second;
+  if (it == new_entries_.end()) return std::nullopt;
+  return it->second;
 }
 
-std::vector<const NameInfo*> NameCache::load(const std::vector<std::string_view>& decorated) {
-  std::vector<const NameInfo*> infos(decorated.size());
+std::vector<NameIds> NameCache::load(const std::vector<std::string_view>& decorated) {
+  std::vector<NameIds> infos(decorated.size());
+  std::vector<char> found(decorated.size());
   std::vector<std::string> missing;
   u32 next = 0;   // the file entry after the last one found: usually the next name's
   for (size_t i = 0; i < decorated.size(); ++i) {
     long k = next < nent_ && text(ent_[ROW * size_t(next)]) == decorated[i] ? long(next) : find_entry(decorated[i]);
     if (k < 0) { missing.emplace_back(decorated[i]); continue; }
     infos[i] = file_entry(u32(k));
+    found[i] = 1;
     next = u32(k) + 1;
   }
   if (!missing.empty()) {
@@ -776,14 +778,14 @@ std::vector<const NameInfo*> NameCache::load(const std::vector<std::string_view>
       u32 l1 = intern(std::string(last_components(q, 1))), l2 = intern(std::string(last_components(q, 2)));
       u32 dec = intern(d), un = intern(it == und.end() ? "" : it->second), qi = intern(std::move(q)), sg = intern(signature(u)),
           ow = intern(static_owner(u));
-      new_entries_.emplace(text(dec), NameInfo{true, it != und.end(), text(dec), text(un), text(qi), text(sg), text(ow), qi, sg, ow, l1, l2});
+      new_entries_.emplace(text(dec), NameIds{dec, un, qi, sg, ow, l1, l2, it != und.end()});
     }
     for (size_t i = 0; i < decorated.size(); ++i)
-      if (!infos[i]) infos[i] = find(decorated[i]);
+      if (!found[i]) infos[i] = *find(decorated[i]);
   }
   used_.clear();
   used_.reserve(infos.size());
-  for (auto* ni : infos) used_.push_back(ni->decorated);
+  for (auto& n : infos) used_.push_back(text(n.decorated));
   return infos;
 }
 
@@ -809,9 +811,9 @@ void NameCache::save() {
   std::vector<u32> ent;
   ent.reserve(ROW * names.size());
   for (auto& n : names) {
-    const NameInfo& ni = *find(n);
-    for (u32 v : {id(ni.decorated), u32(ni.has_und), id(ni.und), id(ni.qualified), id(ni.signature), id(ni.owner),
-                  id(text(ni.last1_id)), id(text(ni.last2_id))})
+    NameIds ni = *find(n);
+    for (u32 v : {id(text(ni.decorated)), u32(ni.has_und), id(text(ni.und)), id(text(ni.qualified)), id(text(ni.signature)),
+                  id(text(ni.owner)), id(text(ni.last1)), id(text(ni.last2))})
       ent.push_back(v);
   }
   u32 es = slots_for(names.size()), ss = slots_for(strs.size());

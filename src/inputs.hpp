@@ -50,7 +50,7 @@ class Original {
 
  private:
   const Config* config_ = nullptr;
-  std::string snapshot_;           // the snapshot's bytes, when read from it: the names are views of it
+  std::vector<char> snapshot_;     // the snapshot's string table, when read from it: the names are views of it
   std::deque<std::string> text_;   // or the names from the exports
   std::string_view keep(std::string s) { return text_.emplace_back(std::move(s)); }
   std::vector<u64> boundaries_, align_starts_, align_ends_;
@@ -72,8 +72,7 @@ class Rebuilt {
   Rebuilt(const std::string& path, const std::string& map_path, NameCache& names);
   virtual ~Rebuilt() = default;
   Image img;
-  // names are views of the map's text and of strings the NameCache owns (both outlive the tables)
-  std::string map_text;
+  // names are views of strings the NameCache owns (it outlives the tables)
   std::vector<std::pair<u64, std::string_view>> syms;
   std::unordered_map<u64, std::vector<std::string_view>> by_va;   // decorated names at an address, map order
   std::vector<u64> by_va_order;

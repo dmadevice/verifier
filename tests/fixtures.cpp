@@ -809,9 +809,11 @@ Problems name_cache() {
   std::string file = (d / "names.bin").string();
   auto infos_of = [](NameCache& nc, const std::vector<std::string_view>& names) {
     std::vector<std::string> out;
-    for (auto* ni : nc.load(names))
-      out.push_back(std::string(ni->decorated) + "|" + std::string(ni->qualified) + "|" + std::string(ni->signature) + "|" +
-                    std::string(ni->owner) + "|" + std::string(nc.text(ni->last1_id)) + "|" + std::string(nc.text(ni->last2_id)));
+    for (auto& ids : nc.load(names)) {
+      NameInfo ni = nc.info(ids);
+      out.push_back(std::string(ni.decorated) + "|" + std::string(ni.qualified) + "|" + std::string(ni.signature) + "|" +
+                    std::string(ni.owner) + "|" + std::string(nc.text(ids.last1)) + "|" + std::string(nc.text(ids.last2)));
+    }
     return out;
   };
   Problems bad;
@@ -830,8 +832,8 @@ Problems name_cache() {
     want2 = infos_of(nc, second);
     nc.save();
     // the same qualified name, the same id; f is every name's last component
-    if (infos[1]->last1_id != infos[3]->last1_id || infos[1]->qualified_id == infos[3]->qualified_id ||
-        nc.text(infos[1]->qualified_id) != infos[1]->qualified)
+    if (infos[1].last1 != infos[3].last1 || infos[1].qualified == infos[3].qualified ||
+        nc.text(infos[1].qualified) != nc.info(infos[1]).qualified)
       bad.push_back({"names", "ids"});
     if (!nc.id_of("f") || nc.id_of("no such string")) bad.push_back({"names", "id_of"});
   }

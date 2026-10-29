@@ -76,11 +76,6 @@ struct PairHash {
   size_t operator()(const std::pair<u64, u64>& p) const { return std::hash<u64>()(p.first * 0x9E3779B97F4A7C15ull ^ p.second); }
 };
 
-struct FnMemo {   // a function comparison's problems, and the two functions' code
-  Problems probs;
-  std::shared_ptr<const Code> oc, rc;
-};
-
 using NamePairs = std::vector<std::pair<Bytes, Bytes>>;   // (original decorated name, rebuilt one)
 
 i64 const_size(std::string_view name);
@@ -100,7 +95,7 @@ class Comparer {
   Journal journal;
   // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;
   // FuncInfo pairs both ways
-  JMap<std::pair<u64, u64>, FnMemo, PairHash> memo_fn{&journal};
+  JMap<std::pair<u64, u64>, Problems, PairHash> memo_fn{&journal};
   JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash> memo_ro{&journal};
   JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash> memo_vt{&journal};
   JMap<u64, u64> memo_fi{&journal}, memo_fir{&journal};
@@ -147,7 +142,7 @@ class Comparer {
   Problems unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth, int chain_depth = 0);
 
  private:
-  FnMemo code(u64 ostart, u64 oend, u64 rstart, u64 rend);
+  Problems code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   bool same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<bool> wide = std::nullopt);
   std::optional<Problem> accessed(u64 o_t, u64 r_t, int n);
   bool is_alternate(u64 o_t, u64 r_t);   // r_t's symbol is one of several at its address, one of them naming o_t

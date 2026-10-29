@@ -102,6 +102,8 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
   use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables, &orig.ida_names));
   Comparer& c = *cmp;
+  orig_cache_ = &oc;
+  rebuilt_cache_ = &rc;
   c.orig_code = [&oc](u64 s, u64 e) { return oc.code(s, e); };
   c.rebuilt_code = [&rc](u64 s, u64 e) { return rc.code(s, e); };
   c.infer = [this](u64 o, u64 r) { return infer(o, r); };
@@ -127,6 +129,11 @@ Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<st
   c.symbol_start = [this](u64 t) { return reb.by_va.count(t) != 0; };
   prebind_locals(votes_fn);
   return c;
+}
+
+void Pairing::release_code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
+  if (orig_cache_) orig_cache_->release(ostart, oend);
+  if (rebuilt_cache_) rebuilt_cache_->release(rstart, rend);
 }
 
 void Pairing::prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {

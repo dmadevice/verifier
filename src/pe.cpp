@@ -6,9 +6,9 @@
 namespace verifier {
 
 namespace {
-u32 rd32(const std::string& d, size_t off) { return off + 4 <= d.size() ? le32(d.data() + off) : 0; }
-u16 rd16(const std::string& d, size_t off) { return off + 2 <= d.size() ? le16(d.data() + off) : 0; }
-u64 rd64(const std::string& d, size_t off) { return off + 8 <= d.size() ? le64(d.data() + off) : 0; }
+u32 rd32(std::string_view d, size_t off) { return off + 4 <= d.size() ? le32(d.data() + off) : 0; }
+u16 rd16(std::string_view d, size_t off) { return off + 2 <= d.size() ? le16(d.data() + off) : 0; }
+u64 rd64(std::string_view d, size_t off) { return off + 8 <= d.size() ? le64(d.data() + off) : 0; }
 }  // namespace
 
 Image Image::load(const std::string& path) {
@@ -41,26 +41,40 @@ Image Image::load(const std::string& path) {
   size_t header_end = sec_tab + 40 * nsec;
   std::optional<u32> lowest;
   for (auto& s : secs) if (s.rawptr > 0) { u32 a = adj_ptr(s.rawptr); if (!lowest || a < *lowest) lowest = a; }
-  std::string mapped = (!lowest || *lowest < header_end) ? data.substr(0, header_end) : data.substr(0, *lowest);
+  // laid out first as a list of steps (a section below the end so far cuts the image back to its address), then
+  // done in a buffer of zero pages: the gaps (.bss) are never written
+  struct Step { size_t at, from, n; bool zero; };   // copy data[from, from + n) to `at`, or zero n bytes there
+  std::vector<Step> steps;
+  size_t size = std::min(data.size(), size_t((!lowest || *lowest < header_end) ? header_end : *lowest)), cap = size;
+  steps.push_back({0, 0, size, false});
   for (auto& s : secs) {
     if (s.vsize == 0 && s.rawsize == 0) continue;
     u32 srd = s.rawsize, prd = adj_ptr(s.rawptr), vadj = adj_va(s.va);
     if (srd > data.size() || prd > data.size() || u64(srd) + prd > data.size() || vadj >= 0x10000000) continue;
-    i64 pad = i64(vadj) - i64(mapped.size());
-    if (pad > 0) mapped.append(size_t(pad), '\0');
-    else if (pad < 0) mapped.resize(size_t(i64(mapped.size()) + pad));
+    if (vadj < size) steps.push_back({vadj, 0, size - vadj, true});   // cut back: what was there is gone
+    size = vadj;
     // a section's raw data: from the aligned file pointer for SizeOfRawData, clipped at the unaligned end
     u32 ptr_adj = (sect_align < 0x1000 && s.rawptr == s.va) ? s.va : prd;
     u64 end = u64(ptr_adj) + srd;
     end = std::min<u64>(end, u64(s.rawptr) + s.rawsize);
-    if (ptr_adj < data.size() && end > ptr_adj) mapped.append(data, ptr_adj, size_t(std::min<u64>(end, data.size()) - ptr_adj));
+    if (ptr_adj < data.size() && end > ptr_adj) {
+      size_t n = size_t(std::min<u64>(end, data.size()) - ptr_adj);
+      steps.push_back({size, ptr_adj, n, false});
+      size += n;
+    }
+    cap = std::max(cap, size);
   }
 
   Image im;
   im.base = base;
-  im.img = std::move(mapped);
+  im.mem_ = std::make_shared<ZeroBuffer>(cap);
+  for (auto& st : steps) {
+    if (st.zero) std::memset(im.mem_->data() + st.at, 0, st.n);
+    else std::memcpy(im.mem_->data() + st.at, data.data() + st.from, st.n);
+  }
+  im.img = std::string_view(im.mem_->data(), size);
   for (auto& s : secs) im.sections.push_back({base + s.va, base + s.va + std::max(s.vsize, s.rawsize), s.ch});
-  const std::string& img = im.img;
+  std::string_view img = im.img;
   // .pdata and base relocations read directly
   auto [exc_va, exc_size] = dir(3);
   for (u32 off = exc_va; off + 12 <= u64(exc_va) + exc_size / 12 * 12 && off + 12 <= img.size(); off += 12) {
@@ -103,14 +117,14 @@ Image Image::load(const std::string& path) {
   for (u64 e = dbg_va; e + 28 <= u64(dbg_va) + dbg_size; e += 28) {
     if (rd32(img, e + 12) != 13) continue;
     u32 size = rd32(img, e + 16), rva = rd32(img, e + 20);
-    std::string blob = img.substr(std::min<size_t>(rva, img.size()), size);
+    std::string_view blob = img.substr(std::min<size_t>(rva, img.size()), size);
     size_t off = 4;
     while (off + 8 <= blob.size()) {
       u32 r = rd32(blob, off), sz = rd32(blob, off + 4);
       off += 8;
       size_t end = blob.find('\0', off);
-      if (end == std::string::npos) break;
-      std::string name = blob.substr(off, end - off);
+      if (end == std::string_view::npos) break;
+      std::string name(blob.substr(off, end - off));
       off = (end + 4) & ~size_t(3);
       im.pogo[name] = {base + r, base + r + sz};
     }
@@ -123,7 +137,9 @@ Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections
                         std::vector<u64> relocs, std::unordered_map<u64, Import> imports) {
   Image im;
   im.base = base;
-  im.img = std::move(mem);
+  im.mem_ = std::make_shared<ZeroBuffer>(mem.size());
+  if (!mem.empty()) std::memcpy(im.mem_->data(), mem.data(), mem.size());
+  im.img = std::string_view(im.mem_->data(), mem.size());
   im.sections = std::move(sections);
   im.pdata = std::move(pdata);
   im.reloc_sorted = std::move(relocs);

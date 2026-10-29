@@ -90,6 +90,21 @@ inline u32 le32(const char* p) { u32 v; std::memcpy(&v, p, 4); return v; }
 inline u64 le64(const char* p) { u64 v; std::memcpy(&v, p, 8); return v; }
 inline u16 le16(const char* p) { u16 v; std::memcpy(&v, p, 2); return v; }
 
+// n zero bytes in pages from the operating system, which take no memory until written
+class ZeroBuffer {
+ public:
+  explicit ZeroBuffer(size_t n);
+  ~ZeroBuffer();
+  ZeroBuffer(const ZeroBuffer&) = delete;
+  ZeroBuffer& operator=(const ZeroBuffer&) = delete;
+  char* data() { return p_; }
+  size_t size() const { return n_; }
+
+ private:
+  char* p_ = nullptr;
+  size_t n_ = 0;
+};
+
 std::string percent(u64 part, u64 whole);     // "12.34%"
 
 // path relative to root ('/' or '\\' as the platform separator)

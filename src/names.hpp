@@ -52,21 +52,24 @@ std::string pick_destructor(const std::string& name, bool in_slot, HasCode has_c
 // {decorated: undecorated} for the names starting with '?', by running `undname` in batches, one after another
 std::unordered_map<std::string, std::string> undecorate(const std::vector<std::string>& names, const std::string& undname);
 
-// What the name tables need of each map symbol (NameCache): undecorated (if any), qualified, signature, owner
-// (views of text the NameCache keeps for the run), and the ids of the last three and of the qualified name's last
-// one and two components (last_components): equal exactly when the strings are
-struct NameInfo {
-  bool set = false;
+// What the name tables need of each map symbol (NameCache), as the ids of its strings (NameCache::text): equal
+// exactly when the strings are. The decorated and undecorated name (if any), qualified name, signature, owner, and
+// the qualified name's last one and two components (last_components).
+struct NameIds {
+  u32 decorated = 0, und = 0, qualified = 0, signature = 0, owner = 0, last1 = 0, last2 = 0;
+  bool has_und = false;
+};
+struct NameInfo {   // the same as text (views of text the NameCache keeps for the run)
   bool has_und = false;
   std::string_view decorated, und, qualified, signature, owner;
-  u32 qualified_id = 0, signature_id = 0, owner_id = 0, last1_id = 0, last2_id = 0;
 };
 class NameCache {
  public:
   NameCache(std::string path, std::string key, std::string undname);
-  // every name's NameInfo (undname for the new ones), in the order given
-  std::vector<const NameInfo*> load(const std::vector<std::string_view>& decorated);
-  const NameInfo& info(std::string_view d) const { return *find(d); }
+  // every name's ids (undname for the new ones), in the order given
+  std::vector<NameIds> load(const std::vector<std::string_view>& decorated);
+  NameInfo info(const NameIds& ids) const;
+  NameInfo info(std::string_view d) const { return info(*find(d)); }   // a name load() was given
   std::string_view text(u32 id) const;
   std::optional<u32> id_of(std::string_view s) const;   // the string's id, if it has one
   u32 string_count() const { return nstr_ + u32(new_text_.size()); }   // the ids are below it
@@ -78,17 +81,16 @@ class NameCache {
   const char* text_ = nullptr;
   const u32 *str_end_ = nullptr, *ent_ = nullptr, *eidx_ = nullptr, *sidx_ = nullptr;
   u32 nstr_ = 0, nent_ = 0, eslots_ = 0, sslots_ = 0;
-  mutable std::vector<NameInfo> file_info_;   // the file's entries, made when first looked up
   // added this run: strings (ids from nstr_ on) and entries
   std::deque<std::string> owned_;
   std::vector<std::string_view> new_text_;
   std::unordered_map<std::string_view, u32, SvHash> new_ids_;
-  std::unordered_map<std::string_view, NameInfo, SvHash> new_entries_;
+  std::unordered_map<std::string_view, NameIds, SvHash> new_entries_;
   std::vector<std::string_view> used_;   // this build's names
   bool loaded_from_file_ = false;
-  const NameInfo* find(std::string_view d) const;
+  std::optional<NameIds> find(std::string_view d) const;
   long find_entry(std::string_view d) const;   // the file's entry for a name, -1 if none
-  const NameInfo* file_entry(u32 k) const;
+  NameIds file_entry(u32 k) const;
   u32 intern(std::string s);
 };
 

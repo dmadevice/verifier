@@ -124,8 +124,8 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   u64 rva = lk.vas[0];
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
   Problems probs = cmp.function(ova, oend, rva, rend);
-  const FnMemo* m = cmp.memo_fn.find({ova, rva});
-  const Code &oc = *m->oc, &rc = *m->rc;
+  auto ocp = cmp.orig_code(ova, oend), rcp = cmp.rebuilt_code(rva, rend);   // decoded by the comparison
+  const Code &oc = *ocp, &rc = *rcp;
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
   bool same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
@@ -168,6 +168,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
       out.print(std::string(eq ? " " : "*") + " " + pad_right(x, 48) + " | " + y);
     }
   }
+  pairing.release_code(ova, oend, rva, rend);   // compared: the code is not needed again
   return rec;
 }
 

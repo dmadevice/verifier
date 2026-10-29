@@ -3,8 +3,17 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <new>
 #include <sstream>
 #include <stdexcept>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace verifier {
 
@@ -171,6 +180,27 @@ std::string replace_all(std::string s, std::string_view from, std::string_view t
 std::string lower(std::string s) {
   for (auto& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
   return s;
+}
+
+ZeroBuffer::ZeroBuffer(size_t n) : n_(n) {
+  if (!n) return;
+#ifdef _WIN32
+  p_ = static_cast<char*>(VirtualAlloc(nullptr, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+  if (!p_) throw std::bad_alloc();
+#else
+  void* p = mmap(nullptr, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) throw std::bad_alloc();
+  p_ = static_cast<char*>(p);
+#endif
+}
+
+ZeroBuffer::~ZeroBuffer() {
+  if (!p_) return;
+#ifdef _WIN32
+  VirtualFree(p_, 0, MEM_RELEASE);
+#else
+  munmap(p_, n_);
+#endif
 }
 
 std::string percent(u64 part, u64 whole) {

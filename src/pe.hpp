@@ -3,6 +3,7 @@
 #pragma once
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -43,7 +44,7 @@ class Image {
                           std::unordered_map<u64, Import> imports);
 
   u64 base = 0;
-  std::string img;                       // the memory-mapped image (offset = VA - base)
+  std::string_view img;                  // the memory-mapped image (offset = VA - base)
   std::vector<Section> sections;
   std::map<u64, std::pair<u64, u32>> pdata;   // begin VA -> (end VA, UNWIND_INFO RVA); first entry wins
   std::vector<u64> pdata_sorted;
@@ -66,6 +67,7 @@ class Image {
   size_t reloc_lower_bound(u64 va) const;
 
  private:
+  std::shared_ptr<ZeroBuffer> mem_;      // holds `img`; the image's zero-filled parts (.bss) take no memory
   void finish();
 };
 
