@@ -1,9 +1,11 @@
 #include "x64.hpp"
 
-#include <capstone/capstone.h>
+#include <fadec.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -11,102 +13,249 @@ namespace verifier {
 
 namespace {
 
-// The capstone handle, detail on.
-struct Decoder {
-  csh h = 0;
-  Decoder() {
-    if (cs_open(CS_ARCH_X86, CS_MODE_64, &h) != CS_ERR_OK) throw std::runtime_error("capstone: cs_open failed");
-    cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
+// -- registers: (fadec register type, index, size log2) packed into a u16, 0 for none ---------------------------
+
+u16 make_reg(unsigned type, unsigned idx, unsigned sizelg) { return u16(1 + ((type & 15) << 9 | (idx & 63) << 3 | (sizelg & 7))); }
+unsigned reg_type(u16 r) { return ((r - 1) >> 9) & 15; }
+unsigned reg_idx(u16 r) { return ((r - 1) >> 3) & 63; }
+unsigned reg_sizelg(u16 r) { return (r - 1) & 7; }
+
+// GPR numbering: the hardware's (rax rcx rdx rbx rsp rbp rsi rdi r8..r15)
+constexpr u32 gpr(unsigned i) { return 1u << i; }
+constexpr u32 RAX = gpr(0), RCX = gpr(1), RDX = gpr(2), RBX = gpr(3), RSP = gpr(4), RBP = gpr(5), RSI = gpr(6), RDI = gpr(7);
+constexpr u32 R11 = gpr(11);
+constexpr u32 VOLATILE = RAX | RCX | RDX | gpr(8) | gpr(9) | gpr(10) | R11;   // clobbered by a call (x64 ABI)
+
+u32 op_gpr(const FdInstr& fi, int k) {   // the GPR a register operand is part of, as a mask
+  if (FD_OP_TYPE(&fi, k) != FD_OT_REG) return 0;
+  unsigned idx = FD_OP_REG(&fi, k);
+  switch (FD_OP_REG_TYPE(&fi, k)) {
+    case FD_RT_GPL: return idx < 16 ? gpr(idx) : 0;
+    case FD_RT_GPH: return gpr(idx - 4);
+    default: return 0;
   }
-  ~Decoder() { cs_close(&h); }
-};
-Decoder& decoder() {
-  static Decoder d;
-  return d;
 }
 
-u8 group_bit(u8 g) { return g == GRP_JUMP ? 1 : g == GRP_CALL ? 2 : g == GRP_BRANCH_RELATIVE ? 4 : 0; }
-std::vector<int>& gpr_table();
+// The GPRs an instruction writes, explicitly or implicitly. When unsure this says "written": a register wrongly
+// thought to still hold __ImageBase would turn an ordinary displacement into an address field.
+u32 written_gprs(const FdInstr& fi) {
+  u32 w = 0;
+  bool rep = FD_HAS_REP(&fi) || FD_HAS_REPNZ(&fi);
+  switch (FD_TYPE(&fi)) {
+    // the first operand is only read
+    case FDI_CMP: case FDI_TEST: case FDI_BT: case FDI_PUSH: case FDI_JMP: case FDI_CALL: case FDI_JMPF:
+    case FDI_CALLF: case FDI_OUT: case FDI_NOP: case FDI_PREFETCH: case FDI_CLFLUSH: case FDI_CLFLUSHOPT:
+      break;
+    default:
+      w |= op_gpr(fi, 0);
+  }
+  switch (FD_TYPE(&fi)) {
+    case FDI_XCHG: case FDI_XADD: case FDI_MULX: w |= op_gpr(fi, 1); break;
+    case FDI_CMPXCHG: w |= RAX; break;
+    case FDI_CMPXCHGD: w |= RAX | RDX; break;
+    case FDI_MUL: case FDI_DIV: case FDI_IDIV: w |= RAX | RDX; break;
+    case FDI_IMUL: if (FD_OP_TYPE(&fi, 1) == FD_OT_NONE) w |= RAX | RDX; break;
+    case FDI_C_EX: w |= RAX; break;                      // cbw cwde cdqe
+    case FDI_C_SEP: w |= RDX; break;                     // cwd cdq cqo
+    case FDI_CPUID: w |= RAX | RBX | RCX | RDX; break;
+    case FDI_RDTSC: case FDI_RDMSR: case FDI_RDPMC: case FDI_XGETBV: w |= RAX | RDX; break;
+    case FDI_RDTSCP: w |= RAX | RDX | RCX; break;
+    case FDI_LAHF: case FDI_XLATB: case FDI_IN: w |= RAX; break;
+    case FDI_SYSCALL: w |= RCX | R11; break;
+    case FDI_SSE_PCMPISTRI: case FDI_SSE_PCMPESTRI: case FDI_VPCMPISTRI: case FDI_VPCMPESTRI: w |= RCX; break;
+    case FDI_LOOP: case FDI_LOOPZ: case FDI_LOOPNZ: w |= RCX; break;
+    case FDI_MOVS: case FDI_CMPS: w |= RSI | RDI | (rep ? RCX : 0); break;
+    case FDI_STOS: case FDI_SCAS: case FDI_INS: w |= RDI | (rep ? RCX : 0); break;
+    case FDI_LODS: w |= RAX | RSI | (rep ? RCX : 0); break;
+    case FDI_OUTS: w |= RSI | (rep ? RCX : 0); break;
+    case FDI_PUSH: case FDI_POP: case FDI_PUSHF: case FDI_POPF: case FDI_CALL: case FDI_CALLF: case FDI_RET:
+    case FDI_RETF: case FDI_IRET: case FDI_INT: case FDI_INT3: case FDI_INTO:
+      w |= RSP; break;
+    case FDI_ENTER: case FDI_LEAVE: w |= RSP | RBP; break;
+    default: break;
+  }
+  return w;
+}
 
-Insn copy_insn(csh h, const cs_insn* i) {
-  Insn r;
-  r.address = i->address;
-  r.size = static_cast<u8>(i->size);
-  r.mnemonic = Mnem(i->mnemonic);
-  std::memcpy(r.raw, i->bytes, std::min<size_t>(i->size, 15));
-  const cs_detail* d = i->detail;
-  const cs_x86& x = d->x86;
-  for (int k = 0; k < x.op_count; ++k) {
-    const cs_x86_op& o = x.operands[k];
+u8 branch_bits(const FdInstr& fi) {   // GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE as bits 0..2
+  u8 g = 0;
+  switch (FD_TYPE(&fi)) {
+    case FDI_CALL: case FDI_CALLF: g |= 2; break;
+    case FDI_JMP: case FDI_JMPF: case FDI_JO: case FDI_JNO: case FDI_JC: case FDI_JNC: case FDI_JZ: case FDI_JNZ:
+    case FDI_JBE: case FDI_JA: case FDI_JS: case FDI_JNS: case FDI_JP: case FDI_JNP: case FDI_JL: case FDI_JGE:
+    case FDI_JLE: case FDI_JG: case FDI_JCXZ: case FDI_LOOP: case FDI_LOOPZ: case FDI_LOOPNZ:
+      g |= 1; break;
+    default: break;
+  }
+  if (FD_OP_TYPE(&fi, 0) == FD_OT_OFF) g |= 4;
+  return g;
+}
+
+// Where an instruction's displacement and branch offset sit in its bytes: after the prefixes (legacy, REX,
+// VEX, EVEX), the opcode, ModRM and SIB. disp_size is 0 when there is no displacement.
+struct Layout { u8 opcode_end = 0, disp_offset = 0, disp_size = 0; };
+Layout layout(const u8* b, size_t n, bool has_mem, unsigned addrsz) {
+  Layout l;
+  size_t p = 0;
+  while (p < n) {   // legacy prefixes and REX
+    u8 c = b[p];
+    if (c == 0xf0 || c == 0xf2 || c == 0xf3 || c == 0x2e || c == 0x36 || c == 0x3e || c == 0x26 || c == 0x64 ||
+        c == 0x65 || c == 0x66 || c == 0x67 || (c & 0xf0) == 0x40)
+      ++p;
+    else
+      break;
+  }
+  if (p >= n) return l;
+  bool legacy_map0 = false;
+  u8 op = 0;
+  if (b[p] == 0xc5) p += 2;                 // VEX, 2 bytes
+  else if (b[p] == 0xc4) p += 3;            // VEX, 3 bytes
+  else if (b[p] == 0x62) p += 4;            // EVEX
+  else if (b[p] == 0x0f) {
+    ++p;
+    if (p < n && (b[p] == 0x38 || b[p] == 0x3a)) ++p;
+  } else {
+    legacy_map0 = true;
+  }
+  if (p >= n) return l;
+  op = b[p++];
+  l.opcode_end = u8(p);
+  if (legacy_map0 && op >= 0xa0 && op <= 0xa3) {   // mov with an absolute address (moffs): no ModRM
+    l.disp_offset = u8(p);
+    l.disp_size = u8(addrsz);
+    return l;
+  }
+  if (!has_mem || p >= n) return l;
+  u8 modrm = b[p++];
+  unsigned mod = modrm >> 6, rm = modrm & 7;
+  if (mod != 3 && rm == 4 && p < n) {
+    u8 sib = b[p++];
+    if (mod == 0 && (sib & 7) == 5) { l.disp_offset = u8(p); l.disp_size = 4; return l; }
+  }
+  if (mod == 1) l.disp_size = 1;
+  else if (mod == 2 || (mod == 0 && rm == 5)) l.disp_size = 4;
+  if (l.disp_size) l.disp_offset = u8(p);
+  return l;
+}
+
+// For a gather/scatter (vector-indexed memory): the VEX/EVEX vector length (0 128-bit, 1 256-bit, 2 512-bit) and
+// the index register's size log2 (4 xmm, 5 ymm, 6 zmm), halved for dword indices of qword elements; nullopt for
+// any other instruction.
+struct Vsib { int len, index_sizelg; };
+std::optional<Vsib> vsib_of(const u8* b, size_t n, std::string_view mnemonic) {
+  if (mnemonic.find("gather") == std::string_view::npos && mnemonic.find("scatter") == std::string_view::npos) return std::nullopt;
+  size_t p = 0;
+  while (p < n && (b[p] == 0x66 || b[p] == 0x67 || b[p] == 0xf2 || b[p] == 0xf3 || b[p] == 0x2e || b[p] == 0x3e ||
+                   b[p] == 0x26 || b[p] == 0x36 || b[p] == 0x64 || b[p] == 0x65))
+    ++p;
+  int len = 0;   // vector length: 0 128-bit, 1 256-bit, 2 512-bit
+  if (p + 2 < n && b[p] == 0xc4) len = (b[p + 2] >> 2) & 1;
+  else if (p + 1 < n && b[p] == 0xc5) len = (b[p + 1] >> 2) & 1;
+  else if (p + 3 < n && b[p] == 0x62) len = (b[p + 3] >> 5) & 3;
+  bool half = mnemonic.ends_with("dq") || mnemonic.ends_with("dpd");
+  return Vsib{len, 4 + std::max(0, len - (half ? 1 : 0))};
+}
+
+// the mnemonic in fadec's text: prefix words (lock, rep, ...) and the instruction's name
+std::string_view mnemonic_of(std::string_view text) {
+  static const std::array<std::string_view, 15> prefixes = {"lock", "rep", "repnz", "xacquire", "xrelease", "notrack",
+                                                           "hint-taken", "addr32", "addr16", "es", "cs", "ss", "ds",
+                                                           "fs", "gs"};
+  size_t p = 0;
+  for (;;) {
+    size_t e = text.find(' ', p);
+    std::string_view word = text.substr(p, e == std::string_view::npos ? std::string_view::npos : e - p);
+    bool prefix = std::find(prefixes.begin(), prefixes.end(), word) != prefixes.end();
+    if (!prefix || e == std::string_view::npos) return text.substr(0, e == std::string_view::npos ? text.size() : e);
+    p = e + 1;
+  }
+}
+
+// An instruction's mnemonic, as fadec's formatter spells it. It depends only on the fields in the key (type,
+// prefixes, operand and address size, the first operand's kind and size, segment), so each is formatted once.
+Mnem mnemonic(const FdInstr& fi) {
+  int t0 = FD_OP_TYPE(&fi, 0);
+  u64 key = u64(FD_TYPE(&fi)) | u64(FD_HAS_LOCK(&fi) ? 1 : 0) << 16 | u64(FD_HAS_REP(&fi) ? 1 : 0) << 17 |
+            u64(FD_HAS_REPNZ(&fi) ? 1 : 0) << 18 | u64(FD_OPSIZELG(&fi)) << 19 | u64(FD_ADDRSIZELG(&fi)) << 22 |
+            u64(t0) << 25 | u64(t0 != FD_OT_NONE ? FD_OP_SIZELG(&fi, 0) + 1 : 0) << 28 |
+            u64(t0 == FD_OT_REG ? FD_OP_REG_TYPE(&fi, 0) : 0) << 33 | u64(FD_SEGMENT(&fi)) << 38 |
+            u64(FD_HAS_3E(&fi) ? 1 : 0) << 45;
+  static std::unordered_map<u64, Mnem> cache;
+  auto it = cache.find(key);
+  if (it != cache.end()) return it->second;
+  char text[128];
+  fd_format(&fi, text, sizeof text);
+  return cache.emplace(key, Mnem(mnemonic_of(text))).first->second;
+}
+
+// One instruction from at most `n` bytes at `p` (address `addr`); false when the bytes do not decode.
+bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
+  FdInstr fi;
+  int len = fd_decode(p, n, 64, 0, &fi);
+  if (len <= 0) return false;
+  r = Insn();
+  r.address = addr;
+  r.size = u8(len);
+  r.type = u16(FD_TYPE(&fi));
+  std::memcpy(r.raw, p, size_t(len));
+  r.mnemonic = mnemonic(fi);
+  unsigned addrlg = FD_ADDRSIZELG(&fi);
+  auto vsib = vsib_of(p, size_t(len), r.mnemonic.str());
+  bool has_mem = false;
+  for (int k = 0; k < 4; ++k) {
+    int t = FD_OP_TYPE(&fi, k);
+    if (t == FD_OT_NONE) break;
     Operand op;
-    op.type = static_cast<u8>(o.type);
-    op.size = o.size;
-    if (o.type == X86_OP_IMM) op.imm = o.imm;
-    else if (o.type == X86_OP_REG) op.reg = static_cast<u16>(o.reg);
-    else if (o.type == X86_OP_MEM) {
-      op.mem = Mem{};
-      op.mem.base = static_cast<u16>(o.mem.base);
-      op.mem.index = static_cast<u16>(o.mem.index);
-      op.mem.scale = static_cast<i8>(o.mem.scale);
-      op.mem.disp = o.mem.disp;
-      op.mem.segment = static_cast<u16>(o.mem.segment);
+    op.size = u8(FD_OP_SIZE(&fi, k));
+    switch (t) {
+      case FD_OT_REG:
+        op.type = OP_REG;
+        op.reg = make_reg(FD_OP_REG_TYPE(&fi, k), FD_OP_REG(&fi, k), unsigned(FD_OP_SIZELG(&fi, k)));
+        break;
+      case FD_OT_IMM:
+        op.type = OP_IMM;
+        op.imm = FD_OP_IMM(&fi, k);
+        break;
+      case FD_OT_OFF:   // a branch target, relative to the next instruction
+        op.type = OP_IMM;
+        op.imm = i64(addr + u64(len) + u64(FD_OP_IMM(&fi, k)));
+        break;
+      default: {        // memory (also an AVX-512 broadcast)
+        has_mem = true;
+        op.type = OP_MEM;
+        op.mem = Mem{};
+        unsigned base = FD_OP_BASE(&fi, k), index = FD_OP_INDEX(&fi, k);
+        op.mem.base = base == FD_REG_NONE ? 0 : make_reg(FD_RT_GPL, base, addrlg);
+        op.mem.index = index == FD_REG_NONE ? 0
+                       : vsib          ? make_reg(FD_RT_VEC, index, unsigned(vsib->index_sizelg))
+                                       : make_reg(FD_RT_GPL, index, addrlg);
+        if (vsib) op.size = u8(16 << vsib->len);   // the vector the elements are gathered from, not one element
+        op.mem.scale = i8(1 << FD_OP_SCALE(&fi, k));
+        op.mem.disp = FD_OP_DISP(&fi, k);
+        op.mem.segment = FD_SEGMENT(&fi) == FD_REG_NONE ? 0 : make_reg(FD_RT_SEG, FD_SEGMENT(&fi), 1);
+      }
     }
     r.ops.push_back(op);
   }
-  for (int k = 0; k < d->groups_count; ++k) r.gmask |= group_bit(d->groups[k]);
-  cs_regs rr, ww;
-  uint8_t nr = 0, nw = 0;
-  if (cs_regs_access(h, i, rr, &nr, ww, &nw) == CS_ERR_OK) {
-    auto& t = gpr_table();
-    for (int k = 0; k < nw; ++k) if (ww[k] < t.size() && t[ww[k]] >= 0) r.wmask |= u16(1u << t[ww[k]]);
+  r.gmask = branch_bits(fi);
+  r.wmask = u16(written_gprs(fi));
+  Layout l = layout(p, size_t(len), has_mem, 1u << addrlg);
+  r.disp_offset = l.disp_offset;
+  r.disp_size = l.disp_size;
+  if (r.gmask & 4) {   // the branch offset ends the instruction
+    r.imm_offset = l.opcode_end;
+    r.imm_size = u8(len - l.opcode_end);
   }
-  r.imm_offset = x.encoding.imm_offset;
-  r.imm_size = x.encoding.imm_size;
-  r.disp_offset = x.encoding.disp_offset;
-  r.disp_size = x.encoding.disp_size;
-  return r;
+  return true;
 }
 
-std::vector<int>& gpr_table() {
-  static std::vector<int> t;
-  if (t.empty()) {
-    static const std::unordered_map<std::string, int> names = [] {
-      std::unordered_map<std::string, int> m;
-      const char* abcd[] = {"a", "b", "c", "d"};
-      for (int k = 0; k < 4; ++k) {
-        std::string x = abcd[k];
-        for (auto n : {"r" + x + "x", "e" + x + "x", x + "x", x + "l", x + "h"}) m[n] = k;
-      }
-      const char* sidi[] = {"si", "di", "bp", "sp"};
-      for (int k = 0; k < 4; ++k) {
-        std::string x = sidi[k];
-        for (auto n : {"r" + x, "e" + x, x, x + "l"}) m[n] = 4 + k;
-      }
-      for (int k = 8; k < 16; ++k) {
-        std::string x = "r" + std::to_string(k);
-        for (auto n : {x, x + "d", x + "w", x + "b"}) m[n] = k;
-      }
-      return m;
-    }();
-    t.assign(X86_REG_ENDING, -1);
-    for (int r = 1; r < X86_REG_ENDING; ++r) {
-      const char* n = cs_reg_name(decoder().h, r);
-      if (!n) continue;
-      auto it = names.find(n);
-      if (it != names.end()) t[r] = it->second;
-    }
-  }
-  return t;
-}
-
-// rax rcx rdx r8 r9 r10 r11 in the GPR numbering above (a=0 b=1 c=2 d=3 si=4 di=5 bp=6 sp=7 r8..r15)
-constexpr u32 VOLATILE = (1u << 0) | (1u << 2) | (1u << 3) | (1u << 8) | (1u << 9) | (1u << 10) | (1u << 11);
+u8 group_bit(u8 g) { return g == GRP_JUMP ? 1 : g == GRP_CALL ? 2 : g == GRP_BRANCH_RELATIVE ? 4 : 0; }
 
 }  // namespace
 
 const std::string& Mnem::intern(std::string_view s) {
-  static std::unordered_map<std::string, std::unique_ptr<std::string>> table;
-  auto it = table.find(std::string(s));
+  static SvMap<std::unique_ptr<std::string>> table;
+  auto it = table.find(s);
   if (it == table.end()) it = table.emplace(std::string(s), std::make_unique<std::string>(s)).first;
   return *it->second;
 }
@@ -115,20 +264,65 @@ bool Insn::group(u8 g) const { return (gmask & group_bit(g)) != 0; }
 bool Insn::branches() const { return (gmask & 7) != 0; }
 
 std::string Insn::op_str() const {
-  Decoder& d = decoder();
-  cs_insn* insn = nullptr;
-  std::string s;
-  if (cs_disasm(d.h, reinterpret_cast<const uint8_t*>(raw), size, address, 1, &insn) == 1) s = insn->op_str;
-  if (insn) cs_free(insn, 1);
-  return s;
+  auto size_ptr = [](int n) -> std::string {
+    switch (n) {
+      case 1: return "byte ptr ";
+      case 2: return "word ptr ";
+      case 4: return "dword ptr ";
+      case 6: return "fword ptr ";
+      case 8: return "qword ptr ";
+      case 10: return "tbyte ptr ";
+      case 16: return "xmmword ptr ";
+      case 32: return "ymmword ptr ";
+      case 64: return "zmmword ptr ";
+      default: return "";
+    }
+  };
+  std::string out;
+  for (auto& op : ops) {
+    if (!out.empty()) out += ", ";
+    if (op.type == OP_REG) {
+      out += reg_name(op.reg);
+    } else if (op.type == OP_IMM) {
+      out += branches() ? hex(u64(op.imm)) : hex_signed(op.imm);
+    } else {
+      std::string addr = reg_name(op.mem.base);
+      if (op.mem.index) {
+        if (!addr.empty()) addr += "+";
+        addr += reg_name(op.mem.index);
+        if (op.mem.scale > 1) addr += "*" + std::to_string(op.mem.scale);
+      }
+      if (op.mem.disp || addr.empty()) {
+        std::string d = hex_signed(op.mem.disp);
+        addr += addr.empty() || d[0] == '-' ? d : "+" + d;
+      }
+      out += size_ptr(op.size) + (op.mem.segment ? std::string(reg_name(op.mem.segment)) + ":" : "") + "[" + addr + "]";
+    }
+  }
+  return out;
 }
 
 const char* reg_name(u16 reg) {
-  const char* n = reg ? cs_reg_name(decoder().h, reg) : nullptr;
-  return n ? n : "";
+  static std::unordered_map<u16, std::string> names;
+  if (!reg) return "";
+  auto it = names.find(reg);
+  if (it == names.end()) {
+    char buf[16];
+    fd_format_reg(FdRegType(reg_type(reg)), FdReg(reg_idx(reg)), reg_sizelg(reg), buf);
+    it = names.emplace(reg, buf).first;
+  }
+  return it->second.c_str();
 }
-u16 reg_rip() { return X86_REG_RIP; }
-int gpr_index(u16 reg) { auto& t = gpr_table(); return reg < t.size() ? t[reg] : -1; }
+u16 reg_rip() { return make_reg(FD_RT_GPL, FD_REG_IP, 3); }
+int gpr_index(u16 reg) {
+  if (!reg) return -1;
+  unsigned idx = reg_idx(reg);
+  switch (reg_type(reg)) {
+    case FD_RT_GPL: return idx < 16 ? int(idx) : -1;
+    case FD_RT_GPH: return int(idx) - 4;
+    default: return -1;
+  }
+}
 
 const char* field_kind_name(FieldKind k) {
   switch (k) {
@@ -150,14 +344,14 @@ bool Field::operator<(const Field& o) const {
 }
 
 std::vector<Insn> decode_linear(std::string_view code, u64 start) {
-  Decoder& d = decoder();
   std::vector<Insn> out;
-  cs_insn* insn = cs_malloc(d.h);
-  const uint8_t* p = reinterpret_cast<const uint8_t*>(code.data());
-  size_t n = code.size();
-  uint64_t addr = start;
-  while (n && cs_disasm_iter(d.h, &p, &n, &addr, insn)) out.push_back(copy_insn(d.h, insn));
-  cs_free(insn, 1);
+  const u8* p = reinterpret_cast<const u8*>(code.data());
+  size_t off = 0;
+  Insn ins;
+  while (off < code.size() && decode_one(p + off, code.size() - off, start + off, ins)) {
+    off += ins.size;
+    out.push_back(std::move(ins));
+  }
   return out;
 }
 
@@ -167,17 +361,16 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   i64 frva = i64(s - im.base), erva = i64(e - im.base);
   i64 n = i64(code.size());
   cut = n;
-  u16 rip = X86_REG_RIP;
+  u16 rip = reg_rip();
   {
-    Decoder& d = decoder();
-    cs_insn* insn = cs_malloc(d.h);
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(code.data());
-    size_t left = code.size();
-    uint64_t addr = s;
-    while (left && cs_disasm_iter(d.h, &p, &left, &addr, insn)) {
-      i64 k = i64(insn->address - s);
+    const u8* p = reinterpret_cast<const u8*>(code.data());
+    size_t off = 0;
+    Insn ins;
+    insns.reserve(code.size() / 3);
+    while (off < code.size() && decode_one(p + off, code.size() - off, s + off, ins)) {
+      i64 k = i64(off);
       if (k >= cut) break;
-      Insn ins = copy_insn(d.h, insn);
+      off += ins.size;
       for (auto& op : ins.ops) {
         if (op.type == OP_MEM && op.mem.base != rip && op.mem.index && frva <= op.mem.disp &&
             op.mem.disp < erva + i64(TABLE_SLACK)) {
@@ -189,11 +382,10 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
       }
       insns.push_back(std::move(ins));
     }
-    cs_free(insn, 1);
   }
   // alignment nops after the last ret/jmp (before a switch table) are padding, not code
-  while (insns.size() > 1 && insns.back().mnemonic == "nop" &&
-         (insns[insns.size() - 2].mnemonic == "ret" || insns[insns.size() - 2].mnemonic == "jmp") &&
+  while (insns.size() > 1 && insns.back().type == FDI_NOP &&
+         (insns[insns.size() - 2].type == FDI_RET || insns[insns.size() - 2].type == FDI_JMP) &&
          i64(insns.back().address + insns.back().size - s) == cut) {
     cut = i64(insns.back().address - s);
     insns.pop_back();
@@ -297,13 +489,13 @@ std::vector<Field> Code::fields(const Insn& ins) const {
   }
   for (auto& op : ins.ops) {
     if (op.type != OP_MEM) continue;
-    if (op.mem.base == X86_REG_RIP) {
-      int size = ins.mnemonic == "lea" ? 0 : op.size;
+    int size = ins.type == FDI_LEA ? 0 : op.size;   // bytes read there; lea only takes the address
+    if (op.mem.base == reg_rip()) {
       out.push_back({ins.disp_offset, 4, F_RIP, i64(ins.address + ins.size) + op.mem.disp, size});
     } else if (op.mem.index && tables.count(op.mem.disp - frva)) {
       out.push_back({ins.disp_offset, ins.disp_size, F_TBL, op.mem.disp - frva, 0});
     } else if (image_relative(ins, op)) {
-      out.push_back({ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.mem.disp, op.size});
+      out.push_back({ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.mem.disp, size});
     }
   }
   if (relocated) {
@@ -346,9 +538,11 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
   std::vector<std::pair<u32, u32>> edges;   // (to, from)
   edges.reserve(n + n / 4);
   std::vector<u32> switches;
-  auto falls = [](const Insn& ins) {
-    const std::string& m = ins.mnemonic;
-    return !(m == "jmp" || m == "ud2" || m == "int3" || starts_with(m, "ret"));
+  auto falls = [](const Insn& ins) {   // execution can continue with the next instruction
+    switch (ins.type) {
+      case FDI_JMP: case FDI_UD2: case FDI_INT3: case FDI_RET: case FDI_RETF: return false;
+      default: return true;
+    }
   };
   for (size_t k = 0; k < n; ++k) {
     const Insn& ins = insns[k];
@@ -357,7 +551,7 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
       long t = index_of(u64(ins.ops[0].imm));
       if (t >= 0) edges.emplace_back(u32(t), u32(k));
     }
-    if (ins.mnemonic == "jmp" && !ins.ops.empty() && ins.ops[0].type == OP_REG) switches.push_back(u32(k));
+    if (ins.type == FDI_JMP && !ins.ops.empty() && ins.ops[0].type == OP_REG) switches.push_back(u32(k));
   }
   for (auto& [to, from] : edges) ++npred[to + 1];
   for (size_t k = 0; k < n; ++k) npred[k + 1] += npred[k];
@@ -378,9 +572,9 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
     u32 kl = ins.wmask;
     if (ins.group(GRP_CALL)) kl |= VOLATILE;
     u32 g = 0;
-    if (ins.mnemonic == "lea" && ins.ops.size() == 2 && ins.ops[1].type == OP_MEM) {
+    if (ins.type == FDI_LEA && ins.ops.size() == 2 && ins.ops[1].type == OP_MEM) {
       const Mem& m = ins.ops[1].mem;
-      if (m.base == X86_REG_RIP && !m.index && u64(i64(ins.address + ins.size) + m.disp) == base) {
+      if (m.base == reg_rip() && !m.index && u64(i64(ins.address + ins.size) + m.disp) == base) {
         int x = gpr_index(ins.ops[0].reg);
         if (x >= 0) g = 1u << x;
       }
@@ -436,8 +630,8 @@ std::optional<u64> leaf_extent(const Image& img, u64 va) {
         if (op.type == OP_IMM && (ins.group(GRP_JUMP) || ins.group(GRP_CALL) || ins.group(GRP_BRANCH_RELATIVE)) &&
             i64(va) <= op.imm && op.imm < i64(va + MAX_DATA_COMPARE))
           reach = std::max(reach, u64(op.imm));
-      if ((ins.mnemonic == "ret" || ins.mnemonic == "jmp" || ins.mnemonic == "int3" || starts_with(ins.mnemonic, "ret")) && reach < nxt)
-        return ins.mnemonic != "int3" ? nxt : ins.address;
+      if ((ins.type == FDI_RET || ins.type == FDI_RETF || ins.type == FDI_JMP || ins.type == FDI_INT3) && reach < nxt)
+        return ins.type != FDI_INT3 ? nxt : ins.address;
     }
     if (endp == window.size() || va + endp - nxt >= 15) return std::nullopt;
     at = size_t(nxt - va);

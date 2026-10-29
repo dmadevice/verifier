@@ -1,4 +1,4 @@
-// x64 code as the verifier compares it: capstone instructions copied into plain records, and a function's code
+// x64 code as the verifier compares it: decoded instructions (fadec) as plain records, and a function's code
 // region with its switch tables.
 #pragma once
 #include <map>
@@ -25,7 +25,7 @@ struct Mem {
   i8 scale;
 };
 
-// as capstone's cs_x86_op: the immediate and the memory reference share storage; read the one `type` names
+// the immediate and the memory reference share storage; read the one `type` names
 struct Operand {
   union {
     i64 imm = 0;   // OP_IMM
@@ -58,7 +58,7 @@ class OpVec {
   }
 
  private:
-  static constexpr u8 kInline = 3, kMax = 8;   // capstone reports at most 8
+  static constexpr u8 kInline = 3, kMax = 4;   // x86 instructions have at most 4
   Operand inl_[kInline];
   u8 n_ = 0;
   std::unique_ptr<Operand[]> more_;
@@ -67,7 +67,7 @@ class OpVec {
 // A mnemonic: interned (one string per distinct mnemonic for the run), compared and concatenated as a string
 class Mnem {
  public:
-  Mnem() : s_(&intern("")) {}
+  Mnem() : s_(empty()) {}
   explicit Mnem(std::string_view s) : s_(&intern(s)) {}
   const std::string& str() const { return *s_; }
   operator const std::string&() const { return *s_; }
@@ -78,6 +78,10 @@ class Mnem {
 
  private:
   static const std::string& intern(std::string_view s);
+  static const std::string* empty() {
+    static const std::string* e = &intern("");
+    return e;
+  }
   const std::string* s_;
 };
 inline std::string operator+(const Mnem& m, const char* s) { return m.str() + s; }
@@ -91,17 +95,18 @@ struct Insn {
   u8 size = 0;
   u8 gmask = 0;               // GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE as bits 0..2
   u8 imm_offset = 0, imm_size = 0, disp_offset = 0, disp_size = 0;
-  u16 wmask = 0;              // 64-bit GPRs written (regs_access; gpr_index bits)
+  u16 wmask = 0;              // 64-bit GPRs written (gpr_index bits)
+  u16 type = 0;               // the decoder's instruction type
   Mnem mnemonic;
   char raw[16] = {};          // the instruction's bytes (at most 15)
   OpVec ops;
   std::string_view bytes() const { return std::string_view(raw, size); }
-  std::string op_str() const; // capstone's operand text, decoded again from the bytes (only reports need it)
+  std::string op_str() const; // the operands as text (only reports need it)
   bool group(u8 g) const;
   bool branches() const;      // in GRP_JUMP / GRP_CALL / GRP_BRANCH_RELATIVE
 };
 
-const char* reg_name(u16 reg);       // capstone register name ("" for none)
+const char* reg_name(u16 reg);       // a register's name ("" for none)
 u16 reg_rip();
 
 // An address field of an instruction: (offset in instruction, size, kind, value, access size)

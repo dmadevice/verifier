@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.23)
 project(verifier LANGUAGES C CXX)
 
-# capstone 5.0.9, fetched at configure time and linked statically (x86 only). Set FETCHCONTENT_SOURCE_DIR_CAPSTONE
-# to a local checkout for offline builds.
+# fadec (x86-64 decoder), fetched at configure time and linked statically; its build generates the decode
+# tables with Python 3. Set FETCHCONTENT_SOURCE_DIR_FADEC to a local checkout for offline builds.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -11,25 +11,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 include(FetchContent)
-set(CAPSTONE_ARCHITECTURE_DEFAULT OFF CACHE BOOL "" FORCE)
-set(CAPSTONE_X86_SUPPORT ON CACHE BOOL "" FORCE)
-set(CAPSTONE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(CAPSTONE_BUILD_CSTOOL OFF CACHE BOOL "" FORCE)
-set(CAPSTONE_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(CAPSTONE_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(CAPSTONE_INSTALL OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(capstone
-  GIT_REPOSITORY https://github.com/capstone-engine/capstone.git
-  GIT_TAG 022575848782a4801fd150fdbc927effcbca0864   # tag 5.0.9
-  GIT_SHALLOW FALSE)
-FetchContent_MakeAvailable(capstone)
+set(FADEC_ARCHMODE only64 CACHE STRING "" FORCE)
+set(FADEC_ENCODE OFF CACHE BOOL "" FORCE)
+set(FADEC_ENCODE2 OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(fadec
+  GIT_REPOSITORY https://github.com/aengelke/fadec.git
+  GIT_TAG c9f78f532b9004de278489019ab2c6c28ae9746e)
+FetchContent_MakeAvailable(fadec)
 
 set(CORE_SOURCES
   src/util.cpp src/json.cpp src/sha256.cpp src/pe.cpp src/x64.cpp src/names.cpp src/annotations.cpp
   src/config.cpp src/inputs.cpp src/compare.cpp src/pairing.cpp src/report.cpp src/verify.cpp)
 add_library(verifier_core STATIC ${CORE_SOURCES})
 target_include_directories(verifier_core PUBLIC src)
-target_link_libraries(verifier_core PUBLIC capstone_static)
+target_link_libraries(verifier_core PUBLIC fadec)
 if(MSVC)
   target_compile_options(verifier_core PUBLIC /W3 /utf-8)
 else()

@@ -122,8 +122,9 @@ Set `VERIFIER_TIMING=1` to print each phase's time and memory on stderr.
 
 ## Building
 
-CMake 3.20+ and a C++20 compiler (MSVC 2022, Clang 17+, GCC 13+). [capstone](https://github.com/capstone-engine/capstone)
-5.0.9 is fetched at configure time and linked statically.
+CMake 3.23+, a C++20 compiler (MSVC 2022, Clang 17+, GCC 13+) and Python 3.9+. The x86-64 decoder,
+[fadec](https://github.com/aengelke/fadec), is fetched at configure time (a pinned commit) and linked
+statically; its build generates the decode tables with Python.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -140,9 +141,9 @@ ctest --test-dir build -C Release
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
 exact problems it must report, and 27 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key,
-hashing and line splitting.
+hashing and line splitting. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 20 MB binary with 5,500 annotated functions, a run takes about 2 seconds and 250 MB on one core
+On a 20 MB binary with 5,500 annotated functions, a run takes about 1.5 seconds and 250 MB on one core
 (with the undname cache warm).

@@ -489,21 +489,28 @@ Problems leaf_extent_case() {
   return bad;
 }
 
-// the same code decoded at two addresses (relative branches, RIP-relative operands): capstone's text and sizes
-Problems decode_case(const Value& doc) {
+// the same code decoded at two addresses: sizes, mnemonics, absolute branch targets and RIP-relative operands
+// follow from the encoding
+Problems decode_case() {
+  Bytes code = unhex("e8f0ffffff7405e2fc488d0d10000000ff2510000000e9a0ffffffb801000000c3");
+  struct Want { int size; const char* mnemonic; i64 target; };   // target: branch target or RIP displacement
+  std::vector<Want> want = {{5, "call", -0x10}, {2, "jz", 5}, {2, "loop", -4}, {7, "lea", 0x10},
+                            {6, "jmp", 0x10},   {5, "jmp", -0x60}, {5, "mov", 0}, {1, "ret", 0}};
   Problems bad;
-  for (auto& d : doc["decode"].arr) {
-    Bytes code = unhex(d["code"].as_str());
-    u64 address = u64(d["address"].as_int());
+  for (u64 address : {u64(0x180001000), u64(0x180123f30)}) {
     auto insns = decode_linear(code, address);
-    auto& want = d["insns"].arr;
     bool ok = insns.size() == want.size();
+    u64 at = address;
     for (size_t i = 0; ok && i < insns.size(); ++i) {
-      auto& w = want[i].arr;
-      ok = insns[i].address == u64(w[0].as_int()) && insns[i].size == w[1].as_int() && insns[i].mnemonic == w[2].as_str() &&
-           insns[i].op_str() == w[3].as_str();
+      const Insn& x = insns[i];
+      const Want& w = want[i];
+      u64 next = at + u64(w.size);
+      ok = x.address == at && x.size == w.size && x.mnemonic == w.mnemonic;
+      if (ok && x.branches() && !x.ops.empty() && x.ops[0].type == OP_IMM) ok = x.ops[0].imm == i64(next) + w.target;
+      if (ok && !x.ops.empty() && x.ops[x.ops.size() - 1].type == OP_MEM) ok = x.ops[x.ops.size() - 1].mem.base == reg_rip() && x.ops[x.ops.size() - 1].mem.disp == w.target;
+      at = next;
     }
-    if (!ok) bad.push_back({"decode memo", "at " + hex(address)});
+    if (!ok) bad.push_back({"decode", "at " + hex(address)});
   }
   return bad;
 }
@@ -887,7 +894,7 @@ int main(int argc, char** argv) {
       {"instruction diff", nullptr, instruction_diff},
       {"linear matcher", nullptr, [&] { return linear_matcher(doc); }},
       {"leaf extent", nullptr, leaf_extent_case},
-      {"decode memo", nullptr, [&] { return decode_case(doc); }},
+      {"decode at two addresses", nullptr, decode_case},
       {"local static names", nullptr, local_static_names},
       {"stub leaves its original open", nullptr, stub_pairing},
       {"GLOBAL bytes checked", nullptr, global_bytes},
