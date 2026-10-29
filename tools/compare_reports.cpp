@@ -17,14 +17,34 @@ namespace {
 
 std::string show(const Value* v) {
   if (!v) return "(absent)";
-  std::string s = json::dumps_indent1(*v);
+  std::string s = json::dump(*v);
   for (auto& c : s) if (c == '\n') c = ' ';
   return s.size() > 300 ? s.substr(0, 300) + "..." : s;
 }
 
+// equal values; objects compare by key, whatever their order
+bool equal(const Value& a, const Value& b) {
+  if (a.type != b.type) return false;
+  switch (a.type) {
+    case Value::Array:
+      if (a.arr.size() != b.arr.size()) return false;
+      for (size_t i = 0; i < a.arr.size(); ++i) if (!equal(a.arr[i], b.arr[i])) return false;
+      return true;
+    case Value::Object:
+      if (a.obj.size() != b.obj.size()) return false;
+      for (auto& [k, v] : a.obj) {
+        const Value* w = b.get(k);
+        if (!w || !equal(v, *w)) return false;
+      }
+      return true;
+    default:
+      return json::dump(a) == json::dump(b);
+  }
+}
+
 bool same(const Value* a, const Value* b) {
   if (!a || !b) return a == b;
-  return json::dumps_indent1(*a) == json::dumps_indent1(*b);
+  return equal(*a, *b);
 }
 
 }  // namespace

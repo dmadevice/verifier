@@ -33,6 +33,7 @@ std::vector<std::string> walk_files(const std::string& root) {
     (d ? dirs : files).push_back(name);
   }
   std::sort(files.begin(), files.end());
+  std::sort(dirs.begin(), dirs.end());
   for (auto& f : files) out.push_back(path_join(root, f));
   for (auto& d : dirs) {
     auto sub = walk_files(path_join(root, d));

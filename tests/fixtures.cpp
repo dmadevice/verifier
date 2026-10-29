@@ -241,17 +241,17 @@ void data_cases(const Value& doc) {
     std::string name = c["name"].as_str();
     std::string want_s = c["want"].is_null() ? "" : c["want"].as_str();
     const char* want = want_s.empty() ? nullptr : want_s.c_str();
-    Problems probs, py;
-    for (auto& p : c["problems"].arr) py.push_back({p.arr[0].as_str(), p.arr[1].as_str()});
+    Problems probs, expected;
+    for (auto& p : c["problems"].arr) expected.push_back({p.arr[0].as_str(), p.arr[1].as_str()});
     std::string note;
     bool ok;
     try {
       probs = replay(c);
-      ok = verdict(want, probs) && probs == py;
-      if (probs != py) {
+      ok = verdict(want, probs) && probs == expected;
+      if (probs != expected) {
         note = "expected: ";
-        for (auto& [a, b] : py) note += a + ": " + b + "; ";
-        if (py.empty()) note += "MATCH";
+        for (auto& [a, b] : expected) note += a + ": " + b + "; ";
+        if (expected.empty()) note += "MATCH";
       }
     } catch (std::exception& e) {
       ok = false;
@@ -287,29 +287,19 @@ Problems category(i64 rimm, u64 rtarget, bool branch) {
   return {{classify(a, b), ""}};
 }
 
-Sig bytes_sig(const Bytes& b) { return sig_of_bytes(b); }
-Sig tuple_sig(std::vector<Atom> parts) {
-  Sig s{Atom{Atom::OPEN, 0, {}}};
-  for (auto& p : parts) s.push_back(p);
-  s.push_back(Atom{Atom::CLOSE, 0, {}});
-  return s;
-}
-Atom ai(i64 v) { return Atom{Atom::INT, v, {}}; }
-Atom ab(const Bytes& b) { return Atom{Atom::BYTES, 0, b}; }
-
 Problems build_hashes() {
   Comparer c(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
   Bytes a = ".?AVX@?A0x11111111@@", b = ".?AVX@?A0x22222222@@";
+  auto rtti_of = [](const Bytes& name, u32 off) { Rtti r; r.present = true; r.name = name; r.off = off; return r; };
   Problems bad;
-  if (!c.same_names(bytes_sig(a), bytes_sig(b)) || !c.same_names(tuple_sig({ai(1), ab(a)}), tuple_sig({ai(1), ab(b)})))
+  if (!c.same_names({{a, b}}) || !c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)))
     bad.push_back({"hash", "same name, other hash"});
-  if (c.same_names(bytes_sig(a), bytes_sig(".?AVX@?A0x33333333@@")) || c.same_names(bytes_sig(".?AVX@?A0x44444444@@"), bytes_sig(b)))
+  if (c.same_names({{a, ".?AVX@?A0x33333333@@"}}) || c.same_names({{".?AVX@?A0x44444444@@", b}}))
     bad.push_back({"hash", "a hash paired twice"});
-  if (c.same_names(tuple_sig({ab(a), ai(1)}), tuple_sig({ab(b), ai(2)})) ||
-      c.same_names(bytes_sig(".?AVY@?A0x55555555@@"), bytes_sig(".?AVZ@?A0x66666666@@")))
+  if (c.same_rtti(rtti_of(a, 1), rtti_of(b, 2)) || c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
     bad.push_back({"hash", "other value or name"});
-  if (c.same_names(tuple_sig({ab(".?AVW@?A0x99999999@@"), ai(1)}), tuple_sig({ab(".?AVW@?A0xaaaaaaaa@@"), ai(2)})) ||
-      !c.same_names(bytes_sig(".?AVW@?A0x99999999@@"), bytes_sig(".?AVW@?A0xbbbbbbbb@@")))
+  if (c.same_rtti(rtti_of(".?AVW@?A0x99999999@@", 1), rtti_of(".?AVW@?A0xaaaaaaaa@@", 2)) ||
+      !c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}))
     bad.push_back({"hash", "a failed comparison left a pairing behind"});
   return bad;
 }
@@ -455,7 +445,7 @@ Problems linear_matcher(const Value& doc) {
       ok = ops[i].tag == x[0].as_str()[0] && ops[i].i1 == size_t(x[1].as_int()) && ops[i].i2 == size_t(x[2].as_int()) &&
            ops[i].j1 == size_t(x[3].as_int()) && ops[i].j2 == size_t(x[4].as_int());
     }
-    if (!ok) return {{"matcher", json::dumps_indent1(c).substr(0, 200)}};
+    if (!ok) return {{"matcher", json::dump(c).substr(0, 200)}};
   }
   return {};
 }

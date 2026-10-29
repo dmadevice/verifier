@@ -31,22 +31,15 @@ std::int64_t Value::as_int() const {
   throw std::runtime_error("JSON value is not a number");
 }
 
+bool Value::as_bool() const {
+  if (type == Bool) return b;
+  if (type == Int) return i != 0;
+  throw std::runtime_error("JSON value is not a boolean");
+}
+
 const std::string& Value::as_str() const {
   if (type != String) throw std::runtime_error("JSON value is not a string");
   return s;
-}
-
-bool Value::truthy() const {
-  switch (type) {
-    case Null: return false;
-    case Bool: return b;
-    case Int: return i != 0;
-    case Double: return d != 0;
-    case String: return !s.empty();
-    case Array: return !arr.empty();
-    case Object: return !obj.empty();
-  }
-  return false;
 }
 
 namespace {
@@ -171,45 +164,26 @@ struct Parser {
   }
 };
 
+// a JSON string literal: UTF-8 is written as is, control characters escaped
 void put_str(std::string& out, std::string_view s) {
   out += '"';
-  size_t i = 0;
-  while (i < s.size()) {
-    unsigned char c = s[i];
-    if (c == '"') { out += "\\\""; ++i; continue; }
-    if (c == '\\') { out += "\\\\"; ++i; continue; }
-    if (c == '\n') { out += "\\n"; ++i; continue; }
-    if (c == '\r') { out += "\\r"; ++i; continue; }
-    if (c == '\t') { out += "\\t"; ++i; continue; }
-    if (c == '\b') { out += "\\b"; ++i; continue; }
-    if (c == '\f') { out += "\\f"; ++i; continue; }
-    if (c < 0x20 || c == 0x7f) {
-      if (c == 0x7f) { out += static_cast<char>(c); ++i; continue; }
-      char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); out += b; ++i; continue;
+  for (unsigned char c : s) {
+    switch (c) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); out += b; }
+        else out += static_cast<char>(c);
     }
-    if (c < 0x80) { out += static_cast<char>(c); ++i; continue; }
-    // UTF-8 sequence -> \uXXXX (surrogate pairs above the BMP), as ensure_ascii does
-    unsigned cp; int len;
-    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
-    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
-    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
-    else { cp = 0xFFFD; len = 1; }
-    for (int k = 1; k < len; ++k) cp = (cp << 6) | (static_cast<unsigned char>(i + k < s.size() ? s[i + k] : 0) & 0x3F);
-    i += len;
-    char b[16];
-    if (cp >= 0x10000) {
-      cp -= 0x10000;
-      std::snprintf(b, sizeof b, "\\u%04x\\u%04x", 0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3FF));
-    } else {
-      std::snprintf(b, sizeof b, "\\u%04x", cp);
-    }
-    out += b;
   }
   out += '"';
 }
 
-void dump(std::string& out, const Value& v, int level) {
-  auto nl = [&](int lv) { out += '\n'; out.append(static_cast<size_t>(lv), ' '); };
+void write(std::string& out, const Value& v, int level) {
+  auto nl = [&](int lv) { out += '\n'; out.append(2 * static_cast<size_t>(lv), ' '); };
   switch (v.type) {
     case Value::Null: out += "null"; break;
     case Value::Bool: out += v.b ? "true" : "false"; break;
@@ -224,7 +198,7 @@ void dump(std::string& out, const Value& v, int level) {
       for (size_t k = 0; k < v.arr.size(); ++k) {
         if (k) out += ',';
         nl(level + 1);
-        dump(out, v.arr[k], level + 1);
+        write(out, v.arr[k], level + 1);
       }
       nl(level);
       out += ']';
@@ -237,7 +211,7 @@ void dump(std::string& out, const Value& v, int level) {
         nl(level + 1);
         put_str(out, v.obj[k].first);
         out += ": ";
-        dump(out, v.obj[k].second, level + 1);
+        write(out, v.obj[k].second, level + 1);
       }
       nl(level);
       out += '}';
@@ -255,9 +229,10 @@ Value parse(std::string_view text) {
   return v;
 }
 
-std::string dumps_indent1(const Value& v) {
+std::string dump(const Value& v) {
   std::string out;
-  dump(out, v, 0);
+  write(out, v, 0);
+  out += '\n';
   return out;
 }
 

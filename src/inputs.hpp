@@ -37,12 +37,11 @@ class Original {
   std::string digest;
   Image img;
   std::unordered_map<u64, IdaFunction> functions;
-  std::vector<u64> function_order;                 // first-occurrence order (the dict's)
+  std::vector<u64> function_order;                 // in the order of the export file
   std::unordered_map<u64, std::string> ida_names;
   SvMap<u64> by_name;
   std::map<u64, std::vector<u64>> vtables;
   std::unordered_map<u64, Linked> linked;
-  std::vector<u64> linked_order;                   // the dict's insertion order (Counter ties)
 
   u64 extent(u64 va) const;
   u64 object_end(u64 va) const;
@@ -85,7 +84,7 @@ class Rebuilt {
   std::unordered_map<std::string_view, std::vector<std::string_view>> by_suffix;
   std::unordered_set<u64> local_statics;
   // local static VA -> the rebuilt functions it belongs to; nullopt: an owner without a symbol. Only statics
-  // whose decorated name matches LOCAL_STATIC have an entry (static_owner.get() is None for the others).
+  // whose decorated name has the local static form have an entry (owners unknown for the others).
   std::map<u64, std::optional<std::set<u64>>> static_owner;
 
   std::string qualified(std::string_view dec) const {

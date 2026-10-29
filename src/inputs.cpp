@@ -50,8 +50,8 @@ Original::Original(const Config& p) : config_(&p) {
     f.ea = u64(v["ea"].as_int());
     f.size = u64(v["size"].as_int());
     f.name = v["name"].as_str();
-    f.lib = v["lib"].truthy();
-    f.thunk = v["thunk"].truthy();
+    f.lib = v["lib"].as_bool();
+    f.thunk = v["thunk"].as_bool();
     if (!functions.count(f.ea)) function_order.push_back(f.ea);
     functions[f.ea] = f;
   });
@@ -97,14 +97,12 @@ Original::Original(const Config& p) : config_(&p) {
   for (auto& m : matches) {
     u64 ea = u64(m["ea"].as_int());
     if (!functions.count(ea)) continue;
-    if (!linked.count(ea)) linked_order.push_back(ea);
     linked[ea] = Linked{m["lib"].as_str(), m["symbol"].as_str(), true};
   }
   if (file_exists(p.library_functions)) {
     auto doc = json::parse(read_file(p.library_functions));
     for (auto& m : doc.arr) {
       u64 ea = u64(m["ea"].as_int());
-      if (!linked.count(ea)) linked_order.push_back(ea);
       linked[ea] = Linked{m["lib"].as_str(), "", false};
     }
   }

@@ -23,7 +23,7 @@ std::optional<std::string> definition_name(const std::string& line);
 std::string static_owner(const std::string& und);
 std::string signature(const std::string& und);
 std::string qualified(const std::string& und);        // memoised
-size_t local_static_match(const std::string& dec);    // end of verify.LOCAL_STATIC's match at the start, 0 if none
+size_t local_static_match(const std::string& dec);    // end of the local static prefix of a decorated name, 0 if it is not one
 
 // pick_destructor(name, va, va is a vtable slot, has_code)
 template <class HasCode>

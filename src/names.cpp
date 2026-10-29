@@ -30,7 +30,7 @@ bool alpha_(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
 std::vector<std::pair<u64, std::string>> parse_map(const std::string& path) {
   std::vector<std::pair<u64, std::string>> syms;
   for_each_file_line(path, [&](std::string_view line) {
-    std::string_view p[4];   // the first four whitespace-separated fields (str.split())
+    std::string_view p[4];   // the first four whitespace-separated fields
     size_t n = 0, i = 0;
     while (n < 4) {
       while (i < line.size() && is_space(line[i])) ++i;
@@ -52,7 +52,7 @@ std::vector<std::pair<u64, std::string>> parse_map(const std::string& path) {
 }
 
 std::string norm_name(const std::string& in) {
-  // re.sub(r"\s*__ptr64\b", "", s)
+  // drop `__ptr64` (and the whitespace before it)
   std::string s;
   for (size_t i = 0; i < in.size();) {
     size_t j = i;
@@ -60,7 +60,7 @@ std::string norm_name(const std::string& in) {
     if (in.compare(j, 7, "__ptr64") == 0 && (j + 7 == in.size() || !is_word(in[j + 7]))) { i = j + 7; continue; }
     s += in[i++];
   }
-  // re.sub(r"\b(?:class|struct|enum|union) ", "", s)
+  // drop the words `class `, `struct `, `enum `, `union `
   std::string t;
   for (size_t i = 0; i < s.size();) {
     if (i == 0 || !is_word(s[i - 1])) {
@@ -73,7 +73,7 @@ std::string norm_name(const std::string& in) {
     }
     t += s[i++];
   }
-  // re.sub(r"\s*([<>,*&])\s*", r"\1", s).strip()
+  // no whitespace around < > , * &, nor at either end
   std::string u;
   for (size_t i = 0; i < t.size();) {
     size_t j = i;
@@ -92,7 +92,7 @@ std::string norm_name(const std::string& in) {
 
 std::string norm_params(const std::string& p) {
   std::string s = norm_name(p);
-  // re.sub(r"\b\w+::", "", s)
+  // drop namespace and class qualifiers (`word::`)
   std::string q;
   for (size_t i = 0; i < s.size();) {
     if (is_word(s[i]) && (i == 0 || !is_word(s[i - 1]))) {
@@ -105,7 +105,7 @@ std::string norm_params(const std::string& p) {
     }
     q += s[i++];
   }
-  // re.sub(r"\s+", " ", q).replace("( ", "(").replace(" )", ")")
+  // whitespace runs as one space, none inside the parentheses' ends
   std::string w;
   for (size_t i = 0; i < q.size();) {
     if (is_space(q[i])) { while (i < q.size() && is_space(q[i])) ++i; w += ' '; continue; }
@@ -119,7 +119,7 @@ long param_start(const std::string& s) {
   long depth = 0;
   size_t i = 0, n = s.size();
   while (i < n) {
-    if (s.compare(i, 8, "operator") == 0 && (i + 8 == n || !is_word(s[i + 8]))) {   // (operator)(?!\w)(?:\(\))?[ops]*
+    if (s.compare(i, 8, "operator") == 0 && (i + 8 == n || !is_word(s[i + 8]))) {   // `operator` then `()` or operator characters
       size_t j = i + 8;
       if (s.compare(j, 2, "()") == 0) j += 2;
       while (j < n && op_char(s[j])) ++j;
@@ -136,7 +136,7 @@ long param_start(const std::string& s) {
 }
 
 std::string last_token(const std::string& head) {
-  // OPERATOR_TAIL: r"operator(?:\(\)|[ops]+)$" (search: the leftmost start that matches)
+  // a name ending in `operator()` or `operator<op>`: the leftmost `operator` that ends it
   for (size_t p = head.find("operator"); p != std::string::npos; p = head.find("operator", p + 1)) {
     size_t j = p + 8;
     bool m = false;
@@ -191,7 +191,7 @@ std::optional<std::string> definition_name(const std::string& line0) {
 }
 
 static std::optional<std::string> static_owner_c(const std::string& und) {
-  // r"`([A-Za-z_]\w*)'::`\d+'::"
+  // `` `name'::`<digits>'::`` (an extern "C" function's local static)
   for (size_t p = und.find('`'); p != std::string::npos; p = und.find('`', p + 1)) {
     size_t j = p + 1;
     if (j >= und.size() || !alpha_(und[j])) continue;
@@ -293,7 +293,7 @@ std::string qualified(const std::string& und) {
 }
 
 size_t local_static_match(const std::string& d) {
-  // verify.LOCAL_STATIC: r"\?(?:\$S\d+|[^@?$][^@]*)@\?(?:\d|[A-P]+@)\?\?" (re.match)
+  // a local static or its guard: `?<name>@?<scope>??<owner>` or `?$S<n>@?<scope>??<owner>`, scope a digit or [A-P]+@
   size_t n = d.size(), i = 0;
   if (i >= n || d[i] != '?') return 0;
   ++i;
@@ -393,7 +393,7 @@ std::string run_capture(const std::string& exe, const std::vector<std::string>& 
 #endif
 }
 
-// r'Undecoration of :- "(.*?)"\s*is :- "(.*?)"' (re.S), every match
+// undname's output: `Undecoration of :- "<decorated>"` then `is :- "<undecorated>"`, for each name
 void parse_undname(const std::string& out, std::unordered_map<std::string, std::string>& res) {
   const std::string a = "Undecoration of :- \"", b = "is :- \"";
   size_t p = 0;

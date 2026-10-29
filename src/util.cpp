@@ -86,6 +86,8 @@ std::vector<std::string> read_lines(const std::string& path) {
   return out;
 }
 
+std::string hex_signed(i64 v) { return v < 0 ? "-" + hex(u64(-v)) : hex(u64(v)); }
+
 std::string hex(u64 v) {
   char buf[24];
   std::snprintf(buf, sizeof buf, "0x%llx", static_cast<unsigned long long>(v));
@@ -160,26 +162,10 @@ std::string lower(std::string s) {
   return s;
 }
 
-std::string fixed3(double x) {
-  char buf[64];
-  std::snprintf(buf, sizeof buf, "%.3f", x);
+std::string percent(u64 part, u64 whole) {
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "%.2f%%", whole ? 100.0 * double(part) / double(whole) : 0.0);
   return buf;
-}
-
-std::string py_repr(std::string_view s) {
-  bool sq = s.find('\'') != std::string_view::npos, dq = s.find('"') != std::string_view::npos;
-  char q = (sq && !dq) ? '"' : '\'';
-  std::string out(1, q);
-  for (unsigned char c : s) {
-    if (c == static_cast<unsigned char>(q) || c == '\\') { out += '\\'; out += static_cast<char>(c); }
-    else if (c == '\n') out += "\\n";
-    else if (c == '\r') out += "\\r";
-    else if (c == '\t') out += "\\t";
-    else if (c < 0x20 || c == 0x7f) { char b[8]; std::snprintf(b, sizeof b, "\\x%02x", c); out += b; }
-    else out += static_cast<char>(c);
-  }
-  out += q;
-  return out;
 }
 
 static bool is_sep(char c) {

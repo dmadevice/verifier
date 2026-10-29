@@ -148,31 +148,31 @@ std::string result_line(const Value& r, const std::string& module) {
   std::string line = pad_right(r["status"].s, 9) + " " + r["orig"].s + " " + pad_left(field("osize"), 5) + "/" +
                      pad_right(field("rsize"), 5) + " " + pad_right(cat && cat->type == Value::String ? cat->s : "", 12) + " " +
                      r["name"].s;
-  const Value* fd = r.get("first_diff");
-  const Value* pr = r.get("problems");
-  if (fd && fd->truthy()) {
+  auto items = [&](const char* k) -> const Value* {   // a non-empty array or object field
+    const Value* v = r.get(k);
+    return v && (!v->arr.empty() || !v->obj.empty()) ? v : nullptr;
+  };
+  const Value* fd = items("first_diff");
+  const Value* pr = items("problems");
+  if (fd) {
     line += "\n            @" + std::to_string((*fd)["index"].i) + ": orig `" + (*fd)["orig"].s + "` | rebuilt `" + (*fd)["rebuilt"].s + "`";
-  } else if (pr && pr->truthy()) {
+  } else if (pr) {
     line += "\n            " + head_chars(pr->arr[0].s, 160);
   }
-  const Value* un = r.get("unresolved");
-  if (un && un->truthy()) {
+  const Value* un = items("unresolved");
+  if (un) {
     std::vector<std::string> xs;
     for (auto& x : un->arr) xs.push_back(head_chars(x.s, 90));
     line += "\n            unresolved: " + join(xs, ", ");
   }
-  const Value* ov = r.get("overloads");
-  if (ov && ov->truthy() && r["status"].s != "MATCH") {
+  const Value* ov = items("overloads");
+  if (ov && r["status"].s != "MATCH") {
     std::vector<std::string> xs;
     for (auto& x : ov->arr) xs.push_back(x.s);
     line += "\n            overloads: " + head_chars(join(xs, " "), 200) + " (pick one: `// FUNCTION: " + module + " 0x... (<params>)`)";
   }
   return line;
 }
-
-namespace {
-
-}  // namespace
 
 std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns, const std::function<std::vector<u64>(const std::string&)>& lookup,
                                       const std::unordered_map<u64, u64>& reb_to_orig, Comparer& cmp) {
@@ -202,16 +202,17 @@ struct Totals {
   std::vector<const Value*> libcode;
 };
 
-// Counter -> dict repr: {'a': 1, 'b': 2}
-std::string counter_repr(const std::vector<std::pair<std::string, i64>>& c) {
-  std::vector<std::string> parts;
-  for (auto& [k, v] : c) parts.push_back(py_repr(k) + ": " + std::to_string(v));
-  return "{" + join(parts, ", ") + "}";
+// counts, most first (ties by name)
+std::vector<std::pair<std::string, i64>> by_count(const std::map<std::string, i64>& counts) {
+  std::vector<std::pair<std::string, i64>> v(counts.begin(), counts.end());
+  std::stable_sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.second > b.second; });
+  return v;
 }
 
-void counter_add(std::vector<std::pair<std::string, i64>>& c, const std::string& k) {
-  for (auto& e : c) if (e.first == k) { ++e.second; return; }
-  c.emplace_back(k, 1);
+std::string count_list(const std::vector<std::pair<std::string, i64>>& v) {   // "a 3, b 1"
+  std::vector<std::string> parts;
+  for (auto& [k, n] : v) parts.push_back(k + " " + std::to_string(n));
+  return join(parts, ", ");
 }
 
 Totals summarize(const std::vector<Value>& results, const Original& orig, Out& out, const std::string& module) {
@@ -229,13 +230,19 @@ Totals summarize(const std::vector<Value>& results, const Original& orig, Out& o
     ubytes += f.size;
   }
   for (u64 v : t.matched) mbytes += orig.functions.at(v).size;
-  std::vector<std::pair<std::string, i64>> cats;
+  std::map<std::string, i64> cat_counts, lib_counts;
+  size_t differ = 0;
   for (auto& r : results) {
     if (r["status"].s == "MATCH") continue;
+    ++differ;
     const Value* c = r.get("category");
-    counter_add(cats, c && c->truthy() ? c->s : r["status"].s);
+    ++cat_counts[c && c->type == Value::String ? c->s : r["status"].s];
   }
-  for (u64 ea : orig.linked_order) lib_bytes += orig.functions.at(ea).size;
+  auto cats = by_count(cat_counts);
+  for (auto& [ea, l] : orig.linked) {
+    lib_bytes += orig.functions.at(ea).size;
+    ++lib_counts[l.lib];
+  }
   size_t lib_checked = 0, lib_match = 0;
   for (auto& r : results) {
     if (r["kind"].s == "LIBRARY") { ++lib_checked; lib_match += r["status"].s == "MATCH"; }
@@ -249,19 +256,14 @@ Totals summarize(const std::vector<Value>& results, const Original& orig, Out& o
               ": remove the definition and reach it as the original does (through the library call or class that uses it); `// " +
               (*r)["kind"].s + ":` is for decompiled code, `// LIBRARY: " + module + " " + (*r)["orig"].s + " <symbol>` for library code");
   }
-  out.print("\nannotated " + std::to_string(results.size()) + ": " + std::to_string(t.matched.size()) + " match, categories " +
-            counter_repr(cats));
+  out.print("\nannotated " + std::to_string(results.size()) + ": " + std::to_string(t.matched.size()) + " match, " +
+            std::to_string(differ) + " do not" + (cats.empty() ? "" : " (" + count_list(cats) + ")"));
   out.print("coverage: " + std::to_string(t.matched.size()) + "/" + std::to_string(universe) + " functions (" +
-            fixed3(double(100 * t.matched.size()) / double(universe)) + "%), " + std::to_string(mbytes) + "/" +
-            std::to_string(ubytes) + " bytes (" + fixed3(double(100 * mbytes) / double(ubytes)) + "%)");
-  std::vector<std::pair<std::string, i64>> libs;
-  for (u64 ea : orig.linked_order) counter_add(libs, orig.linked.at(ea).lib);
-  std::stable_sort(libs.begin(), libs.end(), [](auto& a, auto& b) { return a.second > b.second; });
-  std::vector<std::string> lp;
-  for (auto& [k, v] : libs) lp.push_back(k + " " + std::to_string(v));
-  out.print("linked library code (attributed, not counted): " + std::to_string(orig.linked.size()) + " functions, " +
-            std::to_string(lib_bytes) + " bytes (" + join(lp, ", ") + "); LIBRARY annotations " + std::to_string(lib_match) +
-            "/" + std::to_string(lib_checked) + " match");
+            percent(t.matched.size(), universe) + "), " + std::to_string(mbytes) + "/" + std::to_string(ubytes) + " bytes (" +
+            percent(mbytes, ubytes) + ")");
+  out.print("linked library code (not counted): " + std::to_string(orig.linked.size()) + " functions, " +
+            std::to_string(lib_bytes) + " bytes" + (lib_counts.empty() ? "" : " (" + count_list(by_count(lib_counts)) + ")") +
+            "; LIBRARY annotations " + std::to_string(lib_match) + "/" + std::to_string(lib_checked) + " match");
   t.fields.set("matched", Value::integer(i64(t.matched.size())));
   t.fields.set("universe", Value::integer(i64(universe)));
   t.fields.set("matched_bytes", Value::integer(i64(mbytes)));
@@ -531,7 +533,7 @@ int run(int argc, char** argv) {
     rs.arr = std::move(results);
     doc.set("results", std::move(rs));
     for (auto& [k, v] : totals.fields.obj) doc.set(k, v);
-    report = json::dumps_indent1(doc);
+    report = json::dump(doc);
     std::ofstream(a.json, std::ios::binary) << report;
     results = std::move(doc.obj[0].second.arr);
     ph.mark("json");

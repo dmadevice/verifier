@@ -80,17 +80,7 @@ struct FnMemo {
   std::shared_ptr<const Code> oc, rc;
 };
 
-// comparable structure walked by same_names: a flattened tuple (markers for nesting), bytes atoms pair hashes
-struct Atom {
-  enum T : u8 { INT, BYTES, STR, OPEN, CLOSE, NONE } t;
-  i64 i = 0;
-  Bytes b;
-  bool operator==(const Atom& o) const { return t == o.t && i == o.i && b == o.b; }
-};
-using Sig = std::vector<Atom>;
-Sig sig_of(const Rtti& r);
-Sig sig_of(const ThrowInfoSig& t);
-Sig sig_of_bytes(const Bytes& b);
+using NamePairs = std::vector<std::pair<Bytes, Bytes>>;   // (original decorated name, rebuilt one)
 
 i64 const_size(const std::string& name);
 i64 literal_size(const Image& img, u64 start, const Key& key);
@@ -106,7 +96,8 @@ class Comparer {
   std::unordered_map<u64, std::string> names;       // original VA -> IDA name
 
   Journal journal;
-  // memo (journaled): ("fn", o, r), ("ro", o, r), ("vt", o, r), ("fi", ofi), ("fir", rfi)
+  // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;
+  // FuncInfo pairs both ways
   JMap<std::pair<u64, u64>, FnMemo, PairHash> memo_fn{&journal};
   JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash> memo_ro{&journal};
   JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash> memo_vt{&journal};
@@ -139,7 +130,11 @@ class Comparer {
   std::optional<Problem> ref(u64 o_t, u64 r_t, int access);
   std::optional<Problem> rodata(u64 o_t, u64 r_t);
   std::optional<Problem> vtable(u64 o_vt, u64 r_vt);
-  bool same_names(const Sig& a, const Sig& b);
+  // equal names, except that each build hash in a rebuilt name (anonymous namespace `?A0x...@`, lambda) stands
+  // for one hash of the original's, the same one for the whole run
+  bool same_names(const NamePairs& names);
+  bool same_rtti(const Rtti& a, const Rtti& b);                    // offsets, hierarchy, then the names
+  bool same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b);
   bool infer_data(u64 o_t, u64 r_t);
   bool infer_vtable(u64 o_vt, u64 r_vt);
   std::optional<Key> bind_local(u64 o_t, u64 r_t);

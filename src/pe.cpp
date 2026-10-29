@@ -51,7 +51,7 @@ Image Image::load(const std::string& path) {
     i64 pad = i64(vadj) - i64(mapped.size());
     if (pad > 0) mapped.append(size_t(pad), '\0');
     else if (pad < 0) mapped.resize(size_t(i64(mapped.size()) + pad));
-    // SectionStructure.get_data(): from the adjusted pointer for SizeOfRawData, clipped at the unadjusted end
+    // a section's raw data: from the aligned file pointer for SizeOfRawData, clipped at the unaligned end
     u32 ptr_adj = (sect_align < 0x1000 && s.rawptr == s.va) ? s.va : prd;
     u64 end = u64(ptr_adj) + srd;
     end = std::min<u64>(end, u64(s.rawptr) + s.rawsize);

@@ -21,14 +21,11 @@ const char* size_name(int n) {
   }
 }
 
-std::string lstrip_spaces(std::string s) {   // str.lstrip(): the strings here only lead with a space
-  size_t i = 0;
-  while (i < s.size() && is_space(s[i])) ++i;
-  return s.substr(i);
+// a memory operand with its size: "dword [x]", or "[x]" when the size has no name
+std::string sized(int size, const std::string& operand) {
+  const char* n = size_name(size);
+  return *n ? std::string(n) + " " + operand : operand;
 }
-
-std::string py_hex(i64 v) { return v < 0 ? "-0x" + hex(u64(-v)).substr(2) : hex(u64(v)); }
-std::string hex_digits(i64 v) { return v < 0 ? "-" + hex(u64(-v)).substr(2) : hex(u64(v)).substr(2); }   // f"{v:x}"
 
 }  // namespace
 
@@ -111,14 +108,13 @@ std::string tok_text(const Tok& tok, const std::unordered_map<u64, std::string>&
   for (auto& op : tok.ops) {
     switch (op.k) {
       case Op::R: ops.push_back(op.base); break;
-      case Op::I: ops.push_back(py_hex(op.v)); break;
-      case Op::REL: ops.push_back("<+0x" + hex_digits(op.v) + ">"); break;
+      case Op::I: ops.push_back(hex_signed(op.v)); break;
+      case Op::REL: ops.push_back("<+" + hex_signed(op.v) + ">"); break;   // an offset into the function
       case Op::SYM: ops.push_back(target(op.key)); break;
-      case Op::MSYM: ops.push_back(lstrip_spaces(std::string(size_name(op.size)) + " [" + target(op.key) + "]")); break;
+      case Op::MSYM: ops.push_back(sized(op.size, "[" + target(op.key) + "]")); break;
       case Op::CONST: ops.push_back("[const " + op.base.substr(0, 16) + "]"); break;
       case Op::TBL:
-        ops.push_back(lstrip_spaces(std::string(size_name(op.size)) + " [table+0x" + hex_digits(op.v) +
-                                    " + " + op.index + "*" + std::to_string(op.scale) + "]"));
+        ops.push_back(sized(op.size, "[table+" + hex_signed(op.v) + " + " + op.index + "*" + std::to_string(op.scale) + "]"));
         break;
       case Op::M: {
         std::string addr = op.base;
@@ -128,14 +124,12 @@ std::string tok_text(const Tok& tok, const std::unordered_map<u64, std::string>&
           std::string sign = op.v < 0 ? "-" : (addr.empty() ? "" : "+");
           addr += sign + hex(u64(op.v < 0 ? -op.v : op.v));
         }
-        ops.push_back(lstrip_spaces(std::string(size_name(op.size)) + " " + (op.seg.empty() ? "" : op.seg + ":") + "[" + addr + "]"));
+        ops.push_back(sized(op.size, (op.seg.empty() ? "" : op.seg + ":") + "[" + addr + "]"));
         break;
       }
     }
   }
-  std::string s = tok.mnemonic + " " + join(ops, ", ");
-  while (!s.empty() && is_space(s.back())) s.pop_back();
-  return s;
+  return ops.empty() ? tok.mnemonic : tok.mnemonic + " " + join(ops, ", ");
 }
 
 std::string classify(const Toks& a, const Toks& b) {

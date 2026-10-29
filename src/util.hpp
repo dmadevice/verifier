@@ -41,6 +41,7 @@ void for_each_line(std::string_view data, F&& fn) {
 }
 
 std::string hex(u64 v);                       // "0x1a2b"
+std::string hex_signed(i64 v);                // "0x1a2b", "-0x1a2b"
 std::string hex_bytes(std::string_view b);    // "1a2b..."
 u64 parse_hex(std::string_view s);            // "0x..." or digits
 
@@ -67,12 +68,9 @@ inline u32 le32(const char* p) { u32 v; std::memcpy(&v, p, 4); return v; }
 inline u64 le64(const char* p) { u64 v; std::memcpy(&v, p, 8); return v; }
 inline u16 le16(const char* p) { u16 v; std::memcpy(&v, p, 2); return v; }
 
-// x with three decimals (correctly rounded, like printf)
-std::string fixed3(double x);
-// a quoted string literal: single quotes unless it contains one and no double quote (the summary's categories)
-std::string py_repr(std::string_view s);
+std::string percent(u64 part, u64 whole);     // "12.34%"
 
-// os.path.relpath(path, root) with '/' or '\\' as the platform separator
+// path relative to root ('/' or '\\' as the platform separator)
 std::string relpath(const std::string& path, const std::string& root);
 std::string path_join(const std::string& a, const std::string& b);
 std::string abspath(const std::string& p);

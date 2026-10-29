@@ -19,7 +19,8 @@ bool any_prefix(std::string_view n, std::initializer_list<const char*> ps) {
 
 bool is_const_name(std::string_view n) { return any_prefix(n, {"__real@", "__xmm@", "__mask@"}); }
 
-// r"^(\?\?_7.*@@6B)@(_\d+)?$": group 1, or "" when no match
+// an original vftable name of a class with several bases, `??_7<class>@@6B@` or `??_7<class>@@6B@_<n>`: the part up to
+// `@@6B`, or "" for any other name
 std::string orig_mi_vftable(std::string_view n) {
   if (!starts_with(n, "??_7")) return "";
   auto try_k = [&](size_t k) -> std::string {
@@ -37,7 +38,7 @@ std::string orig_mi_vftable(std::string_view n) {
   return "";
 }
 
-// r"^(\?\?_7.*@@6B).+@@$": group 1 (greedy: the last "@@6B" leaving at least one character before the final "@@")
+// a rebuilt one, `??_7<class>@@6B<base>@@`: the part up to the last `@@6B` that leaves a base name, or ""
 std::string reb_mi_vftable(std::string_view n) {
   if (!starts_with(n, "??_7") || !ends_with(n, "@@") || n.size() < 4 + 4 + 3) return "";
   for (size_t k = n.size() - 3; k >= 8; --k)   // k: end of group 1; n[k : len-2] is .+ (non-empty)
@@ -150,7 +151,7 @@ std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
   std::map<u64, u64> pairs;
   for (auto& [rva, ova] : reb_to_orig)
     if (reb.img.executable(rva) && orig.functions.count(ova)) pairs.emplace(rva, ova);
-  // owners of local statics that resolve by their own names (after the annotations: setdefault)
+  // owners of local statics that resolve by their own names (an annotation's pairing comes first)
   std::map<u64, u64> extra;
   for (auto& [base, owners] : reb.static_owner) {
     if (!owners) continue;
@@ -223,7 +224,7 @@ std::map<u64, u64> Pairing::decide_locals(const std::map<u64, Votes>& votes) con
     for (auto& [s, fs] : by_start) ranked.emplace_back(s, fs.size());
     std::sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) {
       if (a.second != b.second) return a.second > b.second;
-      if (a.first.has_value() != b.first.has_value()) return a.first.has_value();   // None last
+      if (a.first.has_value() != b.first.has_value()) return a.first.has_value();   // "cannot be a start" last
       return a.first.value_or(0) < b.first.value_or(0);
     });
     if (ranked.size() == 1 || ranked[0].second > ranked[1].second) chosen[base] = ranked[0].first;
@@ -247,7 +248,7 @@ std::map<u64, u64> Pairing::decide_locals(const std::map<u64, Votes>& votes) con
 
 std::optional<std::vector<u64>> Pairing::static_home(u64 base) const {
   auto owners = reb.owners_of(base);
-  if (!owners || !*owners || (*owners)->empty()) return std::nullopt;   // `or [None]`: unknown
+  if (!owners || !*owners || (*owners)->empty()) return std::nullopt;   // an owner without a symbol: unknown
   std::vector<u64> homes;
   for (u64 owner : **owners) {
     Key r = resolve_symbol(owner);

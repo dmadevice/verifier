@@ -1,5 +1,5 @@
-// JSON: a small reader for the inputs (IDA exports, library matches) and a writer that formats
-// in a fixed style: one-space indent, ASCII only (\uXXXX escapes), ", " / ": " separators, objects in insertion order.
+// JSON: a small reader for the inputs (IDA exports, library matches) and a writer for the report (2-space
+// indent, UTF-8, objects in insertion order).
 #pragma once
 #include <cstdint>
 #include <map>
@@ -35,11 +35,11 @@ struct Value {
   void push(Value v) { arr.push_back(std::move(v)); }
   std::int64_t as_int() const;
   const std::string& as_str() const;
-  bool truthy() const;                                    // false for null, false, 0, "", [], {}
+  bool as_bool() const;   // a boolean, or a number (non-zero is true)
 };
 
 Value parse(std::string_view text);   // throws std::runtime_error
-std::string dumps_indent1(const Value& v);   // json.dumps(v, indent=1)
-std::string quote(std::string_view s);        // a JSON string literal, ensure_ascii
+std::string dump(const Value& v);         // the document, indented, with a final newline
+std::string quote(std::string_view s);    // a JSON string literal
 
 }  // namespace verifier::json

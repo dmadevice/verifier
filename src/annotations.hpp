@@ -28,7 +28,7 @@ bool is_counted(const std::string& kind);   // FUNCTION SYNTHETIC TEMPLATE
 bool is_paired(const std::string& kind);    // counted + LIBRARY
 std::optional<std::string> sig_flag(const std::set<std::string>& flags);
 
-// Files in os.walk order (each directory's files sorted, subdirectories in the directory's own order).
+// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name).
 std::vector<std::string> walk_files(const std::string& root);
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
                                           std::vector<Ignored>* ignored);

@@ -49,7 +49,7 @@ i64 literal_size(const Image& img, u64 start, const Key& key) {
 
 namespace {
 
-// BUILD_HASH = rb"\?A0x[0-9a-f]+@|<lambda_[0-9a-f]+>": (split pieces, hashes)
+// a name split at its build hashes (`?A0x<hex>@`, `<lambda_<hex>>`): the pieces between them, and the hashes
 void split_hashes(const Bytes& s, std::vector<Bytes>& pieces, std::vector<Bytes>& hashes) {
   auto hexc = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); };
   size_t i = 0, last = 0;
@@ -75,56 +75,14 @@ void split_hashes(const Bytes& s, std::vector<Bytes>& pieces, std::vector<Bytes>
   pieces.push_back(s.substr(last));
 }
 
-// replace buf[lo:hi] (bounds clamped to the buffer) with k zero bytes: may grow or shrink the buffer
-void zero_slice(Bytes& a, i64 lo, i64 hi, i64 k) {
-  i64 n = i64(a.size());
-  lo = std::clamp<i64>(lo, 0, n);
-  hi = std::clamp<i64>(hi, lo, n);
-  a.replace(size_t(lo), size_t(hi - lo), size_t(k), '\0');
+// zero buf[lo, hi) (the part inside the buffer)
+void mask(Bytes& buf, i64 lo, i64 hi) {
+  lo = std::clamp<i64>(lo, 0, i64(buf.size()));
+  hi = std::clamp<i64>(hi, lo, i64(buf.size()));
+  std::fill(buf.begin() + lo, buf.begin() + hi, '\0');
 }
-
-// f"0x{v:x}" for a signed value
-std::string shex(i64 v) { return v < 0 ? "0x-" + hex(u64(-v)).substr(2) : hex(u64(v)); }
-
-void open(Sig& s) { s.push_back(Atom{Atom::OPEN, 0, {}}); }
-void close(Sig& s) { s.push_back(Atom{Atom::CLOSE, 0, {}}); }
-void put_int(Sig& s, i64 v) { Atom a{Atom::INT, 0, {}}; a.i = v; s.push_back(a); }
-void put_bytes(Sig& s, const Bytes& b) { Atom a{Atom::BYTES, 0, {}}; a.b = b; s.push_back(a); }
-void put_str(Sig& s, const std::string& b) { Atom a{Atom::STR, 0, {}}; a.b = b; s.push_back(a); }
 
 }  // namespace
-
-Sig sig_of(const Rtti& r) {
-  Sig s;
-  if (!r.present) { s.push_back(Atom{Atom::NONE, 0, {}}); return s; }
-  open(s);
-  if (r.bad_sig) { put_str(s, "sig"); put_int(s, r.sig); close(s); return s; }
-  put_int(s, r.off); put_int(s, r.cdoff); put_bytes(s, r.name); put_int(s, r.attrs);
-  open(s);
-  for (auto& b : r.bases) {
-    open(s);
-    put_bytes(s, b.name); put_int(s, b.ncont); put_int(s, b.mdisp); put_int(s, b.pdisp); put_int(s, b.vdisp); put_int(s, b.attr);
-    close(s);
-  }
-  close(s);
-  close(s);
-  return s;
-}
-
-Sig sig_of(const ThrowInfoSig& t) {
-  Sig s;
-  open(s);
-  put_int(s, t.attrs);
-  for (auto& c : t.types) {
-    open(s);
-    put_int(s, c.props); put_bytes(s, c.name); put_int(s, c.mdisp); put_int(s, c.pdisp); put_int(s, c.vdisp); put_int(s, c.size);
-    close(s);
-  }
-  close(s);
-  return s;
-}
-
-Sig sig_of_bytes(const Bytes& b) { Sig s; put_bytes(s, b); return s; }
 
 Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res, std::map<u64, std::vector<u64>> vt,
                    std::unordered_map<u64, std::string> nm)
@@ -133,20 +91,14 @@ Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res, 
   rebuilt_code = [this](u64 s, u64 e) { return std::make_shared<const Code>(*R, s, e); };
 }
 
-bool Comparer::same_names(const Sig& a, const Sig& b) {
-  if (a.size() != b.size()) return false;
-  std::vector<std::pair<Bytes, Bytes>> pairs;
-  for (size_t i = 0; i < a.size(); ++i) {
-    const Atom &x = a[i], &y = b[i];
-    if (x.t == Atom::BYTES && y.t == Atom::BYTES) {
-      std::vector<Bytes> px, hx, py, hy;
-      split_hashes(x.b, px, hx);
-      split_hashes(y.b, py, hy);
-      if (px != py || hx.size() != hy.size()) return false;
-      for (size_t k = 0; k < hx.size(); ++k) pairs.emplace_back(hx[k], hy[k]);
-    } else if (!(x == y)) {
-      return false;
-    }
+bool Comparer::same_names(const NamePairs& names) {
+  std::vector<std::pair<Bytes, Bytes>> pairs;   // (original hash, rebuilt hash)
+  for (auto& [x, y] : names) {
+    std::vector<Bytes> px, hx, py, hy;
+    split_hashes(x, px, hx);
+    split_hashes(y, py, hy);
+    if (px != py || hx.size() != hy.size()) return false;
+    for (size_t k = 0; k < hx.size(); ++k) pairs.emplace_back(hx[k], hy[k]);
   }
   std::unordered_map<std::string, std::string> new_o, new_r;
   for (auto& [o, r] : pairs) {
@@ -161,12 +113,36 @@ bool Comparer::same_names(const Sig& a, const Sig& b) {
     new_r[r] = o;
     new_o[o] = r;
   }
-  // update in pair order: the maps' content does not depend on it
   for (auto& [o, r] : pairs) {
     if (new_r.count(r)) hash_r.set(r, new_r[r]);
     if (new_o.count(o)) hash_o.set(o, new_o[o]);
   }
   return true;
+}
+
+bool Comparer::same_rtti(const Rtti& a, const Rtti& b) {
+  if (a.present != b.present) return false;
+  if (!a.present) return true;
+  if (a.bad_sig || b.bad_sig) return a.bad_sig == b.bad_sig && a.sig == b.sig;
+  if (a.off != b.off || a.cdoff != b.cdoff || a.attrs != b.attrs || a.bases.size() != b.bases.size()) return false;
+  NamePairs names{{a.name, b.name}};
+  for (size_t i = 0; i < a.bases.size(); ++i) {
+    const BaseDesc &x = a.bases[i], &y = b.bases[i];
+    if (x.ncont != y.ncont || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.attr != y.attr) return false;
+    names.emplace_back(x.name, y.name);
+  }
+  return same_names(names);
+}
+
+bool Comparer::same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b) {
+  if (a.attrs != b.attrs || a.types.size() != b.types.size()) return false;
+  NamePairs names;
+  for (size_t i = 0; i < a.types.size(); ++i) {
+    const CatchableSig &x = a.types[i], &y = b.types[i];
+    if (x.props != y.props || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.size != y.size) return false;
+    names.emplace_back(x.name, y.name);
+  }
+  return same_names(names);
 }
 
 std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
@@ -209,8 +185,8 @@ bool Comparer::static_fits(u64 o_base, u64 base) {
     u64 off = R->reloc_sorted[k] - base;
     if (!O->has_reloc(o_base + off)) return false;
     i64 m = std::min<i64>(8, n - i64(off));
-    zero_slice(a, i64(off), i64(off) + 8, m);
-    zero_slice(b, i64(off), i64(off) + 8, m);
+    mask(a, i64(off), i64(off) + m);
+    mask(b, i64(off), i64(off) + m);
   }
   return a == b;
 }
@@ -284,7 +260,7 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
     return std::nullopt;
   }
   if (key.kind == Key::TD) {
-    bool same = same_names(sig_of_bytes(type_name(*O, o_at)), sig_of_bytes(type_name(*R, r_at)));
+    bool same = same_names({{type_name(*O, o_at), type_name(*R, r_at)}});
     if (same) return std::nullopt;
     return Problem{"reference", hex(o_t) + " vs " + key.name};
   }
@@ -326,8 +302,8 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
   }
   for (i64 off : ptrs) {
     i64 lo = std::max<i64>(off, 0), hi = std::min<i64>(off + 8, n);
-    zero_slice(a, lo, hi, hi - lo);
-    zero_slice(b, lo, hi, hi - lo);
+    mask(a, lo, hi);
+    mask(b, lo, hi);
   }
   if (a != b) return Problem{"data", std::to_string(n) + " bytes at " + hex(o_t) + " differ"};
   for (i64 off : ptrs) {
@@ -335,8 +311,7 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
     if (infer_data(o_p, r_p)) continue;
     auto p = ref(o_p, r_p, 0);
     if (p) {
-      // f"+0x{off:x}" (a negative offset prints as "+0x-5")
-      std::string offs = off < 0 ? "+0x-" + hex(u64(-off)).substr(2) : "+" + hex(u64(off));
+      std::string offs = off < 0 ? hex_signed(off) : "+" + hex(u64(off));
       return Problem{p->first, "pointer at " + hex(o_t) + offs + ": " + p->second};
     }
   }
@@ -359,8 +334,8 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
   for (i64 off : ptrs) if (off < size) kept.push_back(off);
   Bytes a(O->bytes(o_t, size)), b(R->bytes(r_t, size));
   for (i64 off : kept) {
-    zero_slice(a, off, off + 8, 8);
-    zero_slice(b, off, off + 8, 8);
+    mask(a, off, off + 8);
+    mask(b, off, off + 8);
   }
   std::optional<Problem> res;
   std::string what = (O->writable(o_t) || R->writable(r_t)) ? "initial data" : "read-only data";
@@ -400,7 +375,7 @@ bool Comparer::infer_data(u64 o_t, u64 r_t) {
 
 std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, const std::string& name) {
   ThrowInfoSig os = throw_info(*O, o_t), rs = throw_info(*R, r_t);
-  if (!same_names(sig_of(os), sig_of(rs))) return Problem{"reference", hex(o_t) + " vs " + name + ": catchable types differ"};
+  if (!same_catchables(os, rs)) return Problem{"reference", hex(o_t) + " vs " + name + ": catchable types differ"};
   for (size_t i = 0; i < std::min(os.funcs.size(), rs.funcs.size()); ++i) {
     u64 a = os.funcs[i], b = rs.funcs[i];
     if (bool(a) != bool(b)) return Problem{"reference", hex(o_t) + " vs " + name + ": function " + hex(a) + " vs " + hex(b)};
@@ -430,7 +405,7 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
                                 (got.kind != Key::VA ? got.name : hex(got.va))};
     break;
   }
-  if (!res && !same_names(sig_of(rtti(*O, O->u64_at(o_vt - 8))), sig_of(rtti(*R, R->u64_at(r_vt - 8)))))
+  if (!res && !same_rtti(rtti(*O, O->u64_at(o_vt - 8)), rtti(*R, R->u64_at(r_vt - 8))))
     res = Problem{"vtable", "RTTI of " + hex(o_vt) + " differs"};
   memo_vt.set(k, res);
   return res;
@@ -461,14 +436,14 @@ Comparer::CodeResult Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) 
     if (!same_layout) { probs.push_back({"encoding", enc()}); continue; }
     Bytes ba(a.bytes()), bb(b.bytes());
     for (auto& f : fa) {
-      zero_slice(ba, f.off, f.off + f.size, f.size);
-      zero_slice(bb, f.off, f.off + f.size, f.size);
+      mask(ba, f.off, f.off + f.size);
+      mask(bb, f.off, f.off + f.size);
     }
     if (ba != bb) { probs.push_back({"encoding", enc()}); continue; }
     for (size_t z = 0; z < fa.size(); ++z) {
       if (fa[z].kind == F_TBL) {
         if (fa[z].value != fb[z].value)
-          probs.push_back({"encoding", "@" + std::to_string(k) + ": table offset " + shex(fa[z].value) + " vs " + shex(fb[z].value)});
+          probs.push_back({"encoding", "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) + " vs " + hex_signed(fb[z].value)});
         continue;
       }
       auto p = ref(u64(fa[z].value), u64(fb[z].value), fa[z].access);
@@ -573,7 +548,7 @@ class EHContext {
       i32 rdisp = R->i32_at(r + 8), rframe = R->i32_at(r + 16);
       if (oadj != radj || odisp != rdisp || oframe != rframe) { probs.push_back({"eh", "catch handler " + std::to_string(i) + " differs"}); continue; }
       if ((otd == 0) != (rtd == 0) ||
-          (otd && !c->same_names(sig_of_bytes(type_name(*O, O->base + otd)), sig_of_bytes(type_name(*R, R->base + rtd))))) {
+          (otd && !c->same_names({{type_name(*O, O->base + otd), type_name(*R, R->base + rtd)}}))) {
         probs.push_back({"eh", "catch type " + std::to_string(i) + " differs"});
         continue;
       }
