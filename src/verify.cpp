@@ -50,7 +50,14 @@ Value str_list(const std::vector<std::string>& v) {
   return a;
 }
 
-std::string where_of(const std::string& path, const std::string& root) { return relpath(path, root); }
+// a source path as the report gives it (relative to the root); many annotations share a file
+const std::string& where_of(const std::string& path, const std::string& root) {
+  static std::unordered_map<std::string, std::string> memo;
+  std::string key = root + '\0' + path;
+  auto it = memo.find(key);
+  if (it == memo.end()) it = memo.emplace(std::move(key), relpath(path, root)).first;
+  return it->second;
+}
 
 }  // namespace
 
@@ -93,7 +100,7 @@ json::Value evaluate(const Annotation& ann, const Original& orig, const Rebuilt&
       if (rops[z].k == Op::CONST && oops[z].k == Op::MSYM) {
         Op c{};
         c.k = Op::CONST;
-        c.base = hex_bytes(orig.img.bytes(oops[z].key.va, i64(rops[z].base.size() / 2)));
+        c.hex = hex_bytes(orig.img.bytes(oops[z].key.va, i64(rops[z].hex.size() / 2)));
         oops[z] = c;
       }
     }

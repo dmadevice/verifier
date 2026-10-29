@@ -267,12 +267,12 @@ Problems bad_if(bool bad, const std::string& cat, const std::string& why) { retu
 
 Op opm(const char* base, i64 disp, int size) {
   Op o{};
-  o.k = Op::M; o.base = base; o.scale = 1; o.v = disp; o.size = size;
+  o.k = Op::M; o.base = reg_named(base); o.scale = 1; o.v = disp; o.size = size;
   return o;
 }
 Op opi(i64 v) { Op o{}; o.k = Op::I; o.v = v; return o; }
 Op opsym(Key k) { Op o{}; o.k = Op::SYM; o.key = std::move(k); return o; }
-Op opr(const char* r) { Op o{}; o.k = Op::R; o.base = r; return o; }
+Op opr(const char* r) { Op o{}; o.k = Op::R; o.base = reg_named(r); return o; }
 Op oprel(i64 v) { Op o{}; o.k = Op::REL; o.v = v; return o; }
 
 Problems category(i64 rimm, u64 rtarget, bool branch) {

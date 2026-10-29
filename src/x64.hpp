@@ -69,6 +69,7 @@ class Mnem {
  public:
   Mnem() : s_(empty()) {}
   explicit Mnem(std::string_view s) : s_(&intern(s)) {}
+  Mnem(const char* s) : s_(&intern(s)) {}
   const std::string& str() const { return *s_; }
   operator const std::string&() const { return *s_; }
   operator std::string_view() const { return *s_; }
@@ -107,6 +108,8 @@ struct Insn {
 };
 
 const char* reg_name(u16 reg);       // a register's name ("" for none)
+u16 reg_canon(u16 reg);              // the first register id seen with this register's name (0 for none)
+u16 reg_named(std::string_view name); // the canonical id of the general-purpose register with this name (0 if none)
 u16 reg_rip();
 
 // An address field of an instruction: (offset in instruction, size, kind, value, access size)

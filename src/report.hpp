@@ -10,21 +10,23 @@
 namespace verifier {
 
 // One symbolised operand:
-//   r(name) i(imm) rel(off) sym(key) msym(key, size) const(hex) tbl(base, index, scale, off, size)
+//   r(reg) i(imm) rel(off) sym(key) msym(key, size) const(hex) tbl(base, index, scale, off, size)
 //   m(base, index, scale, disp, size, seg)
+// Registers are canonical ids (reg_canon): equal exactly when their names are.
 struct Op {
   enum K : u8 { R, I, REL, SYM, MSYM, CONST, TBL, M } k;
-  std::string base, index, seg;   // R: base = name; CONST: base = hex
-  Key key;                        // SYM, MSYM (kind IMP for imports)
-  i64 v = 0;                      // I: imm; REL: offset; TBL: offset; M: disp
+  u16 base = 0, index = 0, seg = 0;   // R: base = the register
+  std::string hex;                    // CONST: the bytes in hex
+  Key key;                            // SYM, MSYM (kind IMP for imports)
+  i64 v = 0;                          // I: imm; REL: offset; TBL: offset; M: disp
   int scale = 0, size = 0;
   bool operator==(const Op& o) const {
-    return k == o.k && base == o.base && index == o.index && seg == o.seg && key == o.key && v == o.v &&
+    return k == o.k && base == o.base && index == o.index && seg == o.seg && hex == o.hex && key == o.key && v == o.v &&
            scale == o.scale && size == o.size;
   }
 };
 struct Tok {
-  std::string mnemonic;
+  Mnem mnemonic;
   std::vector<Op> ops;
   bool operator==(const Tok& o) const { return mnemonic == o.mnemonic && ops == o.ops; }
 };

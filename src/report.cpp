@@ -42,11 +42,12 @@ Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::functi
   u16 rip = reg_rip();
   for (auto& ins : insns) {
     Tok tok{ins.mnemonic, {}};
+    tok.ops.reserve(ins.ops.size());
     for (auto& op : ins.ops) {
       Op o{};
       if (op.type == OP_REG) {
         o.k = Op::R;
-        o.base = reg_name(op.reg);
+        o.base = reg_canon(op.reg);
       } else if (op.type == OP_IMM) {
         if (ins.branches()) {
           i64 t = op.imm;
@@ -57,13 +58,12 @@ Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::functi
           o.v = op.imm;
         }
       } else if (op.type == OP_MEM) {
-        std::string seg = op.mem.segment ? reg_name(op.mem.segment) : "";
         if (op.mem.base == rip) {
           u64 t = ins.address + ins.size + u64(op.mem.disp);
           Key r = resolve(t);
           if (const_by_value && r.kind == Key::CONST) {
             o.k = Op::CONST;
-            o.base = hex_bytes(img.bytes(t, op.size ? op.size : 4));
+            o.hex = hex_bytes(img.bytes(t, op.size ? op.size : 4));
           } else {
             o.k = Op::MSYM;
             o.key = r;
@@ -71,19 +71,19 @@ Toks symbolise(const std::vector<Insn>& insns, u64 lo, u64 hi, const std::functi
           }
         } else if (flo <= op.mem.disp && op.mem.disp < fhi + i64(TABLE_SLACK) && op.mem.index) {
           o.k = Op::TBL;
-          o.base = op.mem.base ? reg_name(op.mem.base) : "";
-          o.index = reg_name(op.mem.index);
+          o.base = reg_canon(op.mem.base);
+          o.index = reg_canon(op.mem.index);
           o.scale = op.mem.scale;
           o.v = op.mem.disp - flo;
           o.size = op.size;
         } else {
           o.k = Op::M;
-          o.base = op.mem.base ? reg_name(op.mem.base) : "";
-          o.index = op.mem.index ? reg_name(op.mem.index) : "";
+          o.base = reg_canon(op.mem.base);
+          o.index = reg_canon(op.mem.index);
           o.scale = op.mem.scale;
           o.v = op.mem.disp;
           o.size = op.size;
-          o.seg = seg;
+          o.seg = reg_canon(op.mem.segment);
         }
       } else {
         continue;
@@ -107,29 +107,29 @@ std::string tok_text(const Tok& tok, const std::unordered_map<u64, std::string>&
   std::vector<std::string> ops;
   for (auto& op : tok.ops) {
     switch (op.k) {
-      case Op::R: ops.push_back(op.base); break;
+      case Op::R: ops.push_back(reg_name(op.base)); break;
       case Op::I: ops.push_back(hex_signed(op.v)); break;
       case Op::REL: ops.push_back("<+" + hex_signed(op.v) + ">"); break;   // an offset into the function
       case Op::SYM: ops.push_back(target(op.key)); break;
       case Op::MSYM: ops.push_back(sized(op.size, "[" + target(op.key) + "]")); break;
-      case Op::CONST: ops.push_back("[const " + op.base.substr(0, 16) + "]"); break;
+      case Op::CONST: ops.push_back("[const " + op.hex.substr(0, 16) + "]"); break;
       case Op::TBL:
-        ops.push_back(sized(op.size, "[table+" + hex_signed(op.v) + " + " + op.index + "*" + std::to_string(op.scale) + "]"));
+        ops.push_back(sized(op.size, "[table+" + hex_signed(op.v) + " + " + reg_name(op.index) + "*" + std::to_string(op.scale) + "]"));
         break;
       case Op::M: {
-        std::string addr = op.base;
-        std::string idx = op.index.empty() ? "" : op.index + "*" + std::to_string(op.scale);
+        std::string addr = reg_name(op.base);
+        std::string idx = op.index ? reg_name(op.index) + ("*" + std::to_string(op.scale)) : "";
         if (!idx.empty()) addr = addr.empty() ? idx : addr + "+" + idx;
         if (op.v || addr.empty()) {
           std::string sign = op.v < 0 ? "-" : (addr.empty() ? "" : "+");
           addr += sign + hex(u64(op.v < 0 ? -op.v : op.v));
         }
-        ops.push_back(sized(op.size, (op.seg.empty() ? "" : op.seg + ":") + "[" + addr + "]"));
+        ops.push_back(sized(op.size, (op.seg ? reg_name(op.seg) + std::string(":") : "") + "[" + addr + "]"));
         break;
       }
     }
   }
-  return ops.empty() ? tok.mnemonic : tok.mnemonic + " " + join(ops, ", ");
+  return ops.empty() ? tok.mnemonic.str() : tok.mnemonic + " " + join(ops, ", ");
 }
 
 std::string classify(const Toks& a, const Toks& b) {
@@ -139,7 +139,7 @@ std::string classify(const Toks& a, const Toks& b) {
     return n;
   };
   if (ncalls(a) != ncalls(b)) return "inlining";
-  std::vector<std::string> ma, mb;
+  std::vector<std::string_view> ma, mb;
   for (auto& t : a) ma.push_back(t.mnemonic);
   for (auto& t : b) mb.push_back(t.mnemonic);
   if (ma == mb) {
@@ -332,13 +332,13 @@ std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vecto
   // tokens as small ints (equal exactly when the tokens are), branch targets inside the function left open ("rel",)
   struct WildHash {
     size_t operator()(const Tok* t) const {
-      size_t h = std::hash<std::string>()(t->mnemonic);
+      size_t h = std::hash<const void*>()(&t->mnemonic.str());
       auto mix = [&](size_t x) { h ^= x + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
       for (auto& o : t->ops) {
         mix(o.k);
         if (o.k == Op::REL) continue;
-        mix(std::hash<std::string>()(o.base));
-        mix(std::hash<std::string>()(o.index));
+        mix(size_t(o.base) << 32 | size_t(o.index) << 16 | o.seg);
+        mix(std::hash<std::string>()(o.hex));
         mix(std::hash<std::string>()(o.key.name));
         mix(size_t(o.key.va));
         mix(size_t(o.v));
@@ -382,41 +382,42 @@ std::vector<std::string> insn_diff(const std::vector<Insn>& oi, const std::vecto
     }
     return true;
   };
-  struct Entry { char mark; std::string text; size_t at; };
+  // the text of an entry is made only for the lines kept: tok is ot[tok] for ' ' and '-', rt[tok] for '+'
+  struct Entry { char mark; size_t tok, at; };
   std::vector<Entry> entries;
   for (auto& o : ops) {
     if (o.tag == 'e') {
       for (size_t i = o.i1, j = o.j1; i < o.i2; ++i, ++j) {
         if (same_targets(i, j)) {
-          entries.push_back({' ', tok_text(ot[i], names), i});
+          entries.push_back({' ', i, i});
         } else {
-          entries.push_back({'-', tok_text(ot[i], names), i});
-          entries.push_back({'+', tok_text(rt[j], names), i});
+          entries.push_back({'-', i, i});
+          entries.push_back({'+', j, i});
         }
       }
     } else {
-      for (size_t i = o.i1; i < o.i2; ++i) entries.push_back({'-', tok_text(ot[i], names), i});
-      for (size_t j = o.j1; j < o.j2; ++j) entries.push_back({'+', tok_text(rt[j], names), o.i1});
+      for (size_t i = o.i1; i < o.i2; ++i) entries.push_back({'-', i, i});
+      for (size_t j = o.j1; j < o.j2; ++j) entries.push_back({'+', j, o.i1});
     }
   }
-  std::set<size_t> keep;
+  std::vector<bool> keep(entries.size());
   for (size_t c = 0; c < entries.size(); ++c) {
     if (entries[c].mark == ' ') continue;
     size_t lo = c >= size_t(context) ? c - size_t(context) : 0, hi = std::min(entries.size(), c + size_t(context) + 1);
-    for (size_t k = lo; k < hi; ++k) keep.insert(k);
+    for (size_t k = lo; k < hi; ++k) keep[k] = true;
   }
+  // lines past the limit are only counted
   std::vector<std::string> out;
+  size_t lines = 0;
   long prev = -2;
-  for (size_t k : keep) {
-    if (long(k) != prev + 1) out.push_back("@" + std::to_string(entries[k].at));
-    out.push_back(std::string(1, entries[k].mark) + " " + entries[k].text);
+  for (size_t k = 0; k < entries.size(); ++k) {
+    if (!keep[k]) continue;
+    const Entry& e = entries[k];
+    if (long(k) != prev + 1 && lines++ < limit) out.push_back("@" + std::to_string(e.at));
+    if (lines++ < limit) out.push_back(std::string(1, e.mark) + " " + tok_text(e.mark == '+' ? rt[e.tok] : ot[e.tok], names));
     prev = long(k);
   }
-  if (out.size() > limit) {
-    size_t more = out.size() - limit;
-    out.resize(limit);
-    out.push_back("... " + std::to_string(more) + " more lines");
-  }
+  if (lines > limit) out.push_back("... " + std::to_string(lines - limit) + " more lines");
   return out;
 }
 

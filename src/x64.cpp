@@ -313,6 +313,23 @@ const char* reg_name(u16 reg) {
   }
   return it->second.c_str();
 }
+u16 reg_canon(u16 reg) {
+  static std::unordered_map<u16, u16> canon;
+  static std::unordered_map<std::string_view, u16> by_name;
+  if (!reg) return 0;
+  auto it = canon.find(reg);
+  if (it == canon.end()) it = canon.emplace(reg, by_name.emplace(reg_name(reg), reg).first->second).first;
+  return it->second;
+}
+u16 reg_named(std::string_view name) {
+  for (unsigned idx = 0; idx <= FD_REG_IP; ++idx)
+    for (unsigned sizelg = 0; sizelg < 4; ++sizelg) {
+      char buf[16] = {};
+      fd_format_reg(FD_RT_GPL, FdReg(idx), sizelg, buf);
+      if (name == buf) return reg_canon(make_reg(FD_RT_GPL, idx, sizelg));
+    }
+  return 0;
+}
 u16 reg_rip() { return make_reg(FD_RT_GPL, FD_REG_IP, 3); }
 int gpr_index(u16 reg) {
   if (!reg) return -1;
