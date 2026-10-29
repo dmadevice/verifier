@@ -41,6 +41,7 @@ struct Args {
 // the --check replay key: the verifier (the executable's hash), its arguments and every file it reads
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier);
 
+// the command line: exits the process when it has run (without freeing what it built); returns early only for a replay
 int run(int argc, char** argv);
 
 }  // namespace verifier

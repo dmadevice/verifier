@@ -550,7 +550,9 @@ int run(int argc, char** argv) {
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
   if (!last.empty()) save_last(last, key, out.text(), report, rc);
-  return rc;
+  // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
+  std::fflush(nullptr);
+  std::_Exit(rc);
 }
 
 }  // namespace verifier
