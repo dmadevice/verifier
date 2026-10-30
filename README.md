@@ -152,5 +152,11 @@ hashing, the stamp key, file reading, line splitting and the name table. `ctest`
 
 ## Performance
 
-On a 20 MB binary with 5,500 annotated functions, a run takes about 0.5 to 0.7 seconds and 85 MB on one
-core (with the undname cache and the exports snapshot warm).
+On a 12 MB binary with 5,800 annotated functions, a run takes about 0.5 seconds on one core (with the
+name cache and the snapshot warm), and a replay of unchanged inputs about 15 ms.
+
+## License
+
+MIT: see [LICENSE](LICENSE). The build fetches and statically links [fadec](https://github.com/aengelke/fadec),
+which is under the BSD 3-Clause license: a distributed binary must carry fadec's copyright notice and license
+(its `LICENSE`) as well.
