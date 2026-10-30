@@ -152,8 +152,8 @@ hashing, the stamp key, file reading, line splitting and the name table. `ctest`
 
 ## Performance
 
-On a 12 MB binary with 5,800 annotated functions, a run takes about 0.5 seconds on one core (with the
-name cache and the snapshot warm), and a replay of unchanged inputs about 15 ms.
+On a 12 MB binary with 5,800 annotated functions, a run takes about 0.5 seconds and 80 MB on one core
+(with the name cache and the snapshot warm), and a replay of unchanged inputs about 15 ms.
 
 ## License
 
