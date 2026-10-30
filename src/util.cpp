@@ -15,6 +15,7 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace verifier {
@@ -85,7 +86,12 @@ bool file_exists(const std::string& path) {
 }
 
 bool write_file_atomic(const std::string& path, std::string_view data) {
-  std::string tmp = path + ".tmp";
+  // one temporary file per process: several runs may rewrite the same cache at once
+#ifdef _WIN32
+  std::string tmp = path + "." + std::to_string(GetCurrentProcessId()) + ".tmp";
+#else
+  std::string tmp = path + "." + std::to_string(getpid()) + ".tmp";
+#endif
   {
     std::ofstream f(tmp, std::ios::binary);
     if (!f) return false;

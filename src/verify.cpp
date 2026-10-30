@@ -12,7 +12,10 @@
 
 #include <chrono>
 #ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#undef CONST   // windows.h defines it; Op::CONST is ours
 #else
 #include <malloc.h>
 #include <sys/resource.h>
