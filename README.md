@@ -114,8 +114,9 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs --json ou
 - `--matched FILE`: the regression list, functions that must keep matching. `--check` exits 1 when one no
   longer matches (or on `LIBCODE`); `--update` adds the new matches to it (and refuses while something
   regressed).
-- A `--check` run with `--json` keeps its output beside the report; the next run with identical inputs
-  (arguments, binaries, map, sources, configuration and every input file) replays it instantly.
+- A run keeps its output, report and exit status beside the rebuilt binary (`verifier-last.txt`); the next
+  run with identical inputs (arguments, binaries, map, sources, configuration and every input file) replays
+  it instantly. `--update` and `--show` runs neither keep nor replay one.
 
 Output: one line per annotated function (status, address, original/rebuilt size, category, name; for a DIFF
 the first differing instruction or problem), warnings for read-only `GLOBAL`s whose bytes are not the

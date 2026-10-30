@@ -468,9 +468,9 @@ class Phases {
   std::chrono::steady_clock::time_point t_;
 };
 
-// -- --check replay: the last --check run's output, report and exit status, keyed by everything it read ------
+// -- replay: the last run's output, report and exit status, keyed by everything it read ------------------------
 
-constexpr const char* LAST_RUN = "verifier-last.txt";
+constexpr const char* LAST_RUN = "verifier-last.txt";   // beside the rebuilt image
 
 }  // namespace
 
@@ -555,7 +555,9 @@ int run(int argc, char** argv) {
   Args a = parse_args(argc, argv);
   Config p = Config::load(a.config);
   std::string last;
-  if (a.json && a.check && !(a.update || a.show)) last = path_join(dirname(abspath(*a.json)), LAST_RUN);
+  // every run but --update (which writes the regression list and the name cache) and --show (a look at one function)
+  // keeps a record; its key holds the arguments, so a record is only replayed for the same command
+  if (!(a.update || a.show)) last = path_join(dirname(abspath(a.rebuilt)), LAST_RUN);
   Phases ph;
   // each file is hashed once: the replay key, the original's check and the name cache's key share them
   std::unordered_map<std::string, std::string> hashes;   // "" for an absent file
@@ -585,7 +587,7 @@ int run(int argc, char** argv) {
     if (load_last(last, hash_if_present(a.rebuilt), walk_key, out, report, rc)) {
       std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
       std::fwrite(out.data(), 1, out.size(), stdout);
-      std::ofstream(*a.json, std::ios::binary) << report;
+      if (a.json) std::ofstream(*a.json, std::ios::binary) << report;
       std::fflush(stdout);
       return rc;
     }
