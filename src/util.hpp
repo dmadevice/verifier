@@ -22,6 +22,9 @@ using Bytes = std::string;   // raw bytes
 
 std::string read_file(const std::string& path);   // throws on error
 bool file_exists(const std::string& path);
+// a file's identity by its metadata: its path, size and modification time ("-" when it does not exist); the time in
+// the file clock's ticks to *time_out when given (unchanged for an absent file)
+std::string file_stamp(const std::string& path, i64* time_out = nullptr);
 
 // A whole file mapped read-only (an empty view for an empty file), shared with the page cache and other processes
 // instead of copied. The view is valid while the object lives, and the file must not be rewritten in place

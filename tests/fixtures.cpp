@@ -625,9 +625,11 @@ Problems replay_key() {
   write((d / "src" / "sub" / "c.cpp").string(), "// FUNCTION: EXAMPLE 0x10\nvoid f() {}\n");
   std::vector<std::string> seen;
   std::map<std::string, std::string> hashes;
-  parse_annotations(a.src, "EXAMPLE", nullptr, [&](const std::string& f, std::string_view data) {
-    seen.push_back(f);
-    hashes[f] = sha256_hex(data);
+  std::vector<ListedFile> listed;
+  parse_annotations(a.src, "EXAMPLE", nullptr, [&](const ListedFile& f, std::string_view data) {
+    seen.push_back(f.path);
+    listed.push_back(f);
+    hashes[f.path] = sha256_hex(data);
   });
   auto hash = [&](const std::string& f) {
     auto it = hashes.find(f);
@@ -635,6 +637,16 @@ Problems replay_key() {
   };
   if (seen.size() != 3 || run_key(args, a, p, "verifier", seen, hash) != run_key(args, a, p, "verifier"))
     bad.push_back({"replay", "the key from parsing the sources differs from the walked one"});
+  // and the stamps from that listing are the listed ones (an hour old here: none are recent)
+  auto hour_ago = fs::file_time_type::clock::now() - std::chrono::hours(1);
+  for (auto& f : listed) fs::last_write_time(f.path, hour_ago);
+  for (auto* f : {&a.rebuilt, &a.map}) fs::last_write_time(*f, hour_ago);
+  fs::last_write_time(*a.matched, hour_ago);
+  listed.clear();
+  parse_annotations(a.src, "EXAMPLE", nullptr, [&](const ListedFile& f, std::string_view) { listed.push_back(f); });
+  std::string stamps = stamp_key(args, a, p, "");
+  if (stamps.empty() || stamp_key(args, a, p, "", listed, two_seconds_ago()) != stamps)
+    bad.push_back({"replay", "the stamps from parsing the sources differ from the listed ones"});
   // the original: by its contents without a cache, by the snapshot's key (size, time, configured hash) with one
   p.original = (d / "orig.dll").string();
   write(p.original, "1");
@@ -1085,6 +1097,53 @@ Problems sha256_paths() {
   return bad;
 }
 
+// the stamp key: the same for the same metadata, another when a file's time or size or the configuration's contents
+// change, and none while an input is younger than two seconds
+Problems stamp_keys() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-stamps-" + unique_suffix());
+  fs::create_directories(d / "src" / "sub");
+  Problems bad;
+  auto write = [](const fs::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; };
+  auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
+  std::vector<fs::path> files{d / "x.dll", d / "x.map", d / "matched.txt", d / "src" / "a.cpp", d / "src" / "sub" / "b.h",
+                              d / "verifier.exe"};
+  for (auto& f : files) {
+    write(f, "1");
+    fs::last_write_time(f, old);
+  }
+  write(d / "verifier.conf", "a = 1");
+  Args a;
+  a.rebuilt = files[0].string();
+  a.map = files[1].string();
+  a.matched = files[2].string();
+  a.src = {(d / "src").string()};
+  Config p;
+  p.file = (d / "verifier.conf").string();   // by its contents: young or not
+  std::vector<std::string> args{"--check"};
+  std::string exe = files[5].string();
+  std::string key = stamp_key(args, a, p, exe);
+  if (key.empty() || stamp_key(args, a, p, exe) != key) bad.push_back({"stamps", "no key, or another for the same inputs"});
+  fs::last_write_time(files[4], old + std::chrono::seconds(1));
+  std::string touched = stamp_key(args, a, p, exe);
+  if (touched == key || touched.empty()) bad.push_back({"stamps", "a source's time ignored"});
+  write(files[1], "22");
+  fs::last_write_time(files[1], old);
+  if (stamp_key(args, a, p, exe) == touched) bad.push_back({"stamps", "the map's size ignored"});
+  std::string sized = stamp_key(args, a, p, exe);
+  write(d / "verifier.conf", "a = 2");
+  if (stamp_key(args, a, p, exe) == sized) bad.push_back({"stamps", "the configuration's contents ignored"});
+  if (stamp_key({"--check", "--json"}, a, p, exe) == stamp_key(args, a, p, exe)) bad.push_back({"stamps", "the arguments ignored"});
+  write(files[3], "1");   // young: the stamps cannot tell a change within its clock tick
+  if (!stamp_key(args, a, p, exe).empty()) bad.push_back({"stamps", "a key while a source is young"});
+  fs::last_write_time(files[3], old);
+  write(files[0], "1");
+  if (!stamp_key(args, a, p, exe).empty()) bad.push_back({"stamps", "a key while the rebuilt image is young"});
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 // a file's contents read (below 1 MB) or mapped, each the bytes written; absent files and directories are absent
 Problems file_contents() {
   namespace fs = std::filesystem;
@@ -1202,6 +1261,7 @@ int main(int argc, char** argv) {
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
       {"unit: file contents", nullptr, file_contents},
+      {"unit: stamp key", nullptr, stamp_keys},
       {"unit: line splitting", nullptr, line_splitting},
       {"unit: name table", nullptr, name_table},
       {"unit: PE file layout", nullptr, file_layout},

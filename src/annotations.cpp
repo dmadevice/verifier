@@ -6,9 +6,16 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <map>
 
 #include "names.hpp"
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 namespace verifier {
 
@@ -20,25 +27,76 @@ std::optional<std::string> sig_flag(const AnnotationFlags& flags) {
   return flags.sig;
 }
 
-std::vector<std::string> walk_files(const std::string& root) {
+namespace {
+
+// the files under root in walk_files' order (a link to a directory is a file), with their sizes and times when
+// `stamps`: on Windows from the listing itself (FindFirstFileEx gives every entry's), elsewhere a stat each
+void walk(const std::string& root, bool stamps, std::vector<ListedFile>& out) {
+  std::vector<ListedFile> files;   // by name, until joined to root
+  std::vector<std::string> dirs;
+#ifdef _WIN32
+  (void)stamps;
+  WIN32_FIND_DATAW d;
+  HANDLE h = FindFirstFileExW((std::filesystem::path(root) / L"*").c_str(), FindExInfoBasic, &d, FindExSearchNameMatch,
+                              nullptr, FIND_FIRST_EX_LARGE_FETCH);
+  if (h == INVALID_HANDLE_VALUE) return;   // no such directory
+  do {
+    if (!wcscmp(d.cFileName, L".") || !wcscmp(d.cFileName, L"..")) continue;
+    std::string name = std::filesystem::path(d.cFileName).string();
+    bool link = (d.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && d.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+    if ((d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !link) {
+      dirs.push_back(std::move(name));
+      continue;
+    }
+    // the file clock's ticks are FILETIME's (100 ns since 1601)
+    files.push_back({std::move(name), (u64(d.nFileSizeHigh) << 32) | d.nFileSizeLow,
+                     i64((u64(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime)});
+  } while (FindNextFileW(h, &d));
+  FindClose(h);
+#else
   namespace fs = std::filesystem;
-  std::vector<std::string> out;
   std::error_code ec;
-  if (!fs::is_directory(root, ec)) return out;
-  std::vector<std::string> files, dirs;
+  if (!fs::is_directory(root, ec)) return;
   for (auto it = fs::directory_iterator(root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
     std::error_code e2;
-    bool d = it->is_directory(e2) && !it->is_symlink(e2);
     std::string name = it->path().filename().string();
-    (d ? dirs : files).push_back(name);
+    if (it->is_directory(e2) && !it->is_symlink(e2)) {
+      dirs.push_back(std::move(name));
+      continue;
+    }
+    ListedFile f{std::move(name)};
+    if (stamps) {
+      f.size = it->file_size(e2);
+      if (e2) f.size = u64(-1);
+      auto time = it->last_write_time(e2);
+      f.time = e2 ? std::numeric_limits<i64>::max() : i64(time.time_since_epoch().count());   // unknown: recent
+    }
+    files.push_back(std::move(f));
   }
-  std::sort(files.begin(), files.end());
+#endif
+  std::sort(files.begin(), files.end(), [](auto& x, auto& y) { return x.path < y.path; });
   std::sort(dirs.begin(), dirs.end());
-  for (auto& f : files) out.push_back(path_join(root, f));
-  for (auto& d : dirs) {
-    auto sub = walk_files(path_join(root, d));
-    out.insert(out.end(), sub.begin(), sub.end());
+  for (auto& f : files) {
+    f.path = path_join(root, f.path);
+    out.push_back(std::move(f));
   }
+  for (auto& sub : dirs) walk(path_join(root, sub), stamps, out);
+}
+
+}  // namespace
+
+std::vector<std::string> walk_files(const std::string& root) {
+  std::vector<ListedFile> files;
+  walk(root, false, files);
+  std::vector<std::string> out;
+  out.reserve(files.size());
+  for (auto& f : files) out.push_back(std::move(f.path));
+  return out;
+}
+
+std::vector<ListedFile> list_files(const std::string& root) {
+  std::vector<ListedFile> out;
+  walk(root, true, out);
   return out;
 }
 
@@ -83,15 +141,19 @@ bool match_annotation(std::string_view line, const std::string& module, std::str
 
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
                                           std::vector<Ignored>* ignored,
-                                          const std::function<void(const std::string&, std::string_view)>& seen) {
+                                          const std::function<void(const ListedFile&, std::string_view)>& seen) {
   std::vector<Annotation> out;
   for (auto& root : roots) {
-    for (auto& path : walk_files(root)) {
+    std::vector<ListedFile> files;
+    if (seen) files = list_files(root);
+    else for (auto& f : walk_files(root)) files.push_back({std::move(f)});
+    for (auto& file : files) {
+      const std::string& path = file.path;
       bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
                     ends_with(path, ".inl");
       if (!source && !seen) continue;
       std::string data = read_file(path);
-      if (seen) seen(path, data);
+      if (seen) seen(file, data);
       if (!source || data.find(module) == std::string::npos) continue;   // no annotation of this module here
       std::string_view kept_path = keep_text(path);
       std::vector<std::string_view> lines;

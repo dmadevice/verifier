@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -509,23 +510,98 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
   return run_key(args, a, p, verifier, sources, sha256_file_if_present);
 }
 
+i64 two_seconds_ago() {
+  namespace fs = std::filesystem;
+  return i64((fs::file_time_type::clock::now() - std::chrono::seconds(2)).time_since_epoch().count());
+}
+
+std::string stamp_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& exe) {
+  std::vector<ListedFile> sources;
+  for (auto& top : a.src)
+    for (auto& f : list_files(top)) sources.push_back(std::move(f));
+  return stamp_key(args, a, p, exe, sources, two_seconds_ago());
+}
+
+std::string stamp_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& exe,
+                      const std::vector<ListedFile>& sources, i64 recent) {
+  Sha256 h;
+  auto add = [&](std::string_view data) {
+    u64 n = data.size();
+    char len[8];
+    std::memcpy(len, &n, 8);
+    h.update(std::string_view(len, 8));
+    h.update(data);
+  };
+  bool racy = false;
+  auto stamp = [&](const std::string& f) {
+    i64 t = std::numeric_limits<i64>::min();   // none for an absent file (the clock's epoch may make times negative)
+    add(f.empty() ? "" : file_stamp(f, &t));
+    racy |= t >= recent;
+  };
+  add("verifier stamps 1");
+  stamp(exe);
+  add(p.root);
+  for (auto& s : args) add(s);
+  add(sha256_file_if_present(p.file));
+  for (auto* f : {&a.rebuilt, &a.map, &p.undname}) stamp(*f);
+  stamp(a.matched.value_or(""));
+  if (p.cache_dir.empty())
+    for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
+                    &p.library_functions, &p.symbols})
+      stamp(*f);
+  else
+    add(Original::snapshot_key(p));
+  for (auto& f : sources) {
+    add(f.path);
+    add(std::to_string(f.size) + "\t" + std::to_string(f.time));
+    racy |= f.time >= recent;
+  }
+  return racy ? "" : h.hexdigest();
+}
+
 namespace {
 
-// the record: a version line, the rebuilt image's SHA-256, the key, the exit status, then stdout and the report, each
-// after its length. A replay needs the same rebuilt image, so that is checked first: the key, which hashes every input,
-// is computed only when it agrees.
-bool load_last(const std::string& path, const std::string& image, const std::function<std::string()>& key, std::string& out,
-               std::string& report, int& rc) {
+// the command: the arguments, the root and the configuration's contents (a record replays only its own command)
+std::string command_key(const std::vector<std::string>& args, const Config& p) {
+  Sha256 h;
+  for (auto& s : args) { h.update(s); h.update(std::string_view("\0", 1)); }
+  h.update(p.root);
+  h.update(std::string_view("\0", 1));
+  h.update(sha256_file_if_present(p.file));
+  return h.hexdigest();
+}
+
+// the record: a version line, the command, the rebuilt image's stamp, all the inputs' stamps ("-" for none), the
+// rebuilt image's SHA-256, the key, the exit status, then stdout and the report, each after its length. Checked in
+// that order: another command does not replay; the stamps, from metadata alone (all of them only when the image's
+// agrees: after a link it does not); when they differ, the image's hash (a replay needs the same image), and only when
+// that agrees the key, which hashes every input.
+struct Last {
+  std::string out, report;
+  int rc = 0;
+  bool by_stamps = false;   // replayed by the stamps (else by the contents: the record's stamps are stale)
+};
+bool load_last(const std::string& path, const std::string& command, const std::string& image_stamp,
+               const std::function<std::string()>& stamps, const std::function<std::string()>& image,
+               const std::function<std::string()>& key, Last& last) {
   if (!file_exists(path)) return false;
   std::unique_ptr<MappedFile> file;   // released before save_last renames a new record over it
   try { file = std::make_unique<MappedFile>(path); } catch (...) { return false; }
   std::string_view d = file->view();
-  std::string head = "verifier-last 2\n" + image + "\n";
-  if (d.compare(0, head.size(), head) != 0) return false;
-  size_t p = head.size();
-  std::string k = key() + "\n";
-  if (d.compare(p, k.size(), k) != 0) return false;
-  p += k.size();
+  size_t p = 0;
+  auto line = [&](std::string_view& v) {
+    size_t e = d.find('\n', p);
+    if (e == std::string_view::npos) return false;
+    v = d.substr(p, e - p);
+    p = e + 1;
+    return true;
+  };
+  std::string_view version, rec_command, rec_image_stamp, rec_stamps, rec_image, rec_key;
+  if (!line(version) || version != "verifier-last 5" || !line(rec_command) || rec_command != command ||
+      !line(rec_image_stamp) || !line(rec_stamps) || !line(rec_image) || !line(rec_key))
+    return false;
+  last.by_stamps = rec_image_stamp == image_stamp && rec_stamps != "-" && rec_stamps == stamps();
+  if (!last.by_stamps && (rec_image != image() || rec_key != key())) return false;
   auto num = [&](u64& v) {
     size_t e = d.find('\n', p);
     if (e == std::string_view::npos) return false;
@@ -535,17 +611,19 @@ bool load_last(const std::string& path, const std::string& image, const std::fun
   };
   u64 r, no, nr;
   if (!num(r) || !num(no) || p + no > d.size()) return false;
-  out = std::string(d.substr(p, no));
+  last.out = std::string(d.substr(p, no));
   p += no;
   if (!num(nr) || p + nr != d.size()) return false;
-  report = std::string(d.substr(p, nr));
-  rc = int(r);
+  last.report = std::string(d.substr(p, nr));
+  last.rc = int(r);
   return true;
 }
 
-void save_last(const std::string& path, const std::string& image, const std::string& key, const std::string& out,
-               const std::string& report, int rc) {
-  write_file_atomic(path, "verifier-last 2\n" + image + "\n" + key + "\n" + std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
+void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
+               const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc) {
+  write_file_atomic(path, "verifier-last 5\n" + command + "\n" + image_stamp + "\n" + (stamps.empty() ? "-" : stamps) + "\n" +
+                              image + "\n" + key + "\n" +
+                              std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
                               std::to_string(report.size()) + "\n" + report);
 }
 
@@ -571,25 +649,40 @@ int run(int argc, char** argv) {
     if (h.empty()) throw std::runtime_error("cannot read " + f);
     return h;
   };
+  std::vector<std::string> args(argv + 1, argv + argc);
+  std::string exe = self_exe();
   auto key_of = [&](const std::vector<std::string>& sources) {
-    std::string exe = self_exe();
-    return run_key(std::vector<std::string>(argv + 1, argv + argc), a, p, exe.empty() ? "" : hash(exe), sources, hash_if_present);
+    return run_key(args, a, p, exe.empty() ? "" : hash(exe), sources, hash_if_present);
   };
-  std::string key;   // computed before the run only when the record's rebuilt image is this one
+  // computed before the run only when the record needs them: the stamps when its image has this one's, the key when
+  // the stamps differ and its image has this one's hash; otherwise from what the run reads (the sources' listing as
+  // they are parsed), against the run's start
+  std::string command, image_stamp, stamps, key;
+  bool stamped = false;
+  i64 start = two_seconds_ago();
   if (!last.empty()) {
-    std::string out, report;
-    int rc;
+    command = command_key(args, p);
+    image_stamp = file_stamp(a.rebuilt);
+    auto stamps_now = [&] {
+      if (!stamped) stamps = stamp_key(args, a, p, exe);
+      stamped = true;
+      return stamps;
+    };
     auto walk_key = [&] {
       std::vector<std::string> sources;
       for (auto& top : a.src) for (auto& f : walk_files(top)) sources.push_back(f);
       return key = key_of(sources);
     };
-    if (load_last(last, hash_if_present(a.rebuilt), walk_key, out, report, rc)) {
+    Last rec;
+    if (load_last(last, command, image_stamp, stamps_now, [&] { return hash_if_present(a.rebuilt); }, walk_key, rec)) {
       std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
-      std::fwrite(out.data(), 1, out.size(), stdout);
-      if (a.json) std::ofstream(*a.json, std::ios::binary) << report;
+      std::fwrite(rec.out.data(), 1, rec.out.size(), stdout);
+      if (a.json) std::ofstream(*a.json, std::ios::binary) << rec.report;
       std::fflush(stdout);
-      return rc;
+      // the same contents under new stamps (a file rewritten as it was): the record takes them, for the next run
+      if (!rec.by_stamps && !stamps_now().empty())
+        save_last(last, command, image_stamp, stamps, hash_if_present(a.rebuilt), key, rec.out, rec.report, rec.rc);
+      return rec.rc;
     }
   }
   if (!last.empty()) ph.mark("replay key");
@@ -599,11 +692,13 @@ int run(int argc, char** argv) {
   std::vector<Ignored> ignored;
   // otherwise the key comes from the sources as they are parsed
   std::vector<std::string> sources;
-  std::function<void(const std::string&, std::string_view)> seen;
+  std::vector<ListedFile> listing;
+  std::function<void(const ListedFile&, std::string_view)> seen;
   if (!last.empty() && key.empty())
-    seen = [&](const std::string& f, std::string_view data) {
-      sources.push_back(f);
-      hashes.emplace(f, sha256_hex(data));
+    seen = [&](const ListedFile& f, std::string_view data) {
+      sources.push_back(f.path);
+      listing.push_back(f);
+      hashes.emplace(f.path, sha256_hex(data));
     };
   auto anns = parse_annotations(a.src, p.module, &ignored, seen);
   check_duplicates(anns);
@@ -676,7 +771,12 @@ int run(int argc, char** argv) {
   if (a.matched && regression_gate(*a.matched, totals.matched, results, a.update, out)) rc = 1;
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
-  if (!last.empty()) save_last(last, hash_if_present(a.rebuilt), key.empty() ? key_of(sources) : key, out.text(), report, rc);
+  if (!last.empty()) {
+    if (!stamped && key.empty()) stamps = stamp_key(args, a, p, exe, listing, start);
+    else if (!stamped) stamps = stamp_key(args, a, p, exe);   // the key came first: no listing was kept
+    save_last(last, command, image_stamp, stamps, hash_if_present(a.rebuilt), key.empty() ? key_of(sources) : key, out.text(),
+              report, rc);
+  }
   // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
   std::fflush(nullptr);
   std::_Exit(rc);

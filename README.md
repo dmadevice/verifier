@@ -116,7 +116,9 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs --json ou
   regressed).
 - A run keeps its output, report and exit status beside the rebuilt binary (`verifier-last.txt`); the next
   run with identical inputs (arguments, binaries, map, sources, configuration and every input file) replays
-  it instantly. `--update` and `--show` runs neither keep nor replay one.
+  it instantly. `--update` and `--show` runs neither keep nor replay one. The inputs are compared by size and
+  modification time first (the configuration by its contents), and by their contents when those differ or
+  when an input changed within two seconds of the run.
 
 Output: one line per annotated function (status, address, original/rebuilt size, category, name; for a DIFF
 the first differing instruction or problem), warnings for read-only `GLOBAL`s whose bytes are not the
@@ -144,9 +146,9 @@ ctest --test-dir build -C Release
 ```
 
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 29 cases in code: pairing (inference taken back when it fails, local
+exact problems it must report, and 34 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key,
-hashing, line splitting and the name table. `ctest` also runs fadec's own decoder tests.
+hashing, the stamp key, file reading, line splitting and the name table. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 

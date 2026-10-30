@@ -199,6 +199,17 @@ void for_each_file_line(const std::string& path, const std::function<void(std::s
   if (!carry.empty()) for_each_line(carry, fn);
 }
 
+std::string file_stamp(const std::string& path, i64* time_out) {
+  std::error_code ec;
+  auto size = std::filesystem::file_size(path, ec);
+  if (ec) return path + "\t-";
+  auto time = std::filesystem::last_write_time(path, ec);
+  if (ec) return path + "\t-";
+  i64 t = i64(time.time_since_epoch().count());
+  if (time_out) *time_out = t;
+  return path + "\t" + std::to_string(size) + "\t" + std::to_string(t);
+}
+
 bool file_exists(const std::string& path) {
   std::error_code ec;
   return std::filesystem::is_regular_file(path, ec);
