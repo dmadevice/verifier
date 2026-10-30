@@ -102,9 +102,12 @@ std::string replace_all(std::string s, std::string_view from, std::string_view t
 std::string lower(std::string s);
 
 // std::string-keyed hash map that also looks up by std::string_view (no temporary strings)
+// a string's hash: the same in every run and on every platform (the name cache's file indexes are built with it),
+// and eight bytes a step
+u64 name_hash(std::string_view s);
 struct SvHash {
   using is_transparent = void;
-  size_t operator()(std::string_view s) const { return std::hash<std::string_view>()(s); }
+  size_t operator()(std::string_view s) const { return size_t(name_hash(s)); }
 };
 template <class V>
 using SvMap = std::unordered_map<std::string, V, SvHash, std::equal_to<>>;
@@ -122,6 +125,7 @@ class NameTable {
  public:
   using Entry = std::pair<std::string_view, u64>;
   void set(std::string_view name, u64 v);   // adds the name, or replaces its value (keeping its place)
+  void reserve(size_t n);                   // room for n names without growing
   const u64* find(std::string_view name) const;
   bool contains(std::string_view name) const { return find(name) != nullptr; }
   size_t size() const { return entries_.size(); }
@@ -132,6 +136,7 @@ class NameTable {
   std::vector<Entry> entries_;
   std::vector<u32> index_;   // entry + 1 (0: empty); a power of two, at least twice the entries
   size_t slot(std::string_view name) const;   // the name's slot, or the empty one where it would go
+  void reindex(size_t at_least);
 };
 
 inline u32 le32(const char* p) { u32 v; std::memcpy(&v, p, 4); return v; }

@@ -328,9 +328,24 @@ std::string_view keep_text(std::string_view s) {
   return *it;
 }
 
+u64 name_hash(std::string_view s) {
+  u64 h = 0x9E3779B97F4A7C15ull ^ s.size();
+  size_t i = 0;
+  for (; i + 8 <= s.size(); i += 8) {
+    u64 w;
+    std::memcpy(&w, s.data() + i, 8);
+    h = (h ^ w) * 0xbf58476d1ce4e5b9ull;
+    h ^= h >> 31;
+  }
+  u64 w = 0;
+  if (i < s.size()) std::memcpy(&w, s.data() + i, s.size() - i);
+  h = (h ^ w) * 0x94d049bb133111ebull;
+  return h ^ (h >> 29);
+}
+
 size_t NameTable::slot(std::string_view name) const {
   size_t mask = index_.size() - 1;
-  size_t i = std::hash<std::string_view>()(name) & mask;
+  size_t i = size_t(name_hash(name)) & mask;
   while (index_[i] && entries_[index_[i] - 1].first != name) i = (i + 1) & mask;
   return i;
 }
@@ -342,18 +357,29 @@ const u64* NameTable::find(std::string_view name) const {
 }
 
 void NameTable::set(std::string_view name, u64 v) {
+  size_t i = 0;
   if (!index_.empty()) {
-    if (u32 e = index_[slot(name)]) { entries_[e - 1].second = v; return; }
+    i = slot(name);
+    if (u32 e = index_[i]) { entries_[e - 1].second = v; return; }
   }
   entries_.emplace_back(name, v);
-  if (index_.size() < 2 * entries_.size()) {   // grow, and index every entry again
-    size_t n = 16;
-    while (n < 4 * entries_.size()) n *= 2;
-    index_.assign(n, 0);
-    for (size_t k = 0; k < entries_.size(); ++k) index_[slot(entries_[k].first)] = u32(k + 1);
+  if (index_.size() < 2 * entries_.size()) {
+    reindex(4 * entries_.size());   // grow
   } else {
-    index_[slot(name)] = u32(entries_.size());
+    index_[i] = u32(entries_.size());
   }
+}
+
+void NameTable::reserve(size_t n) {
+  entries_.reserve(n);
+  if (index_.size() < 2 * n) reindex(2 * n);
+}
+
+void NameTable::reindex(size_t at_least) {   // an index of at least that many slots, every entry indexed again
+  size_t n = 16;
+  while (n < at_least) n *= 2;
+  index_.assign(n, 0);
+  for (size_t k = 0; k < entries_.size(); ++k) index_[slot(entries_[k].first)] = u32(k + 1);
 }
 
 ZeroBuffer::ZeroBuffer(size_t n) : n_(n) {

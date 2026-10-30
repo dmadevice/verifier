@@ -100,7 +100,14 @@ void FunctionTable::set(const IdaFunction& f) {
 }
 
 void FunctionTable::assign(std::vector<IdaFunction> fs) {
-  std::stable_sort(fs.begin(), fs.end(), [](const IdaFunction& a, const IdaFunction& b) { return a.ea < b.ea; });
+  auto below = [](const IdaFunction& a, const IdaFunction& b) { return a.ea < b.ea; };
+  // already in order, one at each address (the snapshot's): kept as is
+  if (std::adjacent_find(fs.begin(), fs.end(), [](auto& a, auto& b) { return a.ea >= b.ea; }) == fs.end()) {
+    fs_ = std::move(fs);
+    fs_.shrink_to_fit();
+    return;
+  }
+  std::stable_sort(fs.begin(), fs.end(), below);
   fs_.clear();
   for (auto& f : fs) {
     if (!fs_.empty() && fs_.back().ea == f.ea) fs_.back() = f;   // the later one
@@ -323,7 +330,9 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
     auto& slots = o.vtables[ea];
     for (u64 k = r.count(8); k--;) slots.push_back(r.u());
   }
-  for (u64 n = r.count(16); n--;) {
+  u64 names = r.count(16);
+  o.by_name.reserve(names);
+  while (names--) {
     std::string_view name = r.s();
     o.by_name.set(name, r.u());
   }

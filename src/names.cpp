@@ -623,21 +623,6 @@ namespace {
 
 constexpr const char* NAMES_MAGIC = "verifier-names 2\n";
 
-u64 name_hash(std::string_view s) {   // stable across runs (the file's indexes are built with it)
-  u64 h = 0x9E3779B97F4A7C15ull ^ s.size();
-  size_t i = 0;
-  for (; i + 8 <= s.size(); i += 8) {
-    u64 w;
-    std::memcpy(&w, s.data() + i, 8);
-    h = (h ^ w) * 0xbf58476d1ce4e5b9ull;
-    h ^= h >> 31;
-  }
-  u64 w = 0;
-  if (i < s.size()) std::memcpy(&w, s.data() + i, s.size() - i);
-  h = (h ^ w) * 0x94d049bb133111ebull;
-  return h ^ (h >> 29);
-}
-
 constexpr size_t ROW = 8;   // u32s per entry
 
 u32 slots_for(size_t n) {

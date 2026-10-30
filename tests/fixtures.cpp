@@ -1177,19 +1177,38 @@ Problems file_contents() {
 // unit check: line splitting (\n, \r\n, \r), in memory and streamed in blocks
 // the name table against a std::map, through many growths: a value set again keeps its place
 Problems name_table() {
-  NameTable t;
   std::map<std::string, u64> want;
   std::vector<std::string> names;
   for (int i = 0; i < 20000; ++i) names.push_back("?name" + std::to_string(i * 7919 % 20000) + "@@");
-  for (size_t i = 0; i < names.size(); ++i) { t.set(names[i], i); want[names[i]] = i; }
-  for (size_t i = 0; i < names.size(); i += 3) { t.set(names[i], i + 1); want[names[i]] = i + 1; }
   Problems bad;
-  if (t.size() != want.size()) bad.push_back({"names", "size " + std::to_string(t.size())});
-  for (auto& [n, v] : want)
-    if (const u64* got = t.find(n); !got || *got != v) { bad.push_back({"names", "lookup " + n}); break; }
-  if (t.find("?absent@@") || t.contains("")) bad.push_back({"names", "found a name never set"});
-  size_t k = 0;
-  for (auto& [n, v] : t) if (n != names[k++]) { bad.push_back({"names", "order at " + std::to_string(k - 1)}); break; }
+  // growing from empty, reserved for all, and reserved for too few
+  for (size_t reserved : {size_t(0), names.size(), size_t(100)}) {
+    NameTable t;
+    t.reserve(reserved);
+    want.clear();
+    for (size_t i = 0; i < names.size(); ++i) { t.set(names[i], i); want[names[i]] = i; }
+    for (size_t i = 0; i < names.size(); i += 3) { t.set(names[i], i + 1); want[names[i]] = i + 1; }
+    std::string at = " (reserved " + std::to_string(reserved) + ")";
+    if (t.size() != want.size()) bad.push_back({"names", "size " + std::to_string(t.size()) + at});
+    for (auto& [n, v] : want)
+      if (const u64* got = t.find(n); !got || *got != v) { bad.push_back({"names", "lookup " + n + at}); break; }
+    if (t.find("?absent@@") || t.contains("")) bad.push_back({"names", "found a name never set" + at});
+    size_t k = 0;
+    for (auto& [n, v] : t) if (n != names[k++]) { bad.push_back({"names", "order at " + std::to_string(k - 1) + at}); break; }
+  }
+  // the function table: in order or not, of several at one address the last
+  FunctionTable sorted, shuffled;
+  std::vector<IdaFunction> in_order, mixed;
+  for (u64 i = 0; i < 100; ++i) in_order.push_back({0x1000 + 16 * i, 16, "f", false, false});
+  mixed = {in_order[5], in_order[2], in_order[9], in_order[2]};
+  mixed.back().size = 99;
+  sorted.assign(in_order);
+  shuffled.assign(mixed);
+  if (sorted.size() != 100 || !sorted.contains(0x1000 + 16 * 99) || sorted.begin()->ea != 0x1000)
+    bad.push_back({"functions", "a table in order"});
+  if (shuffled.size() != 3 || shuffled.begin()->ea != in_order[2].ea || shuffled.at(in_order[2].ea).size != 99 ||
+      (shuffled.begin() + 2)->ea != in_order[9].ea)
+    bad.push_back({"functions", "a table out of order, with two at one address"});
   return bad;
 }
 
