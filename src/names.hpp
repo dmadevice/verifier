@@ -82,7 +82,7 @@ class NameCache {
 
  private:
   std::string path_, key_, undname_;
-  std::shared_ptr<const MappedFile> map_;   // the cache file, mapped and used in place
+  std::unique_ptr<const MappedFile> map_;   // the cache file, mapped and used in place
   std::string_view file_;
   const char* text_ = nullptr;
   const u32 *str_end_ = nullptr, *ent_ = nullptr, *eidx_ = nullptr, *sidx_ = nullptr;

@@ -101,10 +101,10 @@ std::string join(const std::vector<std::string>& v, std::string_view sep);
 std::string replace_all(std::string s, std::string_view from, std::string_view to);
 std::string lower(std::string s);
 
-// std::string-keyed hash map that also looks up by std::string_view (no temporary strings)
 // a string's hash: the same in every run and on every platform (the name cache's file indexes are built with it),
 // and eight bytes a step
 u64 name_hash(std::string_view s);
+// std::string-keyed hash map that also looks up by std::string_view (no temporary strings)
 struct SvHash {
   using is_transparent = void;
   size_t operator()(std::string_view s) const { return size_t(name_hash(s)); }

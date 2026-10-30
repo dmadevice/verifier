@@ -667,7 +667,7 @@ NameCache::NameCache(std::string path, std::string key, std::string undname)
   if (path_.empty() || !file_exists(path_)) return;
   auto drop = [&] { file_ = {}; map_.reset(); };   // the counts stay 0: nothing reads the file
   try {
-    map_ = std::make_shared<MappedFile>(path_);
+    map_ = std::make_unique<MappedFile>(path_);
     file_ = map_->view();
     std::string head = file_head(key_);
     size_t at = head.size();

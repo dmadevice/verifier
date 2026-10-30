@@ -86,17 +86,16 @@ void walk(const std::string& root, bool stamps, std::vector<ListedFile>& out) {
 }  // namespace
 
 std::vector<std::string> walk_files(const std::string& root) {
-  std::vector<ListedFile> files;
-  walk(root, false, files);
+  std::vector<ListedFile> files = list_files(root, false);
   std::vector<std::string> out;
   out.reserve(files.size());
   for (auto& f : files) out.push_back(std::move(f.path));
   return out;
 }
 
-std::vector<ListedFile> list_files(const std::string& root) {
+std::vector<ListedFile> list_files(const std::string& root, bool stamps) {
   std::vector<ListedFile> out;
-  walk(root, true, out);
+  walk(root, stamps, out);
   return out;
 }
 
@@ -144,10 +143,7 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
                                           const std::function<void(const ListedFile&, std::string_view)>& seen) {
   std::vector<Annotation> out;
   for (auto& root : roots) {
-    std::vector<ListedFile> files;
-    if (seen) files = list_files(root);
-    else for (auto& f : walk_files(root)) files.push_back({std::move(f)});
-    for (auto& file : files) {
+    for (auto& file : list_files(root, bool(seen))) {
       const std::string& path = file.path;
       bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
                     ends_with(path, ".inl");

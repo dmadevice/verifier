@@ -39,13 +39,13 @@ std::optional<std::string> sig_flag(const AnnotationFlags& flags);   // the para
 // The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name).
 std::vector<std::string> walk_files(const std::string& root);
 // The same files with their sizes and modification times (on Windows from the directory listing, without opening
-// each file)
+// each file; elsewhere 0 unless `stamps`)
 struct ListedFile {
   std::string path;
   u64 size = 0;
   i64 time = 0;   // the file clock's ticks
 };
-std::vector<ListedFile> list_files(const std::string& root);
+std::vector<ListedFile> list_files(const std::string& root, bool stamps = true);
 // The annotations in the files under roots. `seen`, when given, gets every file as list_files gives it and its
 // contents, in walk_files order, the files that cannot hold an annotation included.
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,

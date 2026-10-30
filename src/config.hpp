@@ -2,6 +2,7 @@
 // (`#` starts a comment); relative paths are relative to the file's directory, which is also the project root
 // that source paths in the report are given relative to.
 #pragma once
+#include <array>
 #include <string>
 
 namespace verifier {
@@ -20,6 +21,10 @@ struct Config {
   std::string cache_dir;             // where the name cache and the exports snapshot are kept (optional)
 
   std::string names_cache() const;   // the cache file ("" when there is no cache_dir)
+  // the original and the exports: what the snapshot is made from
+  std::array<const std::string*, 8> snapshot_inputs() const {
+    return {&original, &functions, &vtables, &data_items, &data_names, &library_matches, &library_functions, &symbols};
+  }
   // the file at `path`; exits with a message (code 2) when it is unreadable or a required key is missing
   static Config load(const std::string& path);
 };

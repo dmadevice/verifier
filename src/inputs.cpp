@@ -100,14 +100,13 @@ void FunctionTable::set(const IdaFunction& f) {
 }
 
 void FunctionTable::assign(std::vector<IdaFunction> fs) {
-  auto below = [](const IdaFunction& a, const IdaFunction& b) { return a.ea < b.ea; };
   // already in order, one at each address (the snapshot's): kept as is
   if (std::adjacent_find(fs.begin(), fs.end(), [](auto& a, auto& b) { return a.ea >= b.ea; }) == fs.end()) {
     fs_ = std::move(fs);
     fs_.shrink_to_fit();
     return;
   }
-  std::stable_sort(fs.begin(), fs.end(), below);
+  std::stable_sort(fs.begin(), fs.end(), [](const IdaFunction& a, const IdaFunction& b) { return a.ea < b.ea; });
   fs_.clear();
   for (auto& f : fs) {
     if (!fs_.empty() && fs_.back().ea == f.ea) fs_.back() = f;   // the later one
@@ -258,9 +257,7 @@ void Original::load_exports() {
 
 std::string Original::snapshot_key(const Config& p) {
   std::string key = "verifier original snapshot 3\n" + p.original_sha256 + "\n";
-  for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
-                  &p.library_functions, &p.symbols})
-    key += file_stamp(*f) + "\n";
+  for (auto* f : p.snapshot_inputs()) key += file_stamp(*f) + "\n";
   return key;
 }
 

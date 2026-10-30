@@ -473,27 +473,34 @@ class Phases {
 
 constexpr const char* LAST_RUN = "verifier-last.txt";   // beside the rebuilt image
 
+// a key's field: its length, then its bytes (no two lists of fields hash alike)
+void add_field(Sha256& h, std::string_view data) {
+  u64 n = data.size();
+  char len[8];
+  std::memcpy(len, &n, 8);
+  h.update(std::string_view(len, 8));
+  h.update(data);
+}
+
+std::vector<std::string> source_files(const Args& a) {   // the files under --src, in walk_files order
+  std::vector<std::string> out;
+  for (auto& top : a.src) for (auto& f : walk_files(top)) out.push_back(std::move(f));
+  return out;
+}
+
 }  // namespace
 
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier,
                     const std::vector<std::string>& sources, const std::function<std::string(const std::string&)>& hash) {
   Sha256 h;
-  auto add = [&](std::string_view data) {
-    u64 n = data.size();
-    char len[8];
-    std::memcpy(len, &n, 8);
-    h.update(std::string_view(len, 8));
-    h.update(data);
-  };
+  auto add = [&](std::string_view data) { add_field(h, data); };
   add("verifier 3");
   add(verifier);
   add(p.root);
   for (auto& s : args) add(s);
   std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.file, p.undname};
   // the original and the exports: with a cache a run reads them only through the snapshot, so its key stands for them
-  std::vector<std::string> exports{p.original, p.functions, p.vtables, p.data_items, p.data_names, p.library_matches,
-                                   p.library_functions, p.symbols};
-  if (p.cache_dir.empty()) files.insert(files.end(), exports.begin(), exports.end());
+  if (p.cache_dir.empty()) for (auto* f : p.snapshot_inputs()) files.push_back(*f);
   else add(Original::snapshot_key(p));
   files.insert(files.end(), sources.begin(), sources.end());
   for (auto& f : files) {
@@ -505,9 +512,7 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
 }
 
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier) {
-  std::vector<std::string> sources;
-  for (auto& top : a.src) for (auto& f : walk_files(top)) sources.push_back(f);
-  return run_key(args, a, p, verifier, sources, sha256_file_if_present);
+  return run_key(args, a, p, verifier, source_files(a), sha256_file_if_present);
 }
 
 i64 two_seconds_ago() {
@@ -525,13 +530,7 @@ std::string stamp_key(const std::vector<std::string>& args, const Args& a, const
 std::string stamp_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& exe,
                       const std::vector<ListedFile>& sources, i64 recent) {
   Sha256 h;
-  auto add = [&](std::string_view data) {
-    u64 n = data.size();
-    char len[8];
-    std::memcpy(len, &n, 8);
-    h.update(std::string_view(len, 8));
-    h.update(data);
-  };
+  auto add = [&](std::string_view data) { add_field(h, data); };
   bool racy = false;
   auto stamp = [&](const std::string& f) {
     i64 t = std::numeric_limits<i64>::min();   // none for an absent file (the clock's epoch may make times negative)
@@ -546,9 +545,7 @@ std::string stamp_key(const std::vector<std::string>& args, const Args& a, const
   for (auto* f : {&a.rebuilt, &a.map, &p.undname}) stamp(*f);
   stamp(a.matched.value_or(""));
   if (p.cache_dir.empty())
-    for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
-                    &p.library_functions, &p.symbols})
-      stamp(*f);
+    for (auto* f : p.snapshot_inputs()) stamp(*f);
   else
     add(Original::snapshot_key(p));
   for (auto& f : sources) {
@@ -603,10 +600,9 @@ bool load_last(const std::string& path, const std::string& command, const std::s
   last.by_stamps = rec_image_stamp == image_stamp && rec_stamps != "-" && rec_stamps == stamps();
   if (!last.by_stamps && (rec_image != image() || rec_key != key())) return false;
   auto num = [&](u64& v) {
-    size_t e = d.find('\n', p);
-    if (e == std::string_view::npos) return false;
-    v = std::strtoull(std::string(d.substr(p, e - p)).c_str(), nullptr, 10);
-    p = e + 1;
+    std::string_view s;
+    if (!line(s)) return false;
+    v = std::strtoull(std::string(s).c_str(), nullptr, 10);
     return true;
   };
   u64 r, no, nr;
@@ -668,11 +664,7 @@ int run(int argc, char** argv) {
       stamped = true;
       return stamps;
     };
-    auto walk_key = [&] {
-      std::vector<std::string> sources;
-      for (auto& top : a.src) for (auto& f : walk_files(top)) sources.push_back(f);
-      return key = key_of(sources);
-    };
+    auto walk_key = [&] { return key = key_of(source_files(a)); };
     Last rec;
     if (load_last(last, command, image_stamp, stamps_now, [&] { return hash_if_present(a.rebuilt); }, walk_key, rec)) {
       std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
@@ -772,8 +764,8 @@ int run(int argc, char** argv) {
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
   if (!last.empty()) {
-    if (!stamped && key.empty()) stamps = stamp_key(args, a, p, exe, listing, start);
-    else if (!stamped) stamps = stamp_key(args, a, p, exe);   // the key came first: no listing was kept
+    // from the run's listing, unless the key came first (then no listing was kept)
+    if (!stamped) stamps = key.empty() ? stamp_key(args, a, p, exe, listing, start) : stamp_key(args, a, p, exe);
     save_last(last, command, image_stamp, stamps, hash_if_present(a.rebuilt), key.empty() ? key_of(sources) : key, out.text(),
               report, rc);
   }
