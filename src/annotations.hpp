@@ -1,8 +1,10 @@
 // Source annotations: `// FUNCTION: <module> 0x<va>` and friends, read from the source trees.
 #pragma once
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "util.hpp"
@@ -36,8 +38,11 @@ std::optional<std::string> sig_flag(const AnnotationFlags& flags);   // the para
 
 // The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name).
 std::vector<std::string> walk_files(const std::string& root);
+// The annotations in the files under roots. `seen`, when given, gets every file's path and contents, in walk_files
+// order, the files that cannot hold an annotation included.
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
-                                          std::vector<Ignored>* ignored);
+                                          std::vector<Ignored>* ignored,
+                                          const std::function<void(const std::string&, std::string_view)>& seen = {});
 // exits (message on stderr, code 1) when two annotations claim one address without both saying FOLDED
 void check_duplicates(const std::vector<Annotation>& anns);
 

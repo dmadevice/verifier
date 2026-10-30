@@ -618,6 +618,23 @@ Problems replay_key() {
     if (run_key(args, a, p, "verifier") == key) bad.push_back({"replay", "the key ignores " + name});
   }
   if (run_key(args, a, p, "verifier") == run_key(args, a, p, "another verifier")) bad.push_back({"replay", "the key ignores the verifier"});
+  // a run that computes the key at its end takes the sources from parsing them: the same key, the files that cannot
+  // hold an annotation included
+  fs::create_directories(d / "src" / "sub");
+  write((d / "src" / "notes.txt").string(), "x");
+  write((d / "src" / "sub" / "c.cpp").string(), "// FUNCTION: EXAMPLE 0x10\nvoid f() {}\n");
+  std::vector<std::string> seen;
+  std::map<std::string, std::string> hashes;
+  parse_annotations(a.src, "EXAMPLE", nullptr, [&](const std::string& f, std::string_view data) {
+    seen.push_back(f);
+    hashes[f] = sha256_hex(data);
+  });
+  auto hash = [&](const std::string& f) {
+    auto it = hashes.find(f);
+    return it != hashes.end() ? it->second : fs::exists(f) ? sha256_file(f) : std::string();
+  };
+  if (seen.size() != 3 || run_key(args, a, p, "verifier", seen, hash) != run_key(args, a, p, "verifier"))
+    bad.push_back({"replay", "the key from parsing the sources differs from the walked one"});
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;
@@ -1025,6 +1042,36 @@ Problems sha256_paths() {
   return bad;
 }
 
+// a file's contents read (below 1 MB) or mapped, each the bytes written; absent files and directories are absent
+Problems file_contents() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-files-" + unique_suffix());
+  fs::create_directories(d / "dir");
+  Problems bad;
+  for (size_t n : {size_t(0), size_t(1), size_t(4097), (size_t(1) << 20) - 1, size_t(1) << 20, (size_t(3) << 20) + 5}) {
+    Bytes data(n, '\0');
+    for (size_t i = 0; i < n; ++i) data[i] = char(i * 31 + (i >> 11));
+    std::string path = (d / ("f" + std::to_string(n))).string();
+    std::ofstream(path, std::ios::binary) << data;
+    Bytes got;
+    bool present = with_contents_if_present(path, [&](std::string_view v) { got = Bytes(v); });
+    if (!present || got != data) bad.push_back({"files", "contents of " + std::to_string(n) + " bytes"});
+    if (sha256_file_if_present(path) != sha256_hex(data) || sha256_file(path) != sha256_hex(data))
+      bad.push_back({"files", "hash of " + std::to_string(n) + " bytes"});
+  }
+  for (auto& p : {d / "absent", d / "dir"}) {
+    bool called = false;
+    if (with_contents_if_present(p.string(), [&](std::string_view) { called = true; }) || called || sha256_file_if_present(p.string()) != "")
+      bad.push_back({"files", p.filename().string() + " is present"});
+    bool threw = false;
+    try { with_contents(p.string(), [](std::string_view) {}); } catch (const std::runtime_error&) { threw = true; }
+    if (!threw) bad.push_back({"files", "with_contents of " + p.filename().string() + " does not throw"});
+  }
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 // unit check: line splitting (\n, \r\n, \r), in memory and streamed in blocks
 // the name table against a std::map, through many growths: a value set again keeps its place
 Problems name_table() {
@@ -1111,6 +1158,7 @@ int main(int argc, char** argv) {
       {"ignored annotations reported", nullptr, ignored_annotations},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
+      {"unit: file contents", nullptr, file_contents},
       {"unit: line splitting", nullptr, line_splitting},
       {"unit: name table", nullptr, name_table},
       {"unit: PE file layout", nullptr, file_layout},

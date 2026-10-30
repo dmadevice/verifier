@@ -2,6 +2,7 @@
 // attribution; the rebuilt image with its map's symbol tables.
 #pragma once
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -16,6 +17,7 @@
 #include "config.hpp"
 #include "names.hpp"
 #include "pe.hpp"
+#include "sha256.hpp"
 
 namespace verifier {
 
@@ -70,7 +72,9 @@ struct Linked {
 
 class Original {
  public:
-  explicit Original(const Config& c);   // exits (code 1) when the original's SHA-256 is not the configured one
+  // exits (code 1) when the original's SHA-256 is not the configured one; hash_file gives a file's (the caller's may
+  // remember the files it has hashed)
+  explicit Original(const Config& c, const std::function<std::string(const std::string&)>& hash_file = sha256_file);
   Original() = default;                 // fixtures: fill the fields
   std::string digest;
   Image img;

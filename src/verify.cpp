@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <stdexcept>
 
 #include "sha256.hpp"
 
@@ -473,7 +474,8 @@ constexpr const char* LAST_RUN = "verifier-last.txt";
 
 }  // namespace
 
-std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier) {
+std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier,
+                    const std::vector<std::string>& sources, const std::function<std::string(const std::string&)>& hash) {
   Sha256 h;
   auto add = [&](std::string_view data) {
     u64 n = data.size();
@@ -482,31 +484,44 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
     h.update(std::string_view(len, 8));
     h.update(data);
   };
-  add("verifier 1");
+  add("verifier 2");
   add(verifier);
   add(p.root);
   for (auto& s : args) add(s);
   std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.file, p.original, p.functions, p.vtables,
                                  p.data_items, p.data_names, p.library_matches, p.library_functions, p.symbols, p.undname};
-  for (auto& top : a.src) for (auto& f : walk_files(top)) files.push_back(f);
+  files.insert(files.end(), sources.begin(), sources.end());
   for (auto& f : files) {
     add(f);
-    if (!f.empty() && file_exists(f)) with_contents(f, add);
-    else add(std::string("\0absent", 7));
+    std::string digest = f.empty() ? "" : hash(f);
+    add(digest.empty() ? std::string("\0absent", 7) : digest);
   }
   return h.hexdigest();
 }
 
+std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier) {
+  std::vector<std::string> sources;
+  for (auto& top : a.src) for (auto& f : walk_files(top)) sources.push_back(f);
+  return run_key(args, a, p, verifier, sources, sha256_file_if_present);
+}
+
 namespace {
 
-bool load_last(const std::string& path, const std::string& key, std::string& out, std::string& report, int& rc) {
+// the record: a version line, the rebuilt image's SHA-256, the key, the exit status, then stdout and the report, each
+// after its length. A replay needs the same rebuilt image, so that is checked first: the key, which hashes every input,
+// is computed only when it agrees.
+bool load_last(const std::string& path, const std::string& image, const std::function<std::string()>& key, std::string& out,
+               std::string& report, int& rc) {
   if (!file_exists(path)) return false;
   std::unique_ptr<MappedFile> file;   // released before save_last renames a new record over it
   try { file = std::make_unique<MappedFile>(path); } catch (...) { return false; }
   std::string_view d = file->view();
-  std::string head = "verifier-last 1\n" + key + "\n";
+  std::string head = "verifier-last 2\n" + image + "\n";
   if (d.compare(0, head.size(), head) != 0) return false;
   size_t p = head.size();
+  std::string k = key() + "\n";
+  if (d.compare(p, k.size(), k) != 0) return false;
+  p += k.size();
   auto num = [&](u64& v) {
     size_t e = d.find('\n', p);
     if (e == std::string_view::npos) return false;
@@ -524,8 +539,9 @@ bool load_last(const std::string& path, const std::string& key, std::string& out
   return true;
 }
 
-void save_last(const std::string& path, const std::string& key, const std::string& out, const std::string& report, int rc) {
-  write_file_atomic(path, "verifier-last 1\n" + key + "\n" + std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
+void save_last(const std::string& path, const std::string& image, const std::string& key, const std::string& out,
+               const std::string& report, int rc) {
+  write_file_atomic(path, "verifier-last 2\n" + image + "\n" + key + "\n" + std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
                               std::to_string(report.size()) + "\n" + report);
 }
 
@@ -537,13 +553,32 @@ int run(int argc, char** argv) {
   std::string last;
   if (a.json && a.check && !(a.update || a.show)) last = path_join(dirname(abspath(*a.json)), LAST_RUN);
   Phases ph;
-  std::string key;
-  if (!last.empty()) {
+  // each file is hashed once: the replay key, the original's check and the name cache's key share them
+  std::unordered_map<std::string, std::string> hashes;   // "" for an absent file
+  auto hash_if_present = [&](const std::string& f) {
+    auto it = hashes.find(f);
+    if (it == hashes.end()) it = hashes.emplace(f, sha256_file_if_present(f)).first;
+    return it->second;
+  };
+  auto hash = [&](const std::string& f) {
+    std::string h = hash_if_present(f);
+    if (h.empty()) throw std::runtime_error("cannot read " + f);
+    return h;
+  };
+  auto key_of = [&](const std::vector<std::string>& sources) {
     std::string exe = self_exe();
-    key = run_key(std::vector<std::string>(argv + 1, argv + argc), a, p, exe.empty() ? "" : sha256_file(exe));
+    return run_key(std::vector<std::string>(argv + 1, argv + argc), a, p, exe.empty() ? "" : hash(exe), sources, hash_if_present);
+  };
+  std::string key;   // computed before the run only when the record's rebuilt image is this one
+  if (!last.empty()) {
     std::string out, report;
     int rc;
-    if (load_last(last, key, out, report, rc)) {
+    auto walk_key = [&] {
+      std::vector<std::string> sources;
+      for (auto& top : a.src) for (auto& f : walk_files(top)) sources.push_back(f);
+      return key = key_of(sources);
+    };
+    if (load_last(last, hash_if_present(a.rebuilt), walk_key, out, report, rc)) {
       std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
       std::fwrite(out.data(), 1, out.size(), stdout);
       std::ofstream(*a.json, std::ios::binary) << report;
@@ -553,13 +588,21 @@ int run(int argc, char** argv) {
   }
   if (!last.empty()) ph.mark("replay key");
   Out out;
-  Original orig(p);
+  Original orig(p, hash);
   ph.mark("original");
   std::vector<Ignored> ignored;
-  auto anns = parse_annotations(a.src, p.module, &ignored);
+  // otherwise the key comes from the sources as they are parsed
+  std::vector<std::string> sources;
+  std::function<void(const std::string&, std::string_view)> seen;
+  if (!last.empty() && key.empty())
+    seen = [&](const std::string& f, std::string_view data) {
+      sources.push_back(f);
+      hashes.emplace(f, sha256_hex(data));
+    };
+  auto anns = parse_annotations(a.src, p.module, &ignored, seen);
   check_duplicates(anns);
   ph.mark("annotations");
-  NameCache name_cache(p.names_cache(), "verifier names 1 " + sha256_file(p.undname), p.undname);
+  NameCache name_cache(p.names_cache(), "verifier names 1 " + hash(p.undname), p.undname);
   Rebuilt reb(a.rebuilt, a.map, name_cache);
   ph.mark("rebuilt+names");
   std::unordered_set<u64> slots;
@@ -625,7 +668,7 @@ int run(int argc, char** argv) {
   if (a.matched && regression_gate(*a.matched, totals.matched, results, a.update, out)) rc = 1;
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
-  if (!last.empty()) save_last(last, key, out.text(), report, rc);
+  if (!last.empty()) save_last(last, hash_if_present(a.rebuilt), key.empty() ? key_of(sources) : key, out.text(), report, rc);
   // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
   std::fflush(nullptr);
   std::_Exit(rc);

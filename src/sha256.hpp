@@ -23,5 +23,6 @@ class Sha256 {
 
 std::string sha256_hex(std::string_view data);
 std::string sha256_file(const std::string& path);
+std::string sha256_file_if_present(const std::string& path);   // "" when absent (with_contents_if_present)
 
 }  // namespace verifier

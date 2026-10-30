@@ -168,14 +168,14 @@ std::span<const std::string_view> Symbols::names(u64 va) const {
 
 // -- Original ------------------------------------------------------------------------------------------------
 
-Original::Original(const Config& p) : config_(&p) {
+Original::Original(const Config& p, const std::function<std::string(const std::string&)>& hash_file) : config_(&p) {
   if (!file_exists(p.original)) {
     std::fprintf(stderr, "verifier: no original binary %s\n", p.original.c_str());
     std::exit(2);
   }
   if (!p.original_sha256.empty()) {
     digest = p.original_sha256;
-    if (sha256_file(p.original) != digest) {
+    if (hash_file(p.original) != digest) {
       std::fprintf(stderr, "original image hash mismatch: %s is not %s\n", p.original.c_str(), digest.c_str());
       std::exit(1);
     }

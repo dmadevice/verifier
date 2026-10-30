@@ -160,4 +160,9 @@ std::string sha256_file(const std::string& path) {
   return h.hexdigest();
 }
 
+std::string sha256_file_if_present(const std::string& path) {
+  Sha256 h;
+  return with_contents_if_present(path, [&](std::string_view data) { h.update(data); }) ? h.hexdigest() : "";
+}
+
 }  // namespace verifier

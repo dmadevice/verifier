@@ -41,8 +41,10 @@ class MappedFile {
 };
 
 // fn(the file's bytes): mapped when large, read when small (mapping a small file costs more system calls than
-// reading it). Throws as read_file.
+// reading it), with one open and no separate stat. Throws as read_file.
 void with_contents(const std::string& path, const std::function<void(std::string_view)>& fn);
+// the same, but false (and fn not called) when path is no regular file that opens; throws on a read error
+bool with_contents_if_present(const std::string& path, const std::function<void(std::string_view)>& fn);
 
 // writes a temporary file beside `path`, then renames it over `path` (readers see the old file or the new one);
 // false (and no file) on failure

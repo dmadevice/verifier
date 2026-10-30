@@ -60,7 +60,11 @@ struct Args {
   std::vector<std::string> src;
   bool check = false, update = false;
 };
-// the --check replay key: the verifier (the executable's hash), its arguments and every file it reads
+// the --check replay key: the verifier (the executable's hash), its arguments and every file it reads, each by its
+// SHA-256: `hash` gives a file's ("" when it is absent), and `sources` lists the files under --src in walk_files order
+std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier,
+                    const std::vector<std::string>& sources, const std::function<std::string(const std::string&)>& hash);
+// the same, walking --src and hashing every file
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier);
 
 // the command line: exits the process when it has run (without freeing what it built); returns early only for a replay

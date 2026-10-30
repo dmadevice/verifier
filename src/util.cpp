@@ -28,84 +28,142 @@ const char kSep = '\\';
 const char kSep = '/';
 #endif
 
-std::string read_file(const std::string& path) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
-  if (!f) throw std::runtime_error("cannot read " + path);
-  std::string out;
-  if (std::fseek(f, 0, SEEK_END) == 0) {   // read in place at the file's size, then whatever follows
-    long n = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-    if (n > 0) {
-      out.resize(size_t(n));
-      out.resize(std::fread(out.data(), 1, out.size(), f));
+namespace {
+
+// a regular file opened for reading, and its size: one open, no separate stat. Shared for delete too: another process
+// may rename a new file over this one meanwhile (a view, once made, goes on reading the old file).
+class OpenFile {
+ public:
+  explicit OpenFile(const std::string& path) {
+#ifdef _WIN32
+    // a directory does not open without FILE_FLAG_BACKUP_SEMANTICS
+    h_ = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                     nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    LARGE_INTEGER size{};
+    if (h_ != INVALID_HANDLE_VALUE && GetFileType(h_) == FILE_TYPE_DISK && GetFileSizeEx(h_, &size)) {
+      n_ = size_t(size.QuadPart);
+      ok_ = true;
     }
+#else
+    fd_ = ::open(path.c_str(), O_RDONLY);
+    struct stat st{};
+    if (fd_ >= 0 && fstat(fd_, &st) == 0 && S_ISREG(st.st_mode)) {
+      n_ = size_t(st.st_size);
+      ok_ = true;
+    }
+#endif
   }
-  char buf[1 << 16];
-  size_t got;
-  while ((got = std::fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, got);
-  bool err = std::ferror(f) != 0;
-  std::fclose(f);
-  if (err) throw std::runtime_error("cannot read " + path);
+  ~OpenFile() {
+#ifdef _WIN32
+    if (h_ != INVALID_HANDLE_VALUE) CloseHandle(h_);
+#else
+    if (fd_ >= 0) ::close(fd_);
+#endif
+  }
+  OpenFile(const OpenFile&) = delete;
+  OpenFile& operator=(const OpenFile&) = delete;
+  explicit operator bool() const { return ok_; }
+  size_t size() const { return n_; }
+
+  // the whole file mapped read-only (null when that fails; the size must not be 0)
+  const char* map() const {
+#ifdef _WIN32
+    HANDLE m = CreateFileMappingW(h_, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (!m) return nullptr;
+    auto p = static_cast<const char*>(MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0));
+    CloseHandle(m);   // the view keeps the mapping
+    return p;
+#else
+    void* p = mmap(nullptr, n_, PROT_READ, MAP_PRIVATE, fd_, 0);
+    return p == MAP_FAILED ? nullptr : static_cast<const char*>(p);
+#endif
+  }
+
+  // the whole file read (false on a read error; a file that grew meanwhile is read to its size when opened)
+  bool read(std::string& out) const {
+    out.resize(n_);
+    size_t at = 0;
+    while (at < n_) {
+#ifdef _WIN32
+      DWORD got = 0;
+      DWORD want = DWORD(std::min<size_t>(n_ - at, 1u << 30));
+      if (!ReadFile(h_, out.data() + at, want, &got, nullptr)) return false;
+#else
+      ssize_t got = ::read(fd_, out.data() + at, n_ - at);
+      if (got < 0) return false;
+#endif
+      if (got == 0) break;
+      at += size_t(got);
+    }
+    out.resize(at);
+    return true;
+  }
+
+ private:
+#ifdef _WIN32
+  HANDLE h_ = INVALID_HANDLE_VALUE;
+#else
+  int fd_ = -1;
+#endif
+  size_t n_ = 0;
+  bool ok_ = false;
+};
+
+void unmap(const char* p, size_t n) {
+#ifdef _WIN32
+  (void)n;
+  UnmapViewOfFile(p);
+#else
+  munmap(const_cast<char*>(p), n);
+#endif
+}
+
+}  // namespace
+
+std::string read_file(const std::string& path) {
+  OpenFile f(path);
+  std::string out;
+  if (!f || !f.read(out)) throw std::runtime_error("cannot read " + path);
   return out;
 }
 
 MappedFile::MappedFile(const std::string& path) {
-  bool ok = false;
-#ifdef _WIN32
-  // shared for delete too: another process may rename a new file over this one meanwhile (the view, all that is
-  // kept, goes on reading the old file)
-  HANDLE f = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (f != INVALID_HANDLE_VALUE) {
-    LARGE_INTEGER size{};
-    if (GetFileSizeEx(f, &size)) {
-      ok = size.QuadPart == 0;
-      if (size.QuadPart > 0) {
-        if (HANDLE m = CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr)) {
-          p_ = static_cast<const char*>(MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0));
-          CloseHandle(m);   // the view keeps the mapping
-          n_ = size_t(size.QuadPart);
-          ok = p_ != nullptr;
-        }
-      }
-    }
-    CloseHandle(f);
+  OpenFile f(path);
+  bool ok = bool(f);
+  if (ok && f.size() > 0) {
+    p_ = f.map();
+    n_ = f.size();
+    ok = p_ != nullptr;
   }
-#else
-  int fd = ::open(path.c_str(), O_RDONLY);
-  if (fd >= 0) {
-    struct stat st{};
-    if (fstat(fd, &st) == 0) {
-      ok = st.st_size == 0;
-      if (st.st_size > 0) {
-        void* p = mmap(nullptr, size_t(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
-        if (p != MAP_FAILED) { p_ = static_cast<const char*>(p); n_ = size_t(st.st_size); ok = true; }
-      }
-    }
-    ::close(fd);
-  }
-#endif
   if (!ok) throw std::runtime_error("cannot read " + path);
 }
 
 MappedFile::~MappedFile() {
-  if (!p_) return;
-#ifdef _WIN32
-  UnmapViewOfFile(p_);
-#else
-  munmap(const_cast<char*>(p_), n_);
-#endif
+  if (p_) unmap(p_, n_);
+}
+
+bool with_contents_if_present(const std::string& path, const std::function<void(std::string_view)>& fn) {
+  OpenFile f(path);
+  if (!f) return false;
+  if (f.size() >= (size_t(1) << 20)) {
+    const char* p = f.map();
+    if (!p) throw std::runtime_error("cannot read " + path);
+    struct Unmap {
+      const char* p;
+      size_t n;
+      ~Unmap() { unmap(p, n); }
+    } view{p, f.size()};
+    fn(std::string_view(p, f.size()));
+  } else {
+    std::string data;
+    if (!f.read(data)) throw std::runtime_error("cannot read " + path);
+    fn(data);
+  }
+  return true;
 }
 
 void with_contents(const std::string& path, const std::function<void(std::string_view)>& fn) {
-  std::error_code ec;
-  auto size = std::filesystem::file_size(path, ec);
-  if (!ec && size >= (u64(1) << 20)) {
-    MappedFile m(path);
-    fn(m.view());
-  } else {
-    fn(read_file(path));
-  }
+  if (!with_contents_if_present(path, fn)) throw std::runtime_error("cannot read " + path);
 }
 
 void for_each_file_line(const std::string& path, const std::function<void(std::string_view)>& fn) {

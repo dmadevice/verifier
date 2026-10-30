@@ -82,15 +82,17 @@ bool match_annotation(std::string_view line, const std::string& module, std::str
 }  // namespace
 
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
-                                          std::vector<Ignored>* ignored) {
+                                          std::vector<Ignored>* ignored,
+                                          const std::function<void(const std::string&, std::string_view)>& seen) {
   std::vector<Annotation> out;
   for (auto& root : roots) {
     for (auto& path : walk_files(root)) {
-      if (!(ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
-            ends_with(path, ".inl")))
-        continue;
+      bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
+                    ends_with(path, ".inl");
+      if (!source && !seen) continue;
       std::string data = read_file(path);
-      if (data.find(module) == std::string::npos) continue;   // no annotation of this module here
+      if (seen) seen(path, data);
+      if (!source || data.find(module) == std::string::npos) continue;   // no annotation of this module here
       std::string_view kept_path = keep_text(path);
       std::vector<std::string_view> lines;
       for_each_line(data, [&](std::string_view l) { lines.push_back(l); });
