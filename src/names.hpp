@@ -2,6 +2,7 @@
 // normalised parameter list, the function a local static belongs to).
 #pragma once
 #include <deque>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -77,7 +78,8 @@ class NameCache {
 
  private:
   std::string path_, key_, undname_;
-  std::string file_;   // the cache file, used in place
+  std::shared_ptr<const MappedFile> map_;   // the cache file, mapped and used in place
+  std::string_view file_;
   const char* text_ = nullptr;
   const u32 *str_end_ = nullptr, *ent_ = nullptr, *eidx_ = nullptr, *sidx_ = nullptr;
   u32 nstr_ = 0, nent_ = 0, eslots_ = 0, sslots_ = 0;

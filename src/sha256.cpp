@@ -154,6 +154,10 @@ std::string sha256_hex(std::string_view data) {
   return h.hexdigest();
 }
 
-std::string sha256_file(const std::string& path) { return sha256_hex(read_file(path)); }
+std::string sha256_file(const std::string& path) {
+  Sha256 h;
+  with_contents(path, [&](std::string_view data) { h.update(data); });
+  return h.hexdigest();
+}
 
 }  // namespace verifier

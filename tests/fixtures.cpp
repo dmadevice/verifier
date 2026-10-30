@@ -842,12 +842,71 @@ Problems name_cache() {
     NameCache nc(file, "other key", "");   // another undname: the file is not used
     if (nc.string_count() != 0) bad.push_back({"names", "file of another key read"});
   }
+  {
+    // a run replaces the file while another has it mapped: the other goes on reading the old one
+    NameCache reader(file, "key", "");
+    NameCache writer(file, "key", "");
+    writer.load({"i"});
+    writer.save();
+    if (infos_of(reader, second) != want2) bad.push_back({"names", "the mapped file changed"});
+  }
+  {
+    NameCache nc(file, "key", "");
+    if (!nc.id_of("i") || nc.id_of("h")) bad.push_back({"names", "not replaced while mapped"});
+    nc.load(second);
+    nc.save();
+  }
   fs::resize_file(file, fs::file_size(file) - 3);
   {
     NameCache nc(file, "key", "");
     if (nc.string_count() != 0) bad.push_back({"names", "truncated file read"});
     if (infos_of(nc, second) != want2) bad.push_back({"names", "entries without the file differ"});
   }
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
+// a PE file on disk: loading lays it out at its virtual addresses, and an image laid out elsewhere (the cache's) reads
+// the same tables from its headers
+Problems file_layout() {
+  namespace fs = std::filesystem;
+  auto put = [](Bytes& b, size_t at, u64 v, int n) { for (int i = 0; i < n; ++i) b[at + i] = char(v >> (8 * i)); };
+  auto pe_file = [&](u64 base) {
+    Bytes f(0x600, '\0');
+    f[0] = 'M'; f[1] = 'Z';
+    put(f, 0x3c, 0x40, 4);
+    f.replace(0x40, 4, Bytes("PE\0\0", 4));
+    put(f, 0x44, 0x8664, 2);   // machine
+    put(f, 0x46, 2, 2);        // sections
+    put(f, 0x54, 0xf0, 2);     // optional header size
+    put(f, 0x58, 0x20b, 2);    // PE32+
+    put(f, 0x58 + 24, base, 8);
+    put(f, 0x58 + 32, 0x1000, 4);   // section alignment
+    put(f, 0x58 + 36, 0x200, 4);    // file alignment
+    struct S { u32 vsize, va, rawsize, rawptr, ch; };
+    S secs[2] = {{0x10, 0x1000, 0x200, 0x200, 0x60000020}, {0x2000, 0x2000, 0x200, 0x400, 0xc0000040}};
+    for (int i = 0; i < 2; ++i) {
+      size_t s = 0x148 + 40 * i;
+      put(f, s + 8, secs[i].vsize, 4); put(f, s + 12, secs[i].va, 4); put(f, s + 16, secs[i].rawsize, 4);
+      put(f, s + 20, secs[i].rawptr, 4); put(f, s + 36, secs[i].ch, 4);
+    }
+    for (size_t k = 0x200; k < 0x600; ++k) f[k] = char(k * 7 + 1);   // code and data, no zeros
+    return f;
+  };
+  fs::path d = fs::temp_directory_path() / ("verifier-pe-" + unique_suffix());
+  fs::create_directories(d);
+  std::string path = (d / "x.dll").string();
+  Bytes file = pe_file(0x180000000);
+  std::ofstream(path, std::ios::binary) << file;
+  Problems bad;
+  Image im = Image::load(path);
+  if (im.base != 0x180000000 || im.img.size() != 0x2200 || im.sections.size() != 2 || im.bytes(0x180001000, 1) != file.substr(0x200, 1) ||
+      im.bytes(0x180000300, 1) != Bytes(1, '\0'))
+    bad.push_back({"layout", "the image is not laid out at its virtual addresses"});
+  auto buf = std::make_shared<Bytes>(im.img);
+  Image same = Image::laid_out(im.headers, *buf, buf);
+  if (same.img != im.img || same.sections.size() != 2 || same.base != im.base) bad.push_back({"layout", "a copy differs"});
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;
@@ -1054,6 +1113,7 @@ int main(int argc, char** argv) {
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
       {"unit: line splitting", nullptr, line_splitting},
       {"unit: name table", nullptr, name_table},
+      {"unit: PE file layout", nullptr, file_layout},
       {"local static paired by consensus", nullptr, consensus_static},
       {"callee folded in the original, same code", nullptr, [] { return folded_original(true); }},
       {"callee folded in the original, other code", "reference", [] { return folded_original(false); }},

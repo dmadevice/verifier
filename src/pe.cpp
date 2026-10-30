@@ -9,71 +9,44 @@ namespace {
 u32 rd32(std::string_view d, size_t off) { return off + 4 <= d.size() ? le32(d.data() + off) : 0; }
 u16 rd16(std::string_view d, size_t off) { return off + 2 <= d.size() ? le16(d.data() + off) : 0; }
 u64 rd64(std::string_view d, size_t off) { return off + 8 <= d.size() ? le64(d.data() + off) : 0; }
-}  // namespace
 
-Image Image::load(const std::string& path) {
-  std::string data = read_file(path);
-  if (data.size() < 0x40 || data.compare(0, 2, "MZ") != 0) throw std::runtime_error(path + ": not a PE image");
+struct Raw { u32 vsize, va, rawsize, rawptr, ch; };
+struct Headers {
+  u64 base = 0;
+  u32 sect_align = 0, file_align = 0;
+  std::vector<Raw> secs;
+  size_t dd = 0;           // the data directories
+  size_t header_end = 0;   // the end of the section table
+};
+
+Headers read_headers(std::string_view data, const std::string& what) {
+  Headers h;
+  if (data.size() < 0x40 || data.compare(0, 2, "MZ") != 0) throw std::runtime_error(what + ": not a PE image");
   u32 pe = rd32(data, 0x3c);
-  if (data.compare(pe, 4, std::string("PE\0\0", 4)) != 0) throw std::runtime_error(path + ": no PE signature");
+  if (data.compare(pe, 4, std::string("PE\0\0", 4)) != 0) throw std::runtime_error(what + ": no PE signature");
   size_t fh = pe + 4;
   u16 nsec = rd16(data, fh + 2), opt_size = rd16(data, fh + 16);
   size_t oh = fh + 20;
-  if (rd16(data, oh) != 0x20b) throw std::runtime_error(path + ": not PE32+");
-  u64 base = rd64(data, oh + 24);
-  u32 sect_align = rd32(data, oh + 32), file_align = rd32(data, oh + 36);
-  size_t dd = oh + 112;
-  auto dir = [&](int k) { return std::pair<u32, u32>(rd32(data, dd + 8 * k), rd32(data, dd + 8 * k + 4)); };
+  if (rd16(data, oh) != 0x20b) throw std::runtime_error(what + ": not PE32+");
+  h.base = rd64(data, oh + 24);
+  h.sect_align = rd32(data, oh + 32);
+  h.file_align = rd32(data, oh + 36);
+  h.dd = oh + 112;
   size_t sec_tab = oh + opt_size;
 
-  struct Raw { u32 vsize, va, rawsize, rawptr, ch; };
-  std::vector<Raw> secs;
   for (int i = 0; i < nsec; ++i) {
     size_t s = sec_tab + 40 * i;
-    secs.push_back({rd32(data, s + 8), rd32(data, s + 12), rd32(data, s + 16), rd32(data, s + 20), rd32(data, s + 36)});
+    h.secs.push_back({rd32(data, s + 8), rd32(data, s + 12), rd32(data, s + 16), rd32(data, s + 20), rd32(data, s + 36)});
   }
-  // the memory-mapped image: headers, then each section at its virtual address (raw data, zero-padded)
-  auto adj_ptr = [&](u32 v) -> u32 { return file_align >= 0x200 ? (v / 0x200) * 0x200 : v; };
-  auto adj_va = [&](u32 v) -> u32 {
-    u32 sa = sect_align < 0x1000 ? file_align : sect_align;
-    return (sa && v % sa) ? sa * (v / sa) : v;
-  };
-  size_t header_end = sec_tab + 40 * nsec;
-  std::optional<u32> lowest;
-  for (auto& s : secs) if (s.rawptr > 0) { u32 a = adj_ptr(s.rawptr); if (!lowest || a < *lowest) lowest = a; }
-  // laid out first as a list of steps (a section below the end so far cuts the image back to its address), then
-  // done in a buffer of zero pages: the gaps (.bss) are never written
-  struct Step { size_t at, from, n; bool zero; };   // copy data[from, from + n) to `at`, or zero n bytes there
-  std::vector<Step> steps;
-  size_t size = std::min(data.size(), size_t((!lowest || *lowest < header_end) ? header_end : *lowest)), cap = size;
-  steps.push_back({0, 0, size, false});
-  for (auto& s : secs) {
-    if (s.vsize == 0 && s.rawsize == 0) continue;
-    u32 srd = s.rawsize, prd = adj_ptr(s.rawptr), vadj = adj_va(s.va);
-    if (srd > data.size() || prd > data.size() || u64(srd) + prd > data.size() || vadj >= 0x10000000) continue;
-    if (vadj < size) steps.push_back({vadj, 0, size - vadj, true});   // cut back: what was there is gone
-    size = vadj;
-    // a section's raw data: from the aligned file pointer for SizeOfRawData, clipped at the unaligned end
-    u32 ptr_adj = (sect_align < 0x1000 && s.rawptr == s.va) ? s.va : prd;
-    u64 end = u64(ptr_adj) + srd;
-    end = std::min<u64>(end, u64(s.rawptr) + s.rawsize);
-    if (ptr_adj < data.size() && end > ptr_adj) {
-      size_t n = size_t(std::min<u64>(end, data.size()) - ptr_adj);
-      steps.push_back({size, ptr_adj, n, false});
-      size += n;
-    }
-    cap = std::max(cap, size);
-  }
+  h.header_end = sec_tab + 40 * nsec;
+  return h;
+}
 
-  Image im;
-  im.base = base;
-  im.mem_ = std::make_shared<ZeroBuffer>(cap);
-  for (auto& st : steps) {
-    if (st.zero) std::memset(im.mem_->data() + st.at, 0, st.n);
-    else std::memcpy(im.mem_->data() + st.at, data.data() + st.from, st.n);
-  }
-  im.img = std::string_view(im.mem_->data(), size);
-  for (auto& s : secs) im.sections.push_back({base + s.va, base + s.va + std::max(s.vsize, s.rawsize), s.ch});
+// what the image's headers and directories say: sections, .pdata, base relocations, imports, the POGO entry
+void read_tables(Image& im, std::string_view data, const Headers& h) {
+  u64 base = h.base;
+  auto dir = [&](int k) { return std::pair<u32, u32>(rd32(data, h.dd + 8 * k), rd32(data, h.dd + 8 * k + 4)); };
+  for (auto& s : h.secs) im.sections.push_back({base + s.va, base + s.va + std::max(s.vsize, s.rawsize), s.ch});
   std::string_view img = im.img;
   // .pdata and base relocations read directly
   auto [exc_va, exc_size] = dir(3);
@@ -129,6 +102,81 @@ Image Image::load(const std::string& path) {
       im.pogo[name] = {base + r, base + r + sz};
     }
   }
+}
+
+// the memory-mapped image: headers, then each section at its virtual address (raw data, zero-padded). Laid out first
+// as a list of steps (a section below the end so far cuts the image back to its address), then done in a buffer of
+// zero pages: the gaps (.bss) are never written.
+struct Step { size_t at, from, n; bool zero; };   // copy data[from, from + n) to `at`, or zero n bytes there
+struct Plan {
+  std::vector<Step> steps;
+  size_t size = 0, cap = 0;   // the image's size; the buffer's (steps may write past the image when it is cut back)
+};
+
+Plan plan_layout(std::string_view data, const Headers& h) {
+  u32 sect_align = h.sect_align, file_align = h.file_align;
+  const std::vector<Raw>& secs = h.secs;
+  size_t header_end = h.header_end;
+  auto adj_ptr = [&](u32 v) -> u32 { return file_align >= 0x200 ? (v / 0x200) * 0x200 : v; };
+  auto adj_va = [&](u32 v) -> u32 {
+    u32 sa = sect_align < 0x1000 ? file_align : sect_align;
+    return (sa && v % sa) ? sa * (v / sa) : v;
+  };
+  std::optional<u32> lowest;
+  for (auto& s : secs) if (s.rawptr > 0) { u32 a = adj_ptr(s.rawptr); if (!lowest || a < *lowest) lowest = a; }
+  std::vector<Step> steps;
+  size_t size = std::min(data.size(), size_t((!lowest || *lowest < header_end) ? header_end : *lowest)), cap = size;
+  steps.push_back({0, 0, size, false});
+  for (auto& s : secs) {
+    if (s.vsize == 0 && s.rawsize == 0) continue;
+    u32 srd = s.rawsize, prd = adj_ptr(s.rawptr), vadj = adj_va(s.va);
+    if (srd > data.size() || prd > data.size() || u64(srd) + prd > data.size() || vadj >= 0x10000000) continue;
+    if (vadj < size) steps.push_back({vadj, 0, size - vadj, true});   // cut back: what was there is gone
+    size = vadj;
+    // a section's raw data: from the aligned file pointer for SizeOfRawData, clipped at the unaligned end
+    u32 ptr_adj = (sect_align < 0x1000 && s.rawptr == s.va) ? s.va : prd;
+    u64 end = u64(ptr_adj) + srd;
+    end = std::min<u64>(end, u64(s.rawptr) + s.rawsize);
+    if (ptr_adj < data.size() && end > ptr_adj) {
+      size_t n = size_t(std::min<u64>(end, data.size()) - ptr_adj);
+      steps.push_back({size, ptr_adj, n, false});
+      size += n;
+    }
+    cap = std::max(cap, size);
+  }
+  return Plan{std::move(steps), size, cap};
+}
+
+}  // namespace
+
+Image Image::load(const std::string& path) {
+  MappedFile file(path);
+  std::string_view data = file.view();
+  Headers h = read_headers(data, path);
+  Plan plan = plan_layout(data, h);
+  auto mem = std::make_shared<ZeroBuffer>(plan.cap);
+  for (auto& st : plan.steps) {
+    if (st.zero) std::memset(mem->data() + st.at, 0, st.n);
+    else std::memcpy(mem->data() + st.at, data.data() + st.from, st.n);
+  }
+  Image im;
+  im.base = h.base;
+  im.img = std::string_view(mem->data(), plan.size);
+  im.mem_ = std::move(mem);
+  im.headers = std::string(data.substr(0, std::min(h.header_end, data.size())));
+  read_tables(im, data, h);
+  im.finish();
+  return im;
+}
+
+Image Image::laid_out(std::string_view headers, std::string_view img, std::shared_ptr<const void> owner) {
+  Headers h = read_headers(headers, "laid-out image");
+  Image im;
+  im.base = h.base;
+  im.img = img;
+  im.mem_ = std::move(owner);
+  im.headers = std::string(headers);
+  read_tables(im, headers, h);
   im.finish();
   return im;
 }
@@ -137,9 +185,10 @@ Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections
                         std::vector<u64> relocs, std::unordered_map<u64, Import> imports) {
   Image im;
   im.base = base;
-  im.mem_ = std::make_shared<ZeroBuffer>(mem.size());
-  if (!mem.empty()) std::memcpy(im.mem_->data(), mem.data(), mem.size());
-  im.img = std::string_view(im.mem_->data(), mem.size());
+  auto buf = std::make_shared<ZeroBuffer>(mem.size());
+  if (!mem.empty()) std::memcpy(buf->data(), mem.data(), mem.size());
+  im.img = std::string_view(buf->data(), mem.size());
+  im.mem_ = std::move(buf);
   im.sections = std::move(sections);
   for (auto& [b, e] : pdata) im.pdata.push_back({b, e.first, e.second});
   im.reloc_sorted = std::move(relocs);

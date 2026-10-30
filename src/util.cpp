@@ -14,7 +14,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -45,6 +47,65 @@ std::string read_file(const std::string& path) {
   std::fclose(f);
   if (err) throw std::runtime_error("cannot read " + path);
   return out;
+}
+
+MappedFile::MappedFile(const std::string& path) {
+  bool ok = false;
+#ifdef _WIN32
+  // shared for delete too: another process may rename a new file over this one meanwhile (the view, all that is
+  // kept, goes on reading the old file)
+  HANDLE f = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (f != INVALID_HANDLE_VALUE) {
+    LARGE_INTEGER size{};
+    if (GetFileSizeEx(f, &size)) {
+      ok = size.QuadPart == 0;
+      if (size.QuadPart > 0) {
+        if (HANDLE m = CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr)) {
+          p_ = static_cast<const char*>(MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0));
+          CloseHandle(m);   // the view keeps the mapping
+          n_ = size_t(size.QuadPart);
+          ok = p_ != nullptr;
+        }
+      }
+    }
+    CloseHandle(f);
+  }
+#else
+  int fd = ::open(path.c_str(), O_RDONLY);
+  if (fd >= 0) {
+    struct stat st{};
+    if (fstat(fd, &st) == 0) {
+      ok = st.st_size == 0;
+      if (st.st_size > 0) {
+        void* p = mmap(nullptr, size_t(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
+        if (p != MAP_FAILED) { p_ = static_cast<const char*>(p); n_ = size_t(st.st_size); ok = true; }
+      }
+    }
+    ::close(fd);
+  }
+#endif
+  if (!ok) throw std::runtime_error("cannot read " + path);
+}
+
+MappedFile::~MappedFile() {
+  if (!p_) return;
+#ifdef _WIN32
+  UnmapViewOfFile(p_);
+#else
+  munmap(const_cast<char*>(p_), n_);
+#endif
+}
+
+void with_contents(const std::string& path, const std::function<void(std::string_view)>& fn) {
+  std::error_code ec;
+  auto size = std::filesystem::file_size(path, ec);
+  if (!ec && size >= (u64(1) << 20)) {
+    MappedFile m(path);
+    fn(m.view());
+  } else {
+    fn(read_file(path));
+  }
 }
 
 void for_each_file_line(const std::string& path, const std::function<void(std::string_view)>& fn) {
@@ -100,8 +161,9 @@ bool write_file_atomic(const std::string& path, std::string_view data) {
   }
   std::error_code ec;
   std::filesystem::rename(tmp, path, ec);
-  if (ec) std::filesystem::remove(tmp, ec);
-  return !ec;
+  if (!ec) return true;
+  std::filesystem::remove(tmp, ec);   // (resets ec: the rename's failure is the result)
+  return false;
 }
 
 std::vector<std::string> read_lines(const std::string& path) {

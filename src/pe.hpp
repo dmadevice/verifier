@@ -44,12 +44,16 @@ struct Unwind {
 class Image {
  public:
   static Image load(const std::string& path);
+  // an image already laid out at its virtual addresses (Image::img of a load), with the file's headers (Image::headers);
+  // `owner` keeps both alive
+  static Image laid_out(std::string_view headers, std::string_view img, std::shared_ptr<const void> owner);
   static Image from_parts(u64 base, std::string mem, std::vector<Section> sections,
                           std::map<u64, std::pair<u64, u32>> pdata, std::vector<u64> relocs,
                           std::unordered_map<u64, Import> imports);
 
   u64 base = 0;
   std::string_view img;                  // the memory-mapped image (offset = VA - base)
+  std::string headers;                   // the file's headers, to the end of the section table
   std::vector<Section> sections;
   std::vector<PData> pdata;               // by begin, one per begin (the first entry wins)
   std::vector<u64> reloc_sorted;          // the 64-bit relocation sites, sorted, distinct
@@ -72,7 +76,7 @@ class Image {
   size_t reloc_lower_bound(u64 va) const;
 
  private:
-  std::shared_ptr<ZeroBuffer> mem_;      // holds `img`; the image's zero-filled parts (.bss) take no memory
+  std::shared_ptr<const void> mem_;      // holds `img`: a ZeroBuffer (the .bss parts take no memory), or a mapped file
   void finish();
 };
 

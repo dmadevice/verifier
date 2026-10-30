@@ -680,35 +680,37 @@ std::vector<u32> build_index(const std::vector<std::string_view>& keys, u32 slot
 NameCache::NameCache(std::string path, std::string key, std::string undname)
     : path_(std::move(path)), key_(std::move(key)), undname_(std::move(undname)) {
   if (path_.empty() || !file_exists(path_)) return;
+  auto drop = [&] { file_ = {}; map_.reset(); };   // the counts stay 0: nothing reads the file
   try {
-    file_ = read_file(path_);
+    map_ = std::make_shared<MappedFile>(path_);
+    file_ = map_->view();
     std::string head = file_head(key_);
     size_t at = head.size();
-    if (file_.size() < at + 16 || file_.compare(0, at, head) != 0) { file_.clear(); return; }
+    if (file_.size() < at + 16 || file_.compare(0, at, head) != 0) { drop(); return; }
     const u32* h = reinterpret_cast<const u32*>(file_.data() + at);
     u64 ns = h[0], ne = h[1], es = h[2], ss = h[3];
     u64 words = 4 + ns + ROW * ne + es + ss;
-    if ((es & (es - 1)) || (ss & (ss - 1)) || !es || !ss || file_.size() < at + 4 * words) { file_.clear(); return; }
+    if ((es & (es - 1)) || (ss & (ss - 1)) || !es || !ss || file_.size() < at + 4 * words) { drop(); return; }
     str_end_ = h + 4;
     ent_ = str_end_ + ns;
     eidx_ = ent_ + ROW * ne;
     sidx_ = eidx_ + es;
     text_ = file_.data() + at + 4 * words;
     u64 text_size = file_.size() - at - 4 * words;
-    if (ns && str_end_[ns - 1] != text_size) { file_.clear(); return; }
+    if (ns && str_end_[ns - 1] != text_size) { drop(); return; }
     for (u64 i = 0; i < ns; ++i)
-      if (str_end_[i] > text_size || (i && str_end_[i] < str_end_[i - 1])) { file_.clear(); return; }
+      if (str_end_[i] > text_size || (i && str_end_[i] < str_end_[i - 1])) { drop(); return; }
     for (u64 i = 0; i < ROW * ne; ++i)
-      if ((i % ROW == 1 ? ent_[i] > 1 : ent_[i] >= ns)) { file_.clear(); return; }
-    for (u64 i = 0; i < es; ++i) if (eidx_[i] > ne) { file_.clear(); return; }
-    for (u64 i = 0; i < ss; ++i) if (sidx_[i] > ns) { file_.clear(); return; }
+      if ((i % ROW == 1 ? ent_[i] > 1 : ent_[i] >= ns)) { drop(); return; }
+    for (u64 i = 0; i < es; ++i) if (eidx_[i] > ne) { drop(); return; }
+    for (u64 i = 0; i < ss; ++i) if (sidx_[i] > ns) { drop(); return; }
     nstr_ = u32(ns);
     nent_ = u32(ne);
     eslots_ = u32(es);
     sslots_ = u32(ss);
     loaded_from_file_ = true;
   } catch (...) {
-    file_.clear();
+    drop();
   }
 }
 
@@ -834,7 +836,7 @@ void NameCache::save() {
   put(build_index(names, es));
   put(build_index(strs, ss));
   for (auto& s : strs) out += s;
-  write_file_atomic(path_, out);
+  write_file_atomic(path_, out);   // replaces the file whole: runs that have the old one mapped keep reading it
 }
 
 }  // namespace verifier

@@ -16,6 +16,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #undef CONST   // windows.h defines it; Op::CONST is ours
+#include <psapi.h>
 #else
 #include <malloc.h>
 #include <sys/resource.h>
@@ -444,7 +445,13 @@ class Phases {
     double ms = std::chrono::duration<double, std::milli>(now - t_).count();
     t_ = now;
     long rss = 0, heap = 0;
-#ifndef _WIN32
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS_EX pmc{};   // peak working set; private commit in use
+    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) {
+      rss = long(pmc.PeakWorkingSetSize >> 20);
+      heap = long(pmc.PrivateUsage >> 20);
+    }
+#else
     rusage ru{};
     getrusage(RUSAGE_SELF, &ru);
     rss = ru.ru_maxrss / 1024;
@@ -468,7 +475,7 @@ constexpr const char* LAST_RUN = "verifier-last.txt";
 
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier) {
   Sha256 h;
-  auto add = [&](const std::string& data) {
+  auto add = [&](std::string_view data) {
     u64 n = data.size();
     char len[8];
     std::memcpy(len, &n, 8);
@@ -484,7 +491,7 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
   for (auto& top : a.src) for (auto& f : walk_files(top)) files.push_back(f);
   for (auto& f : files) {
     add(f);
-    if (!f.empty() && file_exists(f)) add(read_file(f));
+    if (!f.empty() && file_exists(f)) with_contents(f, add);
     else add(std::string("\0absent", 7));
   }
   return h.hexdigest();
@@ -494,24 +501,25 @@ namespace {
 
 bool load_last(const std::string& path, const std::string& key, std::string& out, std::string& report, int& rc) {
   if (!file_exists(path)) return false;
-  std::string d;
-  try { d = read_file(path); } catch (...) { return false; }
+  std::unique_ptr<MappedFile> file;   // released before save_last renames a new record over it
+  try { file = std::make_unique<MappedFile>(path); } catch (...) { return false; }
+  std::string_view d = file->view();
   std::string head = "verifier-last 1\n" + key + "\n";
   if (d.compare(0, head.size(), head) != 0) return false;
   size_t p = head.size();
   auto num = [&](u64& v) {
     size_t e = d.find('\n', p);
-    if (e == std::string::npos) return false;
-    v = std::strtoull(d.substr(p, e - p).c_str(), nullptr, 10);
+    if (e == std::string_view::npos) return false;
+    v = std::strtoull(std::string(d.substr(p, e - p)).c_str(), nullptr, 10);
     p = e + 1;
     return true;
   };
   u64 r, no, nr;
   if (!num(r) || !num(no) || p + no > d.size()) return false;
-  out = d.substr(p, no);
+  out = std::string(d.substr(p, no));
   p += no;
   if (!num(nr) || p + nr != d.size()) return false;
-  report = d.substr(p, nr);
+  report = std::string(d.substr(p, nr));
   rc = int(r);
   return true;
 }
@@ -528,6 +536,7 @@ int run(int argc, char** argv) {
   Config p = Config::load(a.config);
   std::string last;
   if (a.json && a.check && !(a.update || a.show)) last = path_join(dirname(abspath(*a.json)), LAST_RUN);
+  Phases ph;
   std::string key;
   if (!last.empty()) {
     std::string exe = self_exe();
@@ -542,8 +551,8 @@ int run(int argc, char** argv) {
       return rc;
     }
   }
+  if (!last.empty()) ph.mark("replay key");
   Out out;
-  Phases ph;
   Original orig(p);
   ph.mark("original");
   std::vector<Ignored> ignored;

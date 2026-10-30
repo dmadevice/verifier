@@ -180,11 +180,11 @@ Original::Original(const Config& p) : config_(&p) {
       std::exit(1);
     }
   }
-  img = Image::load(p.original);
-  // the tables below come from the text exports, which rarely change: a snapshot of them is kept in the cache
-  std::string snapshot = p.cache_dir.empty() ? "" : path_join(p.cache_dir, "original-snapshot.bin");
+  // the image laid out and the tables from the text exports, which rarely change: a snapshot in the cache, mapped
   std::string key = snapshot_key(p);
+  std::string snapshot = p.cache_dir.empty() ? "" : path_join(p.cache_dir, "original-snapshot.bin");
   if (!snapshot.empty() && load_snapshot(snapshot, key)) return;
+  img = Image::load(p.original);
   load_exports();
   if (!snapshot.empty()) save_snapshot(snapshot, key);
 }
@@ -260,7 +260,7 @@ void Original::load_exports() {
 }
 
 std::string Original::snapshot_key(const Config& p) {
-  std::string key = "verifier original snapshot 2\n";
+  std::string key = "verifier original snapshot 3\n";
   for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
                   &p.library_functions, &p.symbols})
     key += file_stamp(*f) + "\n";
@@ -293,21 +293,29 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
   w.u(data_names_.size());
   for (u64 x : data_names_) w.u(x);
   w.s("end");
+  // then the image: its headers, and where the laid-out image starts (page-aligned) and its size
+  std::string f = w.file(key);
+  auto put = [&](u64 v) { f.append(reinterpret_cast<const char*>(&v), 8); };
+  put(img.headers.size());
+  f += img.headers;
+  u64 at = (f.size() + 16 + 4095) / 4096 * 4096;
+  put(at);
+  put(img.img.size());
+  f.resize(at, '\0');
+  f += img.img;
   std::error_code ec;
   std::filesystem::create_directories(config_->cache_dir, ec);
-  write_file_atomic(path, w.file(key));
+  write_file_atomic(path, f);
 }
 
 bool Original::load_snapshot(const std::string& path, const std::string& key) {
   if (!file_exists(path)) return false;
-  std::string data;
-  try { data = read_file(path); } catch (...) { return false; }
+  Original o;   // filled, then taken only when the whole file reads
+  try { o.snapshot_ = std::make_shared<MappedFile>(path); } catch (...) { return false; }
+  std::string_view data = o.snapshot_->view();
   Reader r{data, {}};
   if (r.raw() != key) return false;
-  Original o;   // filled, then taken only when the whole file reads
-  std::string_view strings = r.raw();
-  o.snapshot_.assign(strings.begin(), strings.end());   // the names are views of it
-  r.strings = std::string_view(o.snapshot_.data(), o.snapshot_.size());
+  r.strings = r.raw();   // the names are views of it
   std::vector<IdaFunction> fs;
   for (u64 n = r.count(32); n--;) {
     IdaFunction f;
@@ -347,9 +355,16 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   while (n--) o.data_names_.push_back(r.u());
   if (std::adjacent_find(o.data_names_.begin(), o.data_names_.end(), std::greater_equal<u64>()) != o.data_names_.end())
     return false;   // not sorted and distinct
-  if (r.s() != "end" || !r.ok || r.p != data.size()) return false;
+  if (r.s() != "end" || !r.ok) return false;
+  std::string_view headers = r.raw();
+  u64 at = r.u(), size = r.u();
+  if (!r.ok || at % 4096 || at < r.p || at > data.size() || data.size() - at != size) return false;
+  try {
+    o.img = Image::laid_out(headers, data.substr(at), o.snapshot_);
+  } catch (...) {
+    return false;
+  }
   o.digest = std::move(digest);
-  o.img = std::move(img);
   o.config_ = config_;
   *this = std::move(o);   // a vector keeps its buffer when moved: the views stay valid
   return true;
@@ -415,8 +430,8 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   std::vector<std::pair<u64, std::string_view>> syms;   // (address, decorated name) in map order
   std::vector<NameIds> infos;   // infos[i]: syms[i]'s
   {
-    std::string map_text = read_file(map_path);
-    syms = parse_map(map_text);
+    MappedFile map_file(map_path);
+    syms = parse_map(map_file.view());
     std::vector<std::string_view> decs;
     decs.reserve(syms.size());
     for (auto& s : syms) decs.push_back(s.second);

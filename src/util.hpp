@@ -22,6 +22,28 @@ using Bytes = std::string;   // raw bytes
 
 std::string read_file(const std::string& path);   // throws on error
 bool file_exists(const std::string& path);
+
+// A whole file mapped read-only (an empty view for an empty file), shared with the page cache and other processes
+// instead of copied. The view is valid while the object lives, and the file must not be rewritten in place
+// meanwhile: map inputs and the cache's files, which are only ever replaced whole (write_file_atomic renames a new
+// file over them; the mapping keeps reading the old one).
+class MappedFile {
+ public:
+  explicit MappedFile(const std::string& path);   // throws std::runtime_error, as read_file
+  ~MappedFile();
+  MappedFile(const MappedFile&) = delete;
+  MappedFile& operator=(const MappedFile&) = delete;
+  std::string_view view() const { return std::string_view(p_, n_); }
+
+ private:
+  const char* p_ = nullptr;
+  size_t n_ = 0;
+};
+
+// fn(the file's bytes): mapped when large, read when small (mapping a small file costs more system calls than
+// reading it). Throws as read_file.
+void with_contents(const std::string& path, const std::function<void(std::string_view)>& fn);
+
 // writes a temporary file beside `path`, then renames it over `path` (readers see the old file or the new one);
 // false (and no file) on failure
 bool write_file_atomic(const std::string& path, std::string_view data);

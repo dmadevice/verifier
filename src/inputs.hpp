@@ -3,6 +3,7 @@
 #pragma once
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -89,7 +90,7 @@ class Original {
 
  private:
   const Config* config_ = nullptr;
-  std::vector<char> snapshot_;     // the snapshot's string table, when read from it: the names are views of it
+  std::shared_ptr<const MappedFile> snapshot_;   // the snapshot, when read from it: names and image are views of it
   std::deque<std::string> text_;   // or the names from the exports
   std::string_view keep(std::string s) { return text_.emplace_back(std::move(s)); }
   std::vector<u64> boundaries_, align_starts_, align_ends_;
