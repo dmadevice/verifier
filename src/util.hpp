@@ -53,7 +53,7 @@ bool with_contents_if_present(const std::string& path, const std::function<void(
 // false (and no file) on failure
 bool write_file_atomic(const std::string& path, std::string_view data);
 std::vector<std::string> read_lines(const std::string& path);   // splitlines() semantics, newline stripped
-// for_each_line over a file read in blocks (bounded memory)
+// for_each_line over a file's contents (with_contents: mapped when large)
 void for_each_file_line(const std::string& path, const std::function<void(std::string_view)>& fn);
 // fn(line) for each line of `data` (as read_lines splits them), without copying
 template <class F>

@@ -29,13 +29,12 @@ std::optional<std::string> sig_flag(const AnnotationFlags& flags) {
 
 namespace {
 
-// the files under root in walk_files' order (a link to a directory is a file), with their sizes and times when
-// `stamps`: on Windows from the listing itself (FindFirstFileEx gives every entry's), elsewhere a stat each
-void walk(const std::string& root, bool stamps, std::vector<ListedFile>& out) {
+// list_files, appending to out (a link to a directory is a file): on Windows the sizes and times come from the listing
+// itself (FindFirstFileEx gives every entry's), elsewhere from a stat each
+void walk(const std::string& root, std::vector<ListedFile>& out) {
   std::vector<ListedFile> files;   // by name, until joined to root
   std::vector<std::string> dirs;
 #ifdef _WIN32
-  (void)stamps;
   WIN32_FIND_DATAW d;
   HANDLE h = FindFirstFileExW((std::filesystem::path(root) / L"*").c_str(), FindExInfoBasic, &d, FindExSearchNameMatch,
                               nullptr, FIND_FIRST_EX_LARGE_FETCH);
@@ -65,12 +64,10 @@ void walk(const std::string& root, bool stamps, std::vector<ListedFile>& out) {
       continue;
     }
     ListedFile f{std::move(name)};
-    if (stamps) {
-      f.size = it->file_size(e2);
-      if (e2) f.size = u64(-1);
-      auto time = it->last_write_time(e2);
-      f.time = e2 ? std::numeric_limits<i64>::max() : i64(time.time_since_epoch().count());   // unknown: recent
-    }
+    f.size = it->file_size(e2);
+    if (e2) f.size = u64(-1);
+    auto time = it->last_write_time(e2);
+    f.time = e2 ? std::numeric_limits<i64>::max() : i64(time.time_since_epoch().count());   // unknown: recent
     files.push_back(std::move(f));
   }
 #endif
@@ -80,22 +77,14 @@ void walk(const std::string& root, bool stamps, std::vector<ListedFile>& out) {
     f.path = path_join(root, f.path);
     out.push_back(std::move(f));
   }
-  for (auto& sub : dirs) walk(path_join(root, sub), stamps, out);
+  for (auto& sub : dirs) walk(path_join(root, sub), out);
 }
 
 }  // namespace
 
-std::vector<std::string> walk_files(const std::string& root) {
-  std::vector<ListedFile> files = list_files(root, false);
-  std::vector<std::string> out;
-  out.reserve(files.size());
-  for (auto& f : files) out.push_back(std::move(f.path));
-  return out;
-}
-
-std::vector<ListedFile> list_files(const std::string& root, bool stamps) {
+std::vector<ListedFile> list_files(const std::string& root) {
   std::vector<ListedFile> out;
-  walk(root, stamps, out);
+  walk(root, out);
   return out;
 }
 
@@ -143,7 +132,7 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
                                           const std::function<void(const ListedFile&, std::string_view)>& seen) {
   std::vector<Annotation> out;
   for (auto& root : roots) {
-    for (auto& file : list_files(root, bool(seen))) {
+    for (auto& file : list_files(root)) {
       const std::string& path = file.path;
       bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
                     ends_with(path, ".inl");

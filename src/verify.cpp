@@ -482,23 +482,21 @@ void add_field(Sha256& h, std::string_view data) {
   h.update(data);
 }
 
-std::vector<std::string> source_files(const Args& a) {   // the files under --src, in walk_files order
+std::vector<std::string> source_files(const Args& a) {   // the files under --src, in list_files order
   std::vector<std::string> out;
-  for (auto& top : a.src) for (auto& f : walk_files(top)) out.push_back(std::move(f));
+  for (auto& top : a.src) for (auto& f : list_files(top)) out.push_back(std::move(f.path));
   return out;
 }
 
 }  // namespace
 
-std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier,
-                    const std::vector<std::string>& sources, const std::function<std::string(const std::string&)>& hash) {
+std::string run_key(const Args& a, const Config& p, const std::string& verifier, const std::vector<std::string>& sources,
+                    const std::function<std::string(const std::string&)>& hash) {
   Sha256 h;
   auto add = [&](std::string_view data) { add_field(h, data); };
-  add("verifier 3");
+  add("verifier 4");
   add(verifier);
-  add(p.root);
-  for (auto& s : args) add(s);
-  std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.file, p.undname};
+  std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.undname};
   // the original and the exports: with a cache a run reads them only through the snapshot, so its key stands for them
   if (p.cache_dir.empty()) for (auto* f : p.snapshot_inputs()) files.push_back(*f);
   else add(Original::snapshot_key(p));
@@ -511,8 +509,8 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
   return h.hexdigest();
 }
 
-std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier) {
-  return run_key(args, a, p, verifier, source_files(a), sha256_file_if_present);
+std::string run_key(const Args& a, const Config& p, const std::string& verifier) {
+  return run_key(a, p, verifier, source_files(a), sha256_file_if_present);
 }
 
 i64 two_seconds_ago() {
@@ -520,15 +518,15 @@ i64 two_seconds_ago() {
   return i64((fs::file_time_type::clock::now() - std::chrono::seconds(2)).time_since_epoch().count());
 }
 
-std::string stamp_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& exe) {
+std::string stamp_key(const Args& a, const Config& p, const std::string& exe) {
   std::vector<ListedFile> sources;
   for (auto& top : a.src)
     for (auto& f : list_files(top)) sources.push_back(std::move(f));
-  return stamp_key(args, a, p, exe, sources, two_seconds_ago());
+  return stamp_key(a, p, exe, sources, two_seconds_ago());
 }
 
-std::string stamp_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& exe,
-                      const std::vector<ListedFile>& sources, i64 recent) {
+std::string stamp_key(const Args& a, const Config& p, const std::string& exe, const std::vector<ListedFile>& sources,
+                      i64 recent) {
   Sha256 h;
   auto add = [&](std::string_view data) { add_field(h, data); };
   bool racy = false;
@@ -537,11 +535,8 @@ std::string stamp_key(const std::vector<std::string>& args, const Args& a, const
     add(f.empty() ? "" : file_stamp(f, &t));
     racy |= t >= recent;
   };
-  add("verifier stamps 1");
+  add("verifier stamps 2");
   stamp(exe);
-  add(p.root);
-  for (auto& s : args) add(s);
-  add(sha256_file_if_present(p.file));
   for (auto* f : {&a.rebuilt, &a.map, &p.undname}) stamp(*f);
   stamp(a.matched.value_or(""));
   if (p.cache_dir.empty())
@@ -556,17 +551,15 @@ std::string stamp_key(const std::vector<std::string>& args, const Args& a, const
   return racy ? "" : h.hexdigest();
 }
 
-namespace {
-
-// the command: the arguments, the root and the configuration's contents (a record replays only its own command)
 std::string command_key(const std::vector<std::string>& args, const Config& p) {
   Sha256 h;
-  for (auto& s : args) { h.update(s); h.update(std::string_view("\0", 1)); }
-  h.update(p.root);
-  h.update(std::string_view("\0", 1));
-  h.update(sha256_file_if_present(p.file));
+  for (auto& s : args) add_field(h, s);
+  add_field(h, p.root);
+  add_field(h, sha256_file_if_present(p.file));
   return h.hexdigest();
 }
+
+namespace {
 
 // the record: a version line, the command, the rebuilt image's stamp, all the inputs' stamps ("-" for none), the
 // rebuilt image's SHA-256, the key, the exit status, then stdout and the report, each after its length. Checked in
@@ -594,7 +587,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
     return true;
   };
   std::string_view version, rec_command, rec_image_stamp, rec_stamps, rec_image, rec_key;
-  if (!line(version) || version != "verifier-last 5" || !line(rec_command) || rec_command != command ||
+  if (!line(version) || version != "verifier-last 6" || !line(rec_command) || rec_command != command ||
       !line(rec_image_stamp) || !line(rec_stamps) || !line(rec_image) || !line(rec_key))
     return false;
   last.by_stamps = rec_image_stamp == image_stamp && rec_stamps != "-" && rec_stamps == stamps();
@@ -617,7 +610,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
 
 void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
                const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc) {
-  write_file_atomic(path, "verifier-last 5\n" + command + "\n" + image_stamp + "\n" + (stamps.empty() ? "-" : stamps) + "\n" +
+  write_file_atomic(path, "verifier-last 6\n" + command + "\n" + image_stamp + "\n" + (stamps.empty() ? "-" : stamps) + "\n" +
                               image + "\n" + key + "\n" +
                               std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
                               std::to_string(report.size()) + "\n" + report);
@@ -648,11 +641,11 @@ int run(int argc, char** argv) {
   std::vector<std::string> args(argv + 1, argv + argc);
   std::string exe = self_exe();
   auto key_of = [&](const std::vector<std::string>& sources) {
-    return run_key(args, a, p, exe.empty() ? "" : hash(exe), sources, hash_if_present);
+    return run_key(a, p, exe.empty() ? "" : hash(exe), sources, hash_if_present);
   };
   // computed before the run only when the record needs them: the stamps when its image has this one's, the key when
-  // the stamps differ and its image has this one's hash; otherwise from what the run reads (the sources' listing as
-  // they are parsed), against the run's start
+  // the stamps differ and its image has this one's hash. The record a run writes takes its stamps (and the key, unless
+  // it came first) from the sources as they are parsed, against the run's start
   std::string command, image_stamp, stamps, key;
   bool stamped = false;
   i64 start = two_seconds_ago();
@@ -660,7 +653,7 @@ int run(int argc, char** argv) {
     command = command_key(args, p);
     image_stamp = file_stamp(a.rebuilt);
     auto stamps_now = [&] {
-      if (!stamped) stamps = stamp_key(args, a, p, exe);
+      if (!stamped) stamps = stamp_key(a, p, exe);
       stamped = true;
       return stamps;
     };
@@ -682,15 +675,12 @@ int run(int argc, char** argv) {
   Original orig(p, hash);
   ph.mark("original");
   std::vector<Ignored> ignored;
-  // otherwise the key comes from the sources as they are parsed
-  std::vector<std::string> sources;
   std::vector<ListedFile> listing;
   std::function<void(const ListedFile&, std::string_view)> seen;
-  if (!last.empty() && key.empty())
+  if (!last.empty())
     seen = [&](const ListedFile& f, std::string_view data) {
-      sources.push_back(f.path);
       listing.push_back(f);
-      hashes.emplace(f.path, sha256_hex(data));
+      if (key.empty()) hashes.emplace(f.path, sha256_hex(data));
     };
   auto anns = parse_annotations(a.src, p.module, &ignored, seen);
   check_duplicates(anns);
@@ -764,10 +754,13 @@ int run(int argc, char** argv) {
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
   if (!last.empty()) {
-    // from the run's listing, unless the key came first (then no listing was kept)
-    if (!stamped) stamps = key.empty() ? stamp_key(args, a, p, exe, listing, start) : stamp_key(args, a, p, exe);
-    save_last(last, command, image_stamp, stamps, hash_if_present(a.rebuilt), key.empty() ? key_of(sources) : key, out.text(),
-              report, rc);
+    if (key.empty()) {
+      std::vector<std::string> sources;
+      for (auto& f : listing) sources.push_back(f.path);
+      key = key_of(sources);
+    }
+    save_last(last, command, image_stamp, stamp_key(a, p, exe, listing, start), hash_if_present(a.rebuilt), key,
+              out.text(), report, rc);
   }
   // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
   std::fflush(nullptr);

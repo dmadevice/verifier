@@ -36,18 +36,16 @@ bool is_counted(const std::string& kind);   // FUNCTION SYNTHETIC TEMPLATE
 bool is_paired(const std::string& kind);    // counted + LIBRARY
 std::optional<std::string> sig_flag(const AnnotationFlags& flags);   // the parameter list, if any
 
-// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name).
-std::vector<std::string> walk_files(const std::string& root);
-// The same files with their sizes and modification times (on Windows from the directory listing, without opening
-// each file; elsewhere 0 unless `stamps`)
+// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name), with their
+// sizes and modification times (on Windows from the directory listing, without opening each file)
 struct ListedFile {
   std::string path;
   u64 size = 0;
   i64 time = 0;   // the file clock's ticks
 };
-std::vector<ListedFile> list_files(const std::string& root, bool stamps = true);
+std::vector<ListedFile> list_files(const std::string& root);
 // The annotations in the files under roots. `seen`, when given, gets every file as list_files gives it and its
-// contents, in walk_files order, the files that cannot hold an annotation included.
+// contents, in that order, the files that cannot hold an annotation included.
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
                                           std::vector<Ignored>* ignored,
                                           const std::function<void(const ListedFile&, std::string_view)>& seen = {});

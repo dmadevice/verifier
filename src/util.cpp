@@ -167,36 +167,7 @@ void with_contents(const std::string& path, const std::function<void(std::string
 }
 
 void for_each_file_line(const std::string& path, const std::function<void(std::string_view)>& fn) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
-  if (!f) throw std::runtime_error("cannot read " + path);
-  std::string carry;
-  std::vector<char> buf(1 << 20);
-  size_t got;
-  while ((got = std::fread(buf.data(), 1, buf.size(), f)) > 0) {
-    std::string_view block(buf.data(), got);
-    size_t last = block.find_last_of("\n\r");
-    if (last == std::string_view::npos) { carry.append(block); continue; }
-    // a "\r" ending the block may be the first half of "\r\n": keep it for the next block
-    if (block[last] == '\r' && last + 1 == got) {
-      size_t prev = last ? block.find_last_of("\n\r", last - 1) : std::string_view::npos;
-      if (prev == std::string_view::npos) { carry.append(block); continue; }
-      last = prev;
-    }
-    std::string_view head = block.substr(0, last + 1);
-    if (!carry.empty()) {
-      size_t first = head.find_first_of("\n\r");
-      size_t e = first + 1;
-      if (head[first] == '\r' && e < head.size() && head[e] == '\n') ++e;
-      carry.append(head.substr(0, e));
-      for_each_line(carry, fn);
-      carry.clear();
-      head = head.substr(e);
-    }
-    for_each_line(head, fn);
-    carry.assign(block.substr(last + 1));
-  }
-  std::fclose(f);
-  if (!carry.empty()) for_each_line(carry, fn);
+  with_contents(path, [&](std::string_view data) { for_each_line(data, fn); });
 }
 
 std::string file_stamp(const std::string& path, i64* time_out) {

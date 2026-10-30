@@ -136,21 +136,6 @@ Symbols::Symbols(const std::vector<std::pair<u64, std::string_view>>& syms) {
   for (auto& [i, va] : first_seen) order_.push_back(va);
 }
 
-Symbols Symbols::grouped(const std::vector<std::pair<u64, std::vector<std::string_view>>>& by_va) {
-  Symbols s;
-  for (auto& [va, names] : by_va) s.order_.push_back(va);
-  std::vector<size_t> by_addr(by_va.size());
-  for (size_t i = 0; i < by_addr.size(); ++i) by_addr[i] = i;
-  std::stable_sort(by_addr.begin(), by_addr.end(), [&](size_t a, size_t b) { return by_va[a].first < by_va[b].first; });
-  for (size_t i : by_addr) {
-    s.vas_.push_back(by_va[i].first);
-    s.first_.push_back(u32(s.names_.size()));
-    s.names_.insert(s.names_.end(), by_va[i].second.begin(), by_va[i].second.end());
-  }
-  s.first_.push_back(u32(s.names_.size()));
-  return s;
-}
-
 long Symbols::index(u64 va) const {
   auto it = std::lower_bound(vas_.begin(), vas_.end(), va);
   return it != vas_.end() && *it == va ? long(it - vas_.begin()) : -1;

@@ -51,8 +51,6 @@ class Symbols {
  public:
   Symbols() = default;
   explicit Symbols(const std::vector<std::pair<u64, std::string_view>>& syms);   // (address, name) in map order
-  // tests: each address with its names, in map order
-  static Symbols grouped(const std::vector<std::pair<u64, std::vector<std::string_view>>>& by_va);
   std::span<const std::string_view> names(u64 va) const;   // empty when no symbol is there
   bool contains(u64 va) const { return index(va) >= 0; }
   const std::vector<u64>& vas() const { return vas_; }         // sorted

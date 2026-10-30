@@ -35,11 +35,11 @@ using json::Value;
 namespace {
 
 using NameMap = std::unordered_map<u64, std::string_view>;
-Symbols symbols_at(std::vector<u64> vas) {   // a symbol without names at each address, in address order
+Symbols symbols_at(std::vector<u64> vas) {   // a symbol with an empty name at each address, in address order
   std::sort(vas.begin(), vas.end());
-  std::vector<std::pair<u64, std::vector<std::string_view>>> by_va;
-  for (u64 v : vas) by_va.push_back({v, {}});
-  return Symbols::grouped(by_va);
+  std::vector<std::pair<u64, std::string_view>> syms;
+  for (u64 v : vas) syms.emplace_back(v, "");
+  return Symbols(syms);
 }
 NameOf name_of(const NameMap& m) {   // a lookup in m ("" for none)
   return [&m](u64 va) { auto it = m.find(va); return it == m.end() ? std::string_view() : it->second; };
@@ -443,7 +443,7 @@ struct FakeRebuilt : Rebuilt {
 Problems folded_annotations() {
   Original orig;
   FakeRebuilt reb;
-  reb.symbols = Symbols::grouped({{0x100, {"?A@@YAXXZ", "?B@@YAXXZ"}}, {0x200, {"?C@@YAXXZ"}}});
+  reb.symbols = Symbols({{0x100, "?A@@YAXXZ"}, {0x100, "?B@@YAXXZ"}, {0x200, "?C@@YAXXZ"}});
   reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"A", 0x100}, {"B", 0x100}, {"C", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
@@ -559,7 +559,7 @@ Problems local_static_names() {
 Problems stub_pairing() {
   Original orig;
   FakeRebuilt reb;
-  reb.symbols = Symbols::grouped({{0x100, {"sub_1000"}}, {0x200, {"A"}}});
+  reb.symbols = Symbols({{0x100, "sub_1000"}, {0x200, "A"}});
   std::map<std::string, u64> m{{"sub_1000", 0x100}, {"A", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb, {{"STUB", 0x1000, "sub_1000", {}, "s.cpp", 1}, {"FUNCTION", 0x2000, "A", {}, "a.cpp", 1}});
@@ -606,18 +606,30 @@ Problems replay_key() {
   std::vector<std::pair<std::string, std::function<void()>>> changes;
   for (auto& [n, path] : files) changes.emplace_back(n, [&write, path = path] { write(path, "2"); });
   changes.emplace_back("added source", [&] { write((d / "src" / "b.h").string(), ""); });
-  changes.emplace_back("arguments", [&] { args.push_back("--json"); });
   for (auto& [name, change] : changes) {
     for (auto& [n, path] : files) write(path, "1");
     args = {"--check"};
     std::error_code ec;
     fs::remove(d / "src" / "b.h", ec);
-    std::string key = run_key(args, a, p, "verifier");
-    if (run_key(args, a, p, "verifier") != key) bad.push_back({"replay", "the key of the same inputs differs"});
+    std::string key = run_key(a, p, "verifier");
+    if (run_key(a, p, "verifier") != key) bad.push_back({"replay", "the key of the same inputs differs"});
     change();
-    if (run_key(args, a, p, "verifier") == key) bad.push_back({"replay", "the key ignores " + name});
+    if (run_key(a, p, "verifier") == key) bad.push_back({"replay", "the key ignores " + name});
   }
-  if (run_key(args, a, p, "verifier") == run_key(args, a, p, "another verifier")) bad.push_back({"replay", "the key ignores the verifier"});
+  if (run_key(a, p, "verifier") == run_key(a, p, "another verifier")) bad.push_back({"replay", "the key ignores the verifier"});
+  std::error_code removed;
+  fs::remove(d / "src" / "b.h", removed);   // the last change's
+  // the command: its arguments, the root and the configuration's contents
+  p.file = (d / "verifier.conf").string();
+  write(p.file, "a = 1");
+  std::string command = command_key(args, p);
+  if (command_key(args, p) != command) bad.push_back({"replay", "the command of the same run differs"});
+  if (command_key({"--check", "--json"}, p) == command) bad.push_back({"replay", "the command ignores the arguments"});
+  Config q = p;
+  q.root = "elsewhere";
+  if (command_key(args, q) == command) bad.push_back({"replay", "the command ignores the root"});
+  write(p.file, "a = 2");
+  if (command_key(args, p) == command) bad.push_back({"replay", "the command ignores the configuration's contents"});
   // a run that computes the key at its end takes the sources from parsing them: the same key, the files that cannot
   // hold an annotation included
   fs::create_directories(d / "src" / "sub");
@@ -635,7 +647,7 @@ Problems replay_key() {
     auto it = hashes.find(f);
     return it != hashes.end() ? it->second : fs::exists(f) ? sha256_file(f) : std::string();
   };
-  if (seen.size() != 3 || run_key(args, a, p, "verifier", seen, hash) != run_key(args, a, p, "verifier"))
+  if (seen.size() != 3 || run_key(a, p, "verifier", seen, hash) != run_key(a, p, "verifier"))
     bad.push_back({"replay", "the key from parsing the sources differs from the walked one"});
   // and the stamps from that listing are the listed ones (an hour old here: none are recent)
   auto hour_ago = fs::file_time_type::clock::now() - std::chrono::hours(1);
@@ -644,23 +656,23 @@ Problems replay_key() {
   fs::last_write_time(*a.matched, hour_ago);
   listed.clear();
   parse_annotations(a.src, "EXAMPLE", nullptr, [&](const ListedFile& f, std::string_view) { listed.push_back(f); });
-  std::string stamps = stamp_key(args, a, p, "");
-  if (stamps.empty() || stamp_key(args, a, p, "", listed, two_seconds_ago()) != stamps)
+  std::string stamps = stamp_key(a, p, "");
+  if (stamps.empty() || stamp_key(a, p, "", listed, two_seconds_ago()) != stamps)
     bad.push_back({"replay", "the stamps from parsing the sources differ from the listed ones"});
   // the original: by its contents without a cache, by the snapshot's key (size, time, configured hash) with one
   p.original = (d / "orig.dll").string();
   write(p.original, "1");
-  std::string plain = run_key(args, a, p, "verifier");
+  std::string plain = run_key(a, p, "verifier");
   write(p.original, "2");
-  if (run_key(args, a, p, "verifier") == plain) bad.push_back({"replay", "the key ignores the original's contents"});
+  if (run_key(a, p, "verifier") == plain) bad.push_back({"replay", "the key ignores the original's contents"});
   p.cache_dir = (d / "cache").string();
-  std::string cached = run_key(args, a, p, "verifier");
+  std::string cached = run_key(a, p, "verifier");
   if (cached == plain) bad.push_back({"replay", "the key with a cache is the one without"});
   write(p.original, "22");
-  if (run_key(args, a, p, "verifier") == cached) bad.push_back({"replay", "the key with a cache ignores the original"});
-  cached = run_key(args, a, p, "verifier");
+  if (run_key(a, p, "verifier") == cached) bad.push_back({"replay", "the key with a cache ignores the original"});
+  cached = run_key(a, p, "verifier");
   p.original_sha256 = "ab";
-  if (run_key(args, a, p, "verifier") == cached || Original::snapshot_key(p) == [&] { Config q = p; q.original_sha256 = "cd"; return Original::snapshot_key(q); }())
+  if (run_key(a, p, "verifier") == cached || Original::snapshot_key(p) == [&] { Config q = p; q.original_sha256 = "cd"; return Original::snapshot_key(q); }())
     bad.push_back({"replay", "the snapshot's key ignores the configured hash"});
   std::error_code ec;
   fs::remove_all(d, ec);
@@ -829,7 +841,7 @@ Problems addend_across_annotation(u64 off) {
   u64 rg = r.put(DATA, Bytes(0x40, '\0'), 16), ry = r.put(DATA, Bytes(4, '\0'), 16);
   Original orig;
   FakeRebuilt reb;
-  reb.symbols = Symbols::grouped({{rg, {"?g@@3HA"}}, {ry, {"?y@@3HA"}}});
+  reb.symbols = Symbols({{rg, "?g@@3HA"}, {ry, "?y@@3HA"}});
   reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"g", rg}, {"y", ry}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
@@ -1122,23 +1134,19 @@ Problems stamp_keys() {
   p.file = (d / "verifier.conf").string();   // by its contents: young or not
   std::vector<std::string> args{"--check"};
   std::string exe = files[5].string();
-  std::string key = stamp_key(args, a, p, exe);
-  if (key.empty() || stamp_key(args, a, p, exe) != key) bad.push_back({"stamps", "no key, or another for the same inputs"});
+  std::string key = stamp_key(a, p, exe);
+  if (key.empty() || stamp_key(a, p, exe) != key) bad.push_back({"stamps", "no key, or another for the same inputs"});
   fs::last_write_time(files[4], old + std::chrono::seconds(1));
-  std::string touched = stamp_key(args, a, p, exe);
+  std::string touched = stamp_key(a, p, exe);
   if (touched == key || touched.empty()) bad.push_back({"stamps", "a source's time ignored"});
   write(files[1], "22");
   fs::last_write_time(files[1], old);
-  if (stamp_key(args, a, p, exe) == touched) bad.push_back({"stamps", "the map's size ignored"});
-  std::string sized = stamp_key(args, a, p, exe);
-  write(d / "verifier.conf", "a = 2");
-  if (stamp_key(args, a, p, exe) == sized) bad.push_back({"stamps", "the configuration's contents ignored"});
-  if (stamp_key({"--check", "--json"}, a, p, exe) == stamp_key(args, a, p, exe)) bad.push_back({"stamps", "the arguments ignored"});
+  if (stamp_key(a, p, exe) == touched) bad.push_back({"stamps", "the map's size ignored"});
   write(files[3], "1");   // young: the stamps cannot tell a change within its clock tick
-  if (!stamp_key(args, a, p, exe).empty()) bad.push_back({"stamps", "a key while a source is young"});
+  if (!stamp_key(a, p, exe).empty()) bad.push_back({"stamps", "a key while a source is young"});
   fs::last_write_time(files[3], old);
   write(files[0], "1");
-  if (!stamp_key(args, a, p, exe).empty()) bad.push_back({"stamps", "a key while the rebuilt image is young"});
+  if (!stamp_key(a, p, exe).empty()) bad.push_back({"stamps", "a key while the rebuilt image is young"});
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;
