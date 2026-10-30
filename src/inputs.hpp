@@ -72,10 +72,14 @@ struct Linked {
 
 class Original {
  public:
-  // exits (code 1) when the original's SHA-256 is not the configured one; hash_file gives a file's (the caller's may
-  // remember the files it has hashed)
+  // exits (code 1) when the original's SHA-256 is not the configured one, checked when the snapshot is made (a run
+  // from the snapshot does not read the original); hash_file gives a file's (the caller's may remember the files it
+  // has hashed)
   explicit Original(const Config& c, const std::function<std::string(const std::string&)>& hash_file = sha256_file);
   Original() = default;                 // fixtures: fill the fields
+  // the snapshot's key: the configured hash, and each input file's path, size and modification time. The snapshot (the
+  // tables and the laid-out image, in the cache) is valid while they stay the same
+  static std::string snapshot_key(const Config& c);
   std::string digest;
   Image img;
   FunctionTable functions;
@@ -101,8 +105,6 @@ class Original {
   std::vector<u64> data_names_;   // sorted, distinct
   void load_exports();   // the tables from the text exports
   void load_items();
-  // the tables as a binary file in the cache, valid while every input file keeps its size and modification time
-  static std::string snapshot_key(const Config& c);
   bool load_snapshot(const std::string& path, const std::string& key);
   void save_snapshot(const std::string& path, const std::string& key) const;
 };

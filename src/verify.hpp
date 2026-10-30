@@ -61,7 +61,8 @@ struct Args {
   bool check = false, update = false;
 };
 // the --check replay key: the verifier (the executable's hash), its arguments and every file it reads, each by its
-// SHA-256: `hash` gives a file's ("" when it is absent), and `sources` lists the files under --src in walk_files order
+// SHA-256 (`hash` gives a file's, "" when it is absent; `sources` lists the files under --src in walk_files order).
+// With a cache the original and the exports are read only through the snapshot: its key stands for them.
 std::string run_key(const std::vector<std::string>& args, const Args& a, const Config& p, const std::string& verifier,
                     const std::vector<std::string>& sources, const std::function<std::string(const std::string&)>& hash);
 // the same, walking --src and hashing every file

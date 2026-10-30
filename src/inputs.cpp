@@ -173,17 +173,17 @@ Original::Original(const Config& p, const std::function<std::string(const std::s
     std::fprintf(stderr, "verifier: no original binary %s\n", p.original.c_str());
     std::exit(2);
   }
-  if (!p.original_sha256.empty()) {
-    digest = p.original_sha256;
-    if (hash_file(p.original) != digest) {
-      std::fprintf(stderr, "original image hash mismatch: %s is not %s\n", p.original.c_str(), digest.c_str());
-      std::exit(1);
-    }
-  }
-  // the image laid out and the tables from the text exports, which rarely change: a snapshot in the cache, mapped
+  digest = p.original_sha256;
+  // the image laid out and the tables from the text exports, which rarely change: a snapshot in the cache, mapped. A
+  // run from the snapshot does not read the original, so the original is checked when the snapshot is made (its key
+  // holds the configured hash)
   std::string key = snapshot_key(p);
   std::string snapshot = p.cache_dir.empty() ? "" : path_join(p.cache_dir, "original-snapshot.bin");
   if (!snapshot.empty() && load_snapshot(snapshot, key)) return;
+  if (!digest.empty() && hash_file(p.original) != digest) {
+    std::fprintf(stderr, "original image hash mismatch: %s is not %s\n", p.original.c_str(), digest.c_str());
+    std::exit(1);
+  }
   img = Image::load(p.original);
   load_exports();
   if (!snapshot.empty()) save_snapshot(snapshot, key);
@@ -260,7 +260,7 @@ void Original::load_exports() {
 }
 
 std::string Original::snapshot_key(const Config& p) {
-  std::string key = "verifier original snapshot 3\n";
+  std::string key = "verifier original snapshot 3\n" + p.original_sha256 + "\n";
   for (auto* f : {&p.original, &p.functions, &p.vtables, &p.data_items, &p.data_names, &p.library_matches,
                   &p.library_functions, &p.symbols})
     key += file_stamp(*f) + "\n";

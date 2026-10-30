@@ -635,6 +635,21 @@ Problems replay_key() {
   };
   if (seen.size() != 3 || run_key(args, a, p, "verifier", seen, hash) != run_key(args, a, p, "verifier"))
     bad.push_back({"replay", "the key from parsing the sources differs from the walked one"});
+  // the original: by its contents without a cache, by the snapshot's key (size, time, configured hash) with one
+  p.original = (d / "orig.dll").string();
+  write(p.original, "1");
+  std::string plain = run_key(args, a, p, "verifier");
+  write(p.original, "2");
+  if (run_key(args, a, p, "verifier") == plain) bad.push_back({"replay", "the key ignores the original's contents"});
+  p.cache_dir = (d / "cache").string();
+  std::string cached = run_key(args, a, p, "verifier");
+  if (cached == plain) bad.push_back({"replay", "the key with a cache is the one without"});
+  write(p.original, "22");
+  if (run_key(args, a, p, "verifier") == cached) bad.push_back({"replay", "the key with a cache ignores the original"});
+  cached = run_key(args, a, p, "verifier");
+  p.original_sha256 = "ab";
+  if (run_key(args, a, p, "verifier") == cached || Original::snapshot_key(p) == [&] { Config q = p; q.original_sha256 = "cd"; return Original::snapshot_key(q); }())
+    bad.push_back({"replay", "the snapshot's key ignores the configured hash"});
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;

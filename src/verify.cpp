@@ -484,12 +484,16 @@ std::string run_key(const std::vector<std::string>& args, const Args& a, const C
     h.update(std::string_view(len, 8));
     h.update(data);
   };
-  add("verifier 2");
+  add("verifier 3");
   add(verifier);
   add(p.root);
   for (auto& s : args) add(s);
-  std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.file, p.original, p.functions, p.vtables,
-                                 p.data_items, p.data_names, p.library_matches, p.library_functions, p.symbols, p.undname};
+  std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.file, p.undname};
+  // the original and the exports: with a cache a run reads them only through the snapshot, so its key stands for them
+  std::vector<std::string> exports{p.original, p.functions, p.vtables, p.data_items, p.data_names, p.library_matches,
+                                   p.library_functions, p.symbols};
+  if (p.cache_dir.empty()) files.insert(files.end(), exports.begin(), exports.end());
+  else add(Original::snapshot_key(p));
   files.insert(files.end(), sources.begin(), sources.end());
   for (auto& f : files) {
     add(f);
