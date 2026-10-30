@@ -74,6 +74,10 @@ class NameCache {
   std::string_view text(u32 id) const;
   std::optional<u32> id_of(std::string_view s) const;   // the string's id, if it has one
   u32 string_count() const { return nstr_ + u32(new_text_.size()); }   // the ids are below it
+  bool has_new() const { return !new_entries_.empty(); }   // load() ran undname for names the file lacks
+  // writes the file: this build's names in map order, then the file's other names in its order, as many as this build
+  // has (names of other builds, kept so that runs on them do not run undname again). Nothing is written when the file
+  // already starts with these names and holds no more than that.
   void save();
 
  private:

@@ -796,14 +796,16 @@ std::vector<NameIds> NameCache::load(const std::vector<std::string_view>& decora
 void NameCache::save() {
   if (path_.empty()) return;
   std::vector<std::string_view> names;   // in map order, each once
-  {
-    std::unordered_set<std::string_view, SvHash> seen;
-    seen.reserve(used_.size());
-    for (auto n : used_) if (seen.insert(n).second) names.push_back(n);
-  }
-  bool in_order = loaded_from_file_ && new_entries_.empty() && names.size() == nent_;
-  for (size_t k = 0; in_order && k < names.size(); ++k) in_order = text(ent_[ROW * k]) == names[k];
-  if (in_order) return;   // the file holds exactly these, in this order
+  std::unordered_set<std::string_view, SvHash> seen;
+  seen.reserve(2 * used_.size());
+  for (auto n : used_) if (seen.insert(n).second) names.push_back(n);
+  size_t current = names.size();
+  bool in_order = loaded_from_file_ && new_entries_.empty() && current <= nent_ && nent_ - current <= current;
+  for (size_t k = 0; in_order && k < current; ++k) in_order = text(ent_[ROW * k]) == names[k];
+  if (in_order) return;   // the file starts with these, in this order, and keeps no more others than allowed
+  // then the file's names of other builds, the most recently saved first
+  for (u32 k = 0; k < nent_ && names.size() < 2 * current; ++k)
+    if (std::string_view d = text(ent_[ROW * size_t(k)]); seen.insert(d).second) names.push_back(d);
   // the strings of these names, each once
   std::vector<std::string_view> strs;
   std::unordered_map<std::string_view, u32, SvHash> ids;

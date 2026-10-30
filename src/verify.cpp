@@ -656,7 +656,9 @@ int run(int argc, char** argv) {
   Totals totals = summarize(results, orig, out, p.module);
   ph.mark("globals+summary");
 
-  if (a.update) name_cache.save();
+  // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run
+  // undname for them again)
+  if (a.update || name_cache.has_new()) name_cache.save();
   if (a.json) {
     for (auto& [k, v] : totals.fields.obj) {
       report += ",\n  ";

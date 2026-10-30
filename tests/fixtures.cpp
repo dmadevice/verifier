@@ -884,7 +884,35 @@ Problems name_cache() {
   }
   {
     NameCache nc(file, "key", "");
-    if (!nc.id_of("i") || nc.id_of("h")) bad.push_back({"names", "not replaced while mapped"});
+    if (!nc.id_of("i")) bad.push_back({"names", "not replaced while mapped"});
+    nc.load(second);
+    nc.save();
+  }
+  {
+    // the names of other builds are kept after this build's, the most recent first, as many as this build has
+    NameCache a(file, "key", "");
+    a.load({"p", "q", "r"});
+    a.save();
+    NameCache b(file, "key", "");
+    b.load({"s", "t"});
+    if (b.has_new() != true || !b.id_of("p")) bad.push_back({"names", "has_new, or the old file read"});
+    b.save();
+    NameCache c(file, "key", "");
+    c.load({"s", "t"});
+    if (c.has_new() || !c.id_of("p") || !c.id_of("q") || c.id_of("r")) bad.push_back({"names", "other builds' names kept: not p, q only"});
+    auto before = fs::last_write_time(file);
+    c.save();   // starts with s, t and keeps two others: nothing to write
+    if (fs::last_write_time(file) != before) bad.push_back({"names", "rewritten with nothing new"});
+    NameCache e(file, "key", "");
+    e.load({"p"});   // in the file, not first: a save puts it first
+    if (e.has_new()) bad.push_back({"names", "a name of another build undecorated again"});
+    e.save();
+    NameCache f2(file, "key", "");
+    f2.load({"p"});
+    if (!f2.id_of("s") || f2.id_of("t")) bad.push_back({"names", "after reordering: not p then s"});
+  }
+  {
+    NameCache nc(file, "key", "");
     nc.load(second);
     nc.save();
   }

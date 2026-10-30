@@ -96,8 +96,10 @@ class Player { ... };
 All of it goes in a configuration file (`verifier.conf` in the working directory by default); relative
 paths are relative to it, and it marks the project root that source paths in the report are given from. See
 [`verifier.conf.example`](verifier.conf.example). With a `cache_dir`, the tables read from the
-disassembler exports and library attribution are kept there as a binary snapshot, used while every one of
-those files keeps its size and modification time.
+disassembler exports and library attribution, and the original laid out in memory, are kept there as a
+binary snapshot, used while every one of those files keeps its size and modification time (the original is
+checked against `original_sha256` when the snapshot is made). The undecorated names are kept there too: a run
+that had to run undname saves them, this build's names first, then as many of other builds' names.
 
 ## Usage
 
@@ -111,7 +113,7 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs --json ou
 - `--show 0x<va>`: print that function's two instruction streams side by side.
 - `--matched FILE`: the regression list, functions that must keep matching. `--check` exits 1 when one no
   longer matches (or on `LIBCODE`); `--update` adds the new matches to it (and refuses while something
-  regressed) and saves the undname cache.
+  regressed).
 - A `--check` run with `--json` keeps its output beside the report; the next run with identical inputs
   (arguments, binaries, map, sources, configuration and every input file) replays it instantly.
 
