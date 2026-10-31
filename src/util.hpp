@@ -87,7 +87,9 @@ std::string strip(std::string_view s);                     // without leading an
 std::string rstrip(std::string_view s);                    // without trailing whitespace
 std::string_view rstrip_char(std::string_view s, char c);  // without the trailing c bytes
 std::vector<std::string> split_ws(std::string_view s);     // whitespace-separated fields
-inline bool is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+inline bool is_space(char c) {                             // ' ' or one of \t \n \v \f \r (9 to 13)
+  return c == ' ' || static_cast<unsigned char>(c - '\t') < 5;
+}
 inline bool is_digit(char c) { return c >= '0' && c <= '9'; }
 inline int hex_digit(char c) {  // 0..15, -1 for a non-hex character
   return is_digit(c) ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;

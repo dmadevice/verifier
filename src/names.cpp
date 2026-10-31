@@ -31,6 +31,17 @@ size_t underscore_word(std::string_view s, size_t i) {
   return skip_word(s, i + 2);
 }
 
+// the end of the field starting at i: the first whitespace byte after it (every one is at most ' '), eight bytes at a
+// time while none is
+size_t field_end(std::string_view s, size_t i) {
+  constexpr u64 ones = 0x0101010101010101ull, highs = 0x8080808080808080ull;
+  u64 w;
+  // nonzero exactly when a byte is below 0x21 (a byte not below it borrows nothing; one of 0x80 or above is masked)
+  while (i + 8 <= s.size() && (std::memcpy(&w, s.data() + i, 8), ((w - ones * 0x21) & ~w & highs) == 0)) i += 8;
+  while (i < s.size() && !is_space(s[i])) ++i;
+  return i;
+}
+
 }  // namespace
 
 std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
@@ -41,8 +52,7 @@ std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
     while (n < 4) {
       i = skip_space(line, i);
       if (i == line.size()) break;
-      size_t j = i;
-      while (j < line.size() && !is_space(line[j])) ++j;
+      size_t j = field_end(line, i);
       p[n++] = line.substr(i, j - i);
       i = j;
     }
