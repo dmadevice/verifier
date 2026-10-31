@@ -369,12 +369,13 @@ std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int
 
 std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot, const Toks& rt,
                                    const NameOf& names, int context, size_t limit) {
-  auto index = [](const std::vector<u32>& off) {
-    std::unordered_map<i64, size_t> m;
-    for (size_t k = 0; k < off.size(); ++k) m[i64(off[k]) - i64(off[0])] = k;
-    return m;
+  // the instruction at a function-relative offset (offsets ascend), if one starts there
+  auto at = [](const std::vector<u32>& off, i64 v) -> std::optional<size_t> {
+    if (off.empty()) return std::nullopt;
+    auto it = std::lower_bound(off.begin(), off.end(), i64(off[0]) + v, [](u32 x, i64 y) { return i64(x) < y; });
+    if (it == off.end() || i64(*it) != i64(off[0]) + v) return std::nullopt;
+    return size_t(it - off.begin());
   };
-  auto o_at = index(o_off), r_at = index(r_off);
   // tokens as small ints (equal exactly when the tokens are), branch targets inside the function left open ("rel",)
   struct WildHash {
     size_t operator()(const Tok* t) const {
@@ -403,15 +404,28 @@ std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vec
       return true;
     }
   };
-  std::unordered_map<const Tok*, int, WildHash, WildEq> ids;
-  ids.reserve(ot.size() + rt.size());
+  // ids in order of first appearance; open addressing over the tokens (slot: index into `first` + 1, 0 empty)
+  size_t cap = 16;
+  while (cap < 2 * (ot.size() + rt.size())) cap *= 2;
+  std::vector<u32> slots(cap, 0);
+  std::vector<const Tok*> first;   // id -> its first token
+  first.reserve(ot.size() + rt.size());
+  WildHash hash;
+  WildEq eq;
+  auto id_of = [&](const Tok* t) {
+    size_t i = hash(t) & (cap - 1);
+    while (slots[i] && !eq(first[slots[i] - 1], t)) i = (i + 1) & (cap - 1);
+    if (!slots[i]) { first.push_back(t); slots[i] = u32(first.size()); }
+    return int(slots[i] - 1);
+  };
   std::vector<int> ia, ib;
   ia.reserve(ot.size());
   ib.reserve(rt.size());
-  for (auto& t : ot) ia.push_back(ids.emplace(&t, int(ids.size())).first->second);
-  for (auto& t : rt) ib.push_back(ids.emplace(&t, int(ids.size())).first->second);
+  for (auto& t : ot) ia.push_back(id_of(&t));
+  for (auto& t : rt) ib.push_back(id_of(&t));
   auto ops = get_opcodes(ia, ib);
-  std::unordered_map<size_t, size_t> aligned;
+  constexpr size_t NONE = ~size_t(0);
+  std::vector<size_t> aligned(ot.size(), NONE);   // a's instruction -> b's it is aligned with
   for (auto& o : ops)
     if (o.tag == 'e')
       for (size_t i = o.i1, j = o.j1; i < o.i2; ++i, ++j) aligned[i] = j;
@@ -420,9 +434,8 @@ std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vec
     for (size_t z = 0; z < std::min(x.size(), y.size()); ++z) {
       if (x[z].k != Op::REL) continue;
       std::optional<size_t> A, B;
-      if (auto it = o_at.find(x[z].v); it != o_at.end())
-        if (auto al = aligned.find(it->second); al != aligned.end()) A = al->second;
-      if (auto it = r_at.find(y[z].v); it != r_at.end()) B = it->second;
+      if (auto i = at(o_off, x[z].v); i && *i < aligned.size() && aligned[*i] != NONE) A = aligned[*i];
+      B = at(r_off, y[z].v);
       if (A != B) return false;
     }
     return true;
