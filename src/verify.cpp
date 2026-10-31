@@ -492,7 +492,9 @@ int run(int argc, char** argv) {
   CodeStore orig_store(build_cache("code-original.bin"), orig.img, self_hash());
   CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
   // DIFFs' categories and diffs kept between runs: keyed by the verifier and the original's names (the snapshot's key)
-  DiffStore diff_store(build_cache("diff-cache.bin"), "verifier " + self_hash() + " names " + Original::snapshot_key(p));
+  // (the names it shows are the original's: keyed by the snapshot's key, and not kept when that is not known)
+  DiffStore diff_store(orig.cache_key().empty() ? std::string() : build_cache("diff-cache.bin"),
+                       "verifier " + self_hash() + " names " + orig.cache_key());
   ph.mark("pairing");
   Comparer& cmp = pairing.comparer(orig_cache, rebuilt_cache);
   ph.mark("prebind votes");

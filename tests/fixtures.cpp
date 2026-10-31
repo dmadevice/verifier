@@ -675,6 +675,11 @@ Problems replay_key() {
   if (cached == plain) bad.push_back({"replay", "the key with a cache is the one without"});
   write(p.original, "22");
   if (run_key(a, p, "verifier") == cached) bad.push_back({"replay", "the key with a cache ignores the original"});
+  // inputs changed within two seconds: no snapshot key (the snapshot is neither used nor written)
+  if (!Original::snapshot_key(p).empty()) bad.push_back({"replay", "the snapshot's key trusts an input written just now"});
+  for (auto* f : p.snapshot_inputs())
+    if (!f->empty() && fs::exists(*f)) fs::last_write_time(*f, fs::file_time_type::clock::now() - std::chrono::hours(1));
+  if (Original::snapshot_key(p).empty()) bad.push_back({"replay", "no snapshot key for inputs an hour old"});
   cached = run_key(a, p, "verifier");
   p.original_sha256 = "ab";
   if (run_key(a, p, "verifier") == cached || Original::snapshot_key(p) == [&] { Config q = p; q.original_sha256 = "cd"; return Original::snapshot_key(q); }())

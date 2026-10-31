@@ -38,9 +38,11 @@ std::string run_key(const Args& a, const Config& p, const std::string& verifier,
   add("verifier 5");
   add(verifier);
   std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.undname};
-  // the original and the exports: with a cache a run reads them only through the snapshot, so its key stands for them
-  if (p.cache_dir.empty()) for (auto* f : p.snapshot_inputs()) files.push_back(*f);
-  else add(Original::snapshot_key(p));
+  // the original and the exports: a run that reads them only through the snapshot (a cache, and none of them changed
+  // within two seconds) is keyed by the snapshot's key; otherwise by their contents
+  std::string snapshot = p.cache_dir.empty() ? std::string() : Original::snapshot_key(p);
+  if (snapshot.empty()) for (auto* f : p.snapshot_inputs()) files.push_back(*f);
+  else add(snapshot);
   files.insert(files.end(), sources.begin(), sources.end());
   for (auto& f : files) {
     add(f);
@@ -52,11 +54,6 @@ std::string run_key(const Args& a, const Config& p, const std::string& verifier,
 
 std::string run_key(const Args& a, const Config& p, const std::string& verifier) {
   return run_key(a, p, verifier, source_files(a), content_hash_file_if_present);
-}
-
-i64 two_seconds_ago() {
-  namespace fs = std::filesystem;
-  return i64((fs::file_time_type::clock::now() - std::chrono::seconds(2)).time_since_epoch().count());
 }
 
 std::string stamp_key(const Args& a, const Config& p, const std::string& exe) {

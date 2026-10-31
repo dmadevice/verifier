@@ -24,6 +24,9 @@ std::string read_file(const std::string& path);   // throws on error
 bool file_exists(const std::string& path);
 // a file's identity by its metadata: its path, size and modification time ("-" when it does not exist); the time in
 // the file clock's ticks to *time_out when given (unchanged for an absent file)
+// now less two seconds, in the file clock's ticks: a file changed since then may have been changed again in the same
+// tick of the clock, leaving its size and time as they were, so its stamp does not show that it is the same file
+i64 two_seconds_ago();
 std::string file_stamp(const std::string& path, i64* time_out = nullptr);
 
 // A whole file mapped read-only (an empty view for an empty file), shared with the page cache and other processes

@@ -3,6 +3,7 @@
 #include "cache_file.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 
@@ -159,8 +160,8 @@ Original::Original(const Config& p, const std::function<std::string(const std::s
   // the image laid out and the tables from the text exports, which rarely change: a snapshot in the cache, mapped. A
   // run from the snapshot does not read the original, so the original is checked when the snapshot is made (its key
   // holds the configured hash)
-  std::string key = snapshot_key(p);
-  std::string snapshot = p.cache_file("original-snapshot.bin");
+  std::string key = cache_key_ = snapshot_key(p);
+  std::string snapshot = key.empty() ? std::string() : p.cache_file("original-snapshot.bin");
   if (!snapshot.empty() && load_snapshot(snapshot, key)) return;
   if (!digest.empty() && hash_file(p.original) != digest) {
     std::fprintf(stderr, "original image hash mismatch: %s is not %s\n", p.original.c_str(), digest.c_str());
@@ -243,7 +244,12 @@ void Original::load_exports() {
 
 std::string Original::snapshot_key(const Config& p) {
   std::string key = "verifier original snapshot 3\n" + p.original_sha256 + "\n";
-  for (auto* f : p.snapshot_inputs()) key += file_stamp(*f) + "\n";
+  i64 recent = two_seconds_ago();
+  for (auto* f : p.snapshot_inputs()) {
+    i64 time = std::numeric_limits<i64>::min();
+    key += file_stamp(*f, &time) + "\n";
+    if (time >= recent) return "";
+  }
   return key;
 }
 
@@ -346,6 +352,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   }
   o.digest = std::move(digest);
   o.config_ = config_;
+  o.cache_key_ = cache_key_;
   *this = std::move(o);   // a vector keeps its buffer when moved: the views stay valid
   return true;
 }

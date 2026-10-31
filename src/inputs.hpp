@@ -76,8 +76,10 @@ class Original {
   explicit Original(const Config& c, const std::function<std::string(const std::string&)>& hash_file = sha256_file);
   Original() = default;                 // fixtures: fill the fields
   // the snapshot's key: the configured hash, and each input file's path, size and modification time. The snapshot (the
-  // tables and the laid-out image, in the cache) is valid while they stay the same
+  // tables and the laid-out image, in the cache) is valid while they stay the same. "" when an input changed within
+  // two seconds (two_seconds_ago): the snapshot is then neither used nor written
   static std::string snapshot_key(const Config& c);
+  const std::string& cache_key() const { return cache_key_; }   // this run's snapshot_key ("" too for fixtures)
   std::string digest;
   Image img;
   FunctionTable functions;
@@ -96,6 +98,7 @@ class Original {
 
  private:
   const Config* config_ = nullptr;
+  std::string cache_key_;
   std::shared_ptr<const MappedFile> snapshot_;   // the snapshot, when read from it: names and image are views of it
   std::deque<std::string> text_;   // or the names from the exports
   std::string_view keep(std::string s) { return text_.emplace_back(std::move(s)); }

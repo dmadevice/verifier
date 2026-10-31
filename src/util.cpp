@@ -170,6 +170,11 @@ void for_each_file_line(const std::string& path, const std::function<void(std::s
   with_contents(path, [&](std::string_view data) { for_each_line(data, fn); });
 }
 
+i64 two_seconds_ago() {
+  namespace fs = std::filesystem;
+  return i64((fs::file_time_type::clock::now() - std::chrono::seconds(2)).time_since_epoch().count());
+}
+
 std::string file_stamp(const std::string& path, i64* time_out) {
   std::error_code ec;
   auto size = std::filesystem::file_size(path, ec);

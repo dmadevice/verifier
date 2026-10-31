@@ -33,7 +33,6 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe);
 // (the file clock's ticks)
 std::string stamp_key(const Args& a, const Config& p, const std::string& exe, const std::vector<ListedFile>& sources,
                       i64 recent);
-i64 two_seconds_ago();   // in the file clock's ticks
 
 // The replay record beside the rebuilt image: what a run printed, its report and exit status, under the inputs it read.
 struct Last {
