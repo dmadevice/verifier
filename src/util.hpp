@@ -129,6 +129,10 @@ class NameTable {
   using Entry = std::pair<std::string_view, u64>;
   void set(std::string_view name, u64 v);   // adds the name, or replaces its value (keeping its place)
   void reserve(size_t n);                   // room for n names without growing
+  // as kept and restored whole (a snapshot): the entries in order and the index made for them; restore() is false (and
+  // the table as it was) when the index does not fit the entries
+  const std::vector<u32>& index() const { return index_; }
+  bool restore(std::vector<Entry> entries, std::vector<u32> index);
   const u64* find(std::string_view name) const;
   bool contains(std::string_view name) const { return find(name) != nullptr; }
   size_t size() const { return entries_.size(); }

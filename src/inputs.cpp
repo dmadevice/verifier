@@ -3,6 +3,7 @@
 #include "cache_file.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <cstdio>
 #include <cstdlib>
@@ -31,6 +32,7 @@ struct Writer {
   std::string out, strings;
   std::unordered_map<std::string, u64> at;   // string -> offset in `strings`
   void u(u64 v) { out.append(reinterpret_cast<const char*>(&v), 8); }
+  void bytes(std::string_view x) { u(x.size()); out += x; }   // a length-prefixed part (Reader::raw)
   void s(std::string_view x) {
     auto [it, fresh] = at.try_emplace(std::string(x), strings.size());
     if (fresh) strings += x;
@@ -243,7 +245,7 @@ void Original::load_exports() {
 }
 
 std::string Original::snapshot_key(const Config& p) {
-  std::string key = "verifier original snapshot 3\n" + p.original_sha256 + "\n";
+  std::string key = "verifier original snapshot 4\n" + p.original_sha256 + "\n";
   i64 recent = two_seconds_ago();
   for (auto* f : p.snapshot_inputs()) {
     i64 time = std::numeric_limits<i64>::min();
@@ -270,6 +272,8 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
   }
   w.u(by_name.size());
   for (auto& [name, va] : by_name) { w.s(name); w.u(va); }
+  const std::vector<u32>& index = by_name.index();   // restored as it is, not made again from the names
+  w.bytes(std::string_view(reinterpret_cast<const char*>(index.data()), index.size() * 4));
   w.u(linked.size());
   for (auto& [ea, l] : linked) { w.u(ea); w.s(l.lib); w.s(l.symbol); w.u(l.has_symbol); }
   for (auto* v : {&boundaries_, &align_starts_, &align_ends_}) {
@@ -301,7 +305,9 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   if (r.raw() != key) return false;
   r.strings = r.raw();   // the names are views of it
   std::vector<IdaFunction> fs;
-  for (u64 n = r.count(32); n--;) {
+  u64 nfs = r.count(32);
+  fs.reserve(nfs);
+  for (u64 n = nfs; n--;) {
     IdaFunction f;
     f.ea = r.u();
     f.size = r.u();
@@ -318,11 +324,17 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
     for (u64 k = r.count(8); k--;) slots.push_back(r.u());
   }
   u64 names = r.count(16);
-  o.by_name.reserve(names);
+  std::vector<NameTable::Entry> entries;
+  entries.reserve(names);
   while (names--) {
     std::string_view name = r.s();
-    o.by_name.set(name, r.u());
+    entries.emplace_back(name, r.u());
   }
+  std::string_view index = r.raw();
+  if (!r.ok || index.size() % 4) return false;
+  std::vector<u32> slots(index.size() / 4);
+  std::memcpy(slots.data(), index.data(), index.size());
+  if (!o.by_name.restore(std::move(entries), std::move(slots))) return false;
   for (u64 n = r.count(32); n--;) {
     u64 ea = r.u();
     Linked l;

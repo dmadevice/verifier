@@ -346,6 +346,20 @@ void NameTable::set(std::string_view name, u64 v) {
   }
 }
 
+bool NameTable::restore(std::vector<Entry> entries, std::vector<u32> index) {
+  size_t n = index.size();
+  if (n < 16 || (n & (n - 1)) || n < 2 * entries.size()) return false;
+  size_t used = 0;
+  for (u32 e : index) {
+    if (e > entries.size()) return false;
+    used += e != 0;
+  }
+  if (used != entries.size()) return false;
+  entries_ = std::move(entries);
+  index_ = std::move(index);
+  return true;
+}
+
 void NameTable::reserve(size_t n) {
   entries_.reserve(n);
   if (index_.size() < 2 * n) reindex(2 * n);

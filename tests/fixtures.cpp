@@ -1545,6 +1545,26 @@ Problems name_table() {
     if (t.find("?absent@@") || t.contains("")) bad.push_back({"names", "found a name never set" + at});
     size_t k = 0;
     for (auto& [n, v] : t) if (n != names[k++]) { bad.push_back({"names", "order at " + std::to_string(k - 1) + at}); break; }
+    // restored from its entries and index (a snapshot): it answers as the table it was taken from
+    NameTable r;
+    if (!r.restore(std::vector<NameTable::Entry>(t.begin(), t.end()), t.index())) {
+      bad.push_back({"names", "a table's own index not restored" + at});
+    } else {
+      for (auto& [n, v] : want)
+        if (const u64* got = r.find(n); !got || *got != v) { bad.push_back({"names", "restored lookup " + n + at}); break; }
+      if (r.find("?absent@@")) bad.push_back({"names", "a restored table finds a name never set" + at});
+    }
+  }
+  // an index that does not fit its entries is refused
+  {
+    NameTable t, r;
+    for (size_t i = 0; i < 100; ++i) t.set(names[i], i);
+    std::vector<NameTable::Entry> e(t.begin(), t.end());
+    std::vector<u32> wrong = t.index();
+    wrong[0] = u32(e.size() + 1);
+    std::vector<u32> few(e.size(), 0);
+    if (r.restore(e, wrong) || r.restore(e, few) || r.restore(std::vector<NameTable::Entry>(e.begin(), e.begin() + 50), t.index()))
+      bad.push_back({"names", "an index that does not fit restored"});
   }
   // the function table: in order or not, of several at one address the last
   FunctionTable sorted, shuffled;
