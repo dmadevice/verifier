@@ -291,12 +291,17 @@ std::optional<u64> Image::extent(u64 va) const {
   if (!p) return std::nullopt;
   u64 end = p->end;
   for (;;) {
-    const PData* nx = pdata_at(end);
+    // the entry starting at `end`: the table is sorted by start, so when this entry starts before `end` and the next
+    // one not before it, that is the next one or none (else searched, as for overlapping entries)
+    const PData* nx = p->begin < end && p + 1 < pdata.data() + pdata.size() && p[1].begin >= end
+                          ? (p[1].begin == end ? p + 1 : nullptr)
+                          : pdata_at(end);
     if (!nx) break;
     unsigned char vf = nx->unwind < img.size() ? static_cast<unsigned char>(img[nx->unwind]) : 0;
     if (!((vf >> 3) & 0x4)) break;  // UNW_FLAG_CHAININFO: continuation of the same function
     if (nx->end <= end) break;      // an empty or backward range: malformed
     end = nx->end;
+    p = nx;
   }
   return end;
 }
