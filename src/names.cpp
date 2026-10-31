@@ -635,7 +635,7 @@ u32 slots_for(size_t n) {
 
 // the file's header: magic and key, zero-padded to a multiple of 8
 std::string file_head(const std::string& key) {
-  std::string h = std::string(NAMES_MAGIC) + key + "\n";
+  std::string h = cache_header(NAMES_MAGIC, key);
   h.resize((h.size() + 7) / 8 * 8, '\0');
   return h;
 }
@@ -666,14 +666,13 @@ std::vector<u32> build_index(const std::vector<std::string_view>& keys, u32 slot
 
 NameCache::NameCache(std::string path, std::string key, std::string undname)
     : path_(std::move(path)), key_(std::move(key)), undname_(std::move(undname)) {
-  if (path_.empty() || !file_exists(path_)) return;
+  map_ = open_cache_file(path_, cache_header(NAMES_MAGIC, key_));
+  if (!map_) return;
   auto drop = [&] { file_ = {}; map_.reset(); };   // the counts stay 0: nothing reads the file
   try {
-    map_ = std::make_unique<MappedFile>(path_);
     file_ = map_->view();
-    std::string head = file_head(key_);
-    size_t at = head.size();
-    if (file_.size() < at + 16 || file_.compare(0, at, head) != 0) { drop(); return; }
+    size_t at = file_head(key_).size();   // the header, padded to 8
+    if (file_.size() < at + 16 || file_.compare(0, at, file_head(key_)) != 0) { drop(); return; }
     const u32* h = reinterpret_cast<const u32*>(file_.data() + at);
     u64 ns = h[0], ne = h[1], es = h[2], ss = h[3];
     u64 words = 4 + ns + ROW * ne + es + ss;
