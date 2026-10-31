@@ -69,10 +69,6 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
   annotated_o.assign(ao.begin(), ao.end());
 }
 
-Pairing::Pairing(const Pairing& b)
-    : orig(b.orig), reb(b.reb), reb_to_orig(b.reb_to_orig), reb_to_origs(b.reb_to_origs),
-      annotated_o(b.annotated_o), paired_o(b.paired_o), vftables_(b.vftables_), paired_(b.paired_) {}
-
 const Pairing::Paired* Pairing::paired(const Annotation& a) const {
   auto it = paired_.find(paired_key(a));
   return it == paired_.end() ? nullptr : &it->second;
@@ -114,7 +110,7 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
   inferred_r_.attach(&cmp->journal);
 }
 
-Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
+Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc) {
   use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables,
                                    [this](u64 va) { return orig.ida_name(va); }, this));
   Comparer& c = *cmp;
@@ -126,7 +122,7 @@ Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<st
   for (auto& [v, s] : orig.vtables) named_.push_back(v);
   std::sort(named_.begin(), named_.end());
   named_.erase(std::unique(named_.begin(), named_.end()), named_.end());
-  prebind_locals(votes_fn);
+  prebind_locals();
   return c;
 }
 
@@ -139,15 +135,11 @@ void Pairing::release_code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
   if (rebuilt_cache_) rebuilt_cache_->release(rstart, rend);
 }
 
-void Pairing::prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
+void Pairing::prebind_locals() {
   std::map<u64, Votes> votes;
-  if (votes_fn) {
-    votes = votes_fn(*this);
-  } else {
-    for (auto& [rva, ova] : voting_pairs()) {
-      auto v = votes_of(rva, ova);
-      if (!v.empty()) votes[rva] = std::move(v);
-    }
+  for (auto& [rva, ova] : voting_pairs()) {
+    auto v = votes_of(rva, ova);
+    if (!v.empty()) votes[rva] = std::move(v);
   }
   for (auto& [base, o_base] : decide_locals(votes)) {
     cmp->bound.set(base, o_base);

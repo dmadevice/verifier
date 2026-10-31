@@ -18,8 +18,6 @@ namespace verifier {
 class Pairing : public ComparerContext {
  public:
   Pairing(const Original& orig, const Rebuilt& reb, const std::vector<Annotation>& anns);
-  // the same name pairing as `base`, without its comparer or anything learnt while comparing (mutation probes)
-  Pairing(const Pairing& base);
   const Original& orig;
   const Rebuilt& reb;
   std::unique_ptr<Comparer> cmp;
@@ -36,9 +34,7 @@ class Pairing : public ComparerContext {
   const Paired* paired(const Annotation& a) const;
 
   using Votes = std::map<u64, std::map<std::optional<u64>, u64>>;
-  // votes_fn: the local static votes to decide from instead of computing every voter's (mutation probes)
-  Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache,
-                     const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn = nullptr);
+  Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache);
   void use(std::unique_ptr<Comparer> c);   // fixtures: a Comparer with hooks of their own
   // a compared pair's code is no longer needed (its comparison is kept): free it, if the caches hold it
   void release_code(u64 ostart, u64 oend, u64 rstart, u64 rend);
@@ -74,7 +70,7 @@ class Pairing : public ComparerContext {
   void pair_vftables();
   SvViewMap<u64> vftables_;
   std::unordered_map<std::string, Paired> paired_;   // by paired_key()   // rebuilt vftable names of classes with several bases, not among the original's names
-  void prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn);
+  void prebind_locals();
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   std::vector<u64> named_;   // original addresses with a name (sorted, distinct)
   JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
