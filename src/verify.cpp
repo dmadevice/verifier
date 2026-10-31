@@ -729,7 +729,7 @@ int run(int argc, char** argv) {
   // are all used again (the decoder, the verifier itself, is part of the key)
   std::string decoder = exe.empty() ? "" : hash(exe);
   CodeStore orig_store(p.cache_dir.empty() || decoder.empty() ? std::string() : path_join(p.cache_dir, "code-original.bin"),
-                       orig.img, decoder, true);
+                       orig.img, decoder);
   CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
   // DIFFs' categories and diffs kept between runs: keyed by the verifier and the original's names (the snapshot's key)
   DiffStore diff_store(p.cache_dir.empty() || decoder.empty() ? std::string() : path_join(p.cache_dir, "diff-cache.bin"),

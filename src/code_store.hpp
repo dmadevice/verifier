@@ -15,9 +15,9 @@ namespace verifier {
 
 class CodeStore {
  public:
-  // `path` empty: nothing kept. `decoder`: what decodes (the verifier's hash). keep_unused: entries this run did not
-  // ask for are written back too (an image that does not change); otherwise only this run's are.
-  CodeStore(std::string path, const Image& img, const std::string& decoder, bool keep_unused);
+  // `path` empty: nothing kept. `decoder`: what decodes (the verifier's hash). A rewrite keeps the entries a run did
+  // not ask for that still hold.
+  CodeStore(std::string path, const Image& img, const std::string& decoder);
   std::shared_ptr<const Code> code(u64 start, u64 end);   // from the file when it holds this function as it is, else decoded
   void save();   // when something was decoded: the file rewritten
   struct Stats { size_t hits = 0, misses = 0; };
@@ -26,7 +26,6 @@ class CodeStore {
  private:
   std::string path_, key_;
   const Image& img_;
-  bool keep_unused_;
   std::unique_ptr<const MappedFile> file_;
   struct Index { u64 start, end, check, offset, size; };
   const Index* index_ = nullptr;

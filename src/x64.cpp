@@ -376,17 +376,6 @@ int gpr_index(u16 reg) {
   }
 }
 
-const char* field_kind_name(FieldKind k) {
-  switch (k) {
-    case F_ABS: return "abs";
-    case F_EXT: return "ext";
-    case F_IMG: return "img";
-    case F_RIP: return "rip";
-    case F_TBL: return "tbl";
-  }
-  return "?";
-}
-
 bool Field::operator<(const Field& o) const {
   if (off != o.off) return off < o.off;
   if (size != o.size) return size < o.size;

@@ -1182,7 +1182,7 @@ int write_code_store(const std::string& path) {
   for (const char* m : {"zz-first", "zz-second", "zz-third"}) Mnem{m};
   StoreImage si(22);
   Image img = si.s.image();
-  CodeStore st(path, img, "decoder 1", true);
+  CodeStore st(path, img, "decoder 1");
   for (auto& [a, b] : si.small) st.code(a, b);
   st.code(si.f, si.f_end);
   st.save();
@@ -1204,14 +1204,14 @@ Problems code_store_case() {
     if (!same_code(*got, fresh, why)) bad.push_back({"code store", std::string(what) + ": " + why});
   };
   {
-    CodeStore st(path, img, "decoder 1", true);
+    CodeStore st(path, img, "decoder 1");
     check(st, img, si.f, si.f_end, "decoded");
     for (auto& [a, b] : si.small) check(st, img, a, b, "decoded");
     if (st.stats().hits || st.stats().misses != 23) bad.push_back({"code store", "an empty store has hits"});
     st.save();
   }
   {
-    CodeStore st(path, img, "decoder 1", true);
+    CodeStore st(path, img, "decoder 1");
     check(st, img, si.f, si.f_end, "from the store");
     for (auto& [a, b] : si.small) check(st, img, a, b, "from the store");
     if (st.stats().hits != 23 || st.stats().misses) bad.push_back({"code store", "a stored function was decoded again"});
@@ -1228,7 +1228,7 @@ Problems code_store_case() {
     if (std::system(cmd.c_str()) != 0 || !fs::exists(other)) {
       bad.push_back({"code store", "the second process wrote nothing"});
     } else {
-      CodeStore st(other, img, "decoder 1", true);
+      CodeStore st(other, img, "decoder 1");
       check(st, img, si.f, si.f_end, "from another process");
       for (auto& [a, b] : si.small) check(st, img, a, b, "from another process");
       if (st.stats().hits != 23) bad.push_back({"code store", "another process's functions not used"});
@@ -1238,7 +1238,7 @@ Problems code_store_case() {
     Side changed = si.s;
     changed.write(si.f + 7, le32b(0x40));   // the RIP-relative displacement
     Image img2 = changed.image();
-    CodeStore st(path, img2, "decoder 1", true);
+    CodeStore st(path, img2, "decoder 1");
     check(st, img2, si.f, si.f_end, "bytes changed");
     if (st.stats().misses != 1) bad.push_back({"code store", "changed bytes taken from the store"});
     check(st, img2, si.small[0].first, si.small[0].second, "unchanged neighbour");
@@ -1248,17 +1248,17 @@ Problems code_store_case() {
     Side changed = si.s;
     changed.relocs.clear();
     Image img2 = changed.image();
-    CodeStore st(path, img2, "decoder 1", true);
+    CodeStore st(path, img2, "decoder 1");
     check(st, img2, si.f, si.f_end, "relocation gone");
     if (st.stats().misses != 1) bad.push_back({"code store", "changed relocations taken from the store"});
   }
   {
-    CodeStore st(path, img, "decoder 2", true);
+    CodeStore st(path, img, "decoder 2");
     check(st, img, si.f, si.f_end, "other decoder");
     if (st.stats().misses != 1) bad.push_back({"code store", "another decoder's functions used"});
   }
   {
-    CodeStore st(path, img, "decoder 1", true);
+    CodeStore st(path, img, "decoder 1");
     auto [a, b] = si.small[0];
     check(st, img, a + 1, b, "other range");   // the same bytes from another start: not the stored function
     if (st.stats().misses != 1) bad.push_back({"code store", "a function used for another range"});
@@ -1270,7 +1270,7 @@ Problems code_store_case() {
   Side more = si.s;
   Image img3 = more.image();
   {
-    CodeStore st(path, img3, "decoder 1", true);
+    CodeStore st(path, img3, "decoder 1");
     check(st, img3, si.f, si.f_end, "stored");
     for (auto& [a, b] : si.small) check(st, img3, a, b, "stored");
     check(st, img3, extra, extra + 6, "new");
@@ -1278,13 +1278,13 @@ Problems code_store_case() {
   }
   if (read_file(path) != before) bad.push_back({"code store", "rewritten for one missing function in 24"});
   {
-    CodeStore st(path, img3, "decoder 1", true);
+    CodeStore st(path, img3, "decoder 1");
     check(st, img3, extra, extra + 6, "new");
     for (int i = 0; i < 2; ++i) check(st, img3, si.small[size_t(i)].first + 1, si.small[size_t(i)].second, "new");
     st.save();
   }
   {
-    CodeStore st(path, img3, "decoder 1", true);
+    CodeStore st(path, img3, "decoder 1");
     check(st, img3, extra, extra + 6, "kept");
     check(st, img3, si.f, si.f_end, "kept");
     if (st.stats().hits != 2 || st.stats().misses) bad.push_back({"code store", "a rewrite lost functions"});

@@ -39,7 +39,6 @@ class OpVec {
   size_t size() const { size_t n = 0; while (n < kMax && ops_[n].type != OP_INVALID) ++n; return n; }
   bool empty() const { return ops_[0].type == OP_INVALID; }
   const Operand& operator[](size_t i) const { return ops_[i]; }
-  void push_back(const Operand& o) { size_t n = size(); if (n < kMax) ops_[n] = o; }
   void set(size_t i, const Operand& o) { ops_[i] = o; }
   void truncate(size_t n) { for (size_t i = n; i < kMax; ++i) ops_[i].type = OP_INVALID; }   // slots from n on empty
 
@@ -100,7 +99,6 @@ u16 reg_rip();
 
 // An address field of an instruction: (offset in instruction, size, kind, value, access size)
 enum FieldKind : u8 { F_ABS = 0, F_EXT = 1, F_IMG = 2, F_RIP = 3, F_TBL = 4 };   // ordered as the names sort
-const char* field_kind_name(FieldKind k);
 inline bool is_address(FieldKind k) { return k == F_RIP || k == F_IMG || k == F_ABS; }   // a field holding a VA
 struct Field {
   i64 value;     // target VA (function-relative table offset for F_TBL)

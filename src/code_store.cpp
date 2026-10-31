@@ -28,8 +28,8 @@ void pad8(std::string& out) { out.append((8 - out.size() % 8) % 8, '\0'); }
 
 }  // namespace
 
-CodeStore::CodeStore(std::string path, const Image& img, const std::string& decoder, bool keep_unused)
-    : path_(std::move(path)), img_(img), keep_unused_(keep_unused) {
+CodeStore::CodeStore(std::string path, const Image& img, const std::string& decoder)
+    : path_(std::move(path)), img_(img) {
   key_ = "decoder " + decoder + " base " + hex(img.base) + " headers " + hex(xxh64(img.headers, 0));
   if (!path_.empty()) load();
 }
@@ -173,13 +173,12 @@ void CodeStore::save() {
   for (auto& [k, b] : out_) all[k] = {checks_[k], b};
   for (auto& [k, v] : all)
     if (v.second.empty()) v.second = from_file(Index{k.first, k.second, 0, 0, 0});
-  if (keep_unused_)
-    for (size_t i = 0; i < nindex_; ++i) {
-      const Index& x = index_[i];
-      auto k = std::make_pair(x.start, x.end);
-      if (all.count(k) || x.check != check(x.start, x.end)) continue;
-      all[k] = {x.check, from_file(x)};
-    }
+  for (size_t i = 0; i < nindex_; ++i) {
+    const Index& x = index_[i];
+    auto k = std::make_pair(x.start, x.end);
+    if (all.count(k) || x.check != check(x.start, x.end)) continue;
+    all[k] = {x.check, from_file(x)};
+  }
   std::string out = std::string(MAGIC) + key_ + "\n";
   pad8(out);
   u64 nmnem = Mnem::count();
