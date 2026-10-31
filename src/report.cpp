@@ -223,8 +223,17 @@ std::string classify(const Toks& a, const Toks& b) {
   return "unexplained";
 }
 
-// -- opcodes of a sequence alignment: longest common block first (earliest in a, then in b), recursively on both
-// sides; the longest block is found in linear time with a suffix automaton ----------------------------------
+// -- opcodes of a sequence alignment ------------------------------------------------------------------------
+//
+// The instruction diff aligns two token streams the way Python's difflib.SequenceMatcher(None, a, b, autojunk=False)
+// does, opcode for opcode (the tests hold 2,000 cases it gives): find the longest common block, the earliest in a and
+// then in b when several are as long, then align the parts before and after it the same way. Those tie-breaks decide
+// which of several equally good diffs is shown, so they are part of the output.
+//
+// difflib finds each block with a dynamic programme over pairs of positions, quadratic in a function's length at
+// worst, and repeated for every part. Here a suffix automaton of b's part is built (linear in its length) and a's part
+// is run through it, which finds the same block, with the same tie-breaks, in linear time: large functions' diffs (tens
+// of thousands of instructions) take milliseconds.
 
 namespace {
 
