@@ -39,3 +39,11 @@ add_executable(verifier-tests tests/fixtures.cpp)
 target_link_libraries(verifier-tests PRIVATE verifier_core)
 target_compile_definitions(verifier-tests PRIVATE VERIFIER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/fixtures.json")
 add_test(NAME fixtures COMMAND verifier-tests)
+
+# cmake --build build --target format: the sources formatted by .clang-format
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+  file(GLOB FORMATTED ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp
+       ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
+  add_custom_target(format COMMAND ${CLANG_FORMAT} -i --style=file ${FORMATTED} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()

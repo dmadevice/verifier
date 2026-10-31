@@ -10,8 +10,16 @@ constexpr u64 P1 = 0x9E3779B185EBCA87ull, P2 = 0xC2B2AE3D27D4EB4Full, P3 = 0x165
               P4 = 0x85EBCA77C2B2AE63ull, P5 = 0x27D4EB2F165667C5ull;
 
 inline u64 rotl(u64 x, int r) { return (x << r) | (x >> (64 - r)); }
-inline u64 read64(const char* p) { u64 v; std::memcpy(&v, p, 8); return v; }   // little-endian hosts
-inline u32 read32(const char* p) { u32 v; std::memcpy(&v, p, 4); return v; }
+inline u64 read64(const char* p) {
+  u64 v;
+  std::memcpy(&v, p, 8);
+  return v;
+}  // little-endian hosts
+inline u32 read32(const char* p) {
+  u32 v;
+  std::memcpy(&v, p, 4);
+  return v;
+}
 inline u64 round(u64 acc, u64 in) { return rotl(acc + in * P2, 31) * P1; }
 inline u64 merge(u64 acc, u64 v) { return (acc ^ round(0, v)) * P1 + P4; }
 

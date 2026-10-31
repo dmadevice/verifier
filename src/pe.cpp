@@ -10,13 +10,15 @@ u32 rd32(std::string_view d, size_t off) { return off + 4 <= d.size() ? le32(d.d
 u16 rd16(std::string_view d, size_t off) { return off + 2 <= d.size() ? le16(d.data() + off) : 0; }
 u64 rd64(std::string_view d, size_t off) { return off + 8 <= d.size() ? le64(d.data() + off) : 0; }
 
-struct Raw { u32 vsize, va, rawsize, rawptr, ch; };
+struct Raw {
+  u32 vsize, va, rawsize, rawptr, ch;
+};
 struct Headers {
   u64 base = 0;
   u32 sect_align = 0, file_align = 0;
   std::vector<Raw> secs;
-  size_t dd = 0;           // the data directories
-  size_t header_end = 0;   // the end of the section table
+  size_t dd = 0;          // the data directories
+  size_t header_end = 0;  // the end of the section table
 };
 
 Headers read_headers(std::string_view data, const std::string& what) {
@@ -36,7 +38,8 @@ Headers read_headers(std::string_view data, const std::string& what) {
 
   for (int i = 0; i < nsec; ++i) {
     size_t s = sec_tab + 40 * i;
-    h.secs.push_back({rd32(data, s + 8), rd32(data, s + 12), rd32(data, s + 16), rd32(data, s + 20), rd32(data, s + 36)});
+    h.secs.push_back(
+        {rd32(data, s + 8), rd32(data, s + 12), rd32(data, s + 16), rd32(data, s + 20), rd32(data, s + 36)});
   }
   h.header_end = sec_tab + 40 * nsec;
   return h;
@@ -79,8 +82,10 @@ void read_tables(Image& im, std::string_view data, const Headers& h) {
         if (!t) break;
         Import in;
         in.dll = dll;
-        if (t >> 63) in.ordinal = u32(t & 0xFFFF);
-        else for (u64 p = (t & 0x7fffffff) + 2; p < img.size() && img[p]; ++p) in.name += img[p];
+        if (t >> 63)
+          in.ordinal = u32(t & 0xFFFF);
+        else
+          for (u64 p = (t & 0x7fffffff) + 2; p < img.size() && img[p]; ++p) in.name += img[p];
         im.imports[base + iat + 8ull * k] = in;
       }
     }
@@ -107,10 +112,13 @@ void read_tables(Image& im, std::string_view data, const Headers& h) {
 // the memory-mapped image: headers, then each section at its virtual address (raw data, zero-padded). Laid out first
 // as a list of steps (a section below the end so far cuts the image back to its address), then done in a buffer of
 // zero pages: the gaps (.bss) are never written.
-struct Step { size_t at, from, n; bool zero; };   // copy data[from, from + n) to `at`, or zero n bytes there
+struct Step {
+  size_t at, from, n;
+  bool zero;
+};  // copy data[from, from + n) to `at`, or zero n bytes there
 struct Plan {
   std::vector<Step> steps;
-  size_t size = 0, cap = 0;   // the image's size; the buffer's (steps may write past the image when it is cut back)
+  size_t size = 0, cap = 0;  // the image's size; the buffer's (steps may write past the image when it is cut back)
 };
 
 Plan plan_layout(std::string_view data, const Headers& h) {
@@ -123,7 +131,11 @@ Plan plan_layout(std::string_view data, const Headers& h) {
     return (sa && v % sa) ? sa * (v / sa) : v;
   };
   std::optional<u32> lowest;
-  for (auto& s : secs) if (s.rawptr > 0) { u32 a = adj_ptr(s.rawptr); if (!lowest || a < *lowest) lowest = a; }
+  for (auto& s : secs)
+    if (s.rawptr > 0) {
+      u32 a = adj_ptr(s.rawptr);
+      if (!lowest || a < *lowest) lowest = a;
+    }
   std::vector<Step> steps;
   size_t size = std::min(data.size(), size_t((!lowest || *lowest < header_end) ? header_end : *lowest)), cap = size;
   steps.push_back({0, 0, size, false});
@@ -131,7 +143,7 @@ Plan plan_layout(std::string_view data, const Headers& h) {
     if (s.vsize == 0 && s.rawsize == 0) continue;
     u32 srd = s.rawsize, prd = adj_ptr(s.rawptr), vadj = adj_va(s.va);
     if (srd > data.size() || prd > data.size() || u64(srd) + prd > data.size() || vadj >= 0x10000000) continue;
-    if (vadj < size) steps.push_back({vadj, 0, size - vadj, true});   // cut back: what was there is gone
+    if (vadj < size) steps.push_back({vadj, 0, size - vadj, true});  // cut back: what was there is gone
     size = vadj;
     // a section's raw data: from the aligned file pointer for SizeOfRawData, clipped at the unaligned end
     u32 ptr_adj = (sect_align < 0x1000 && s.rawptr == s.va) ? s.va : prd;
@@ -156,8 +168,10 @@ Image Image::load(const std::string& path) {
   Plan plan = plan_layout(data, h);
   auto mem = std::make_shared<ZeroBuffer>(plan.cap);
   for (auto& st : plan.steps) {
-    if (st.zero) std::memset(mem->data() + st.at, 0, st.n);
-    else std::memcpy(mem->data() + st.at, data.data() + st.from, st.n);
+    if (st.zero)
+      std::memset(mem->data() + st.at, 0, st.n);
+    else
+      std::memcpy(mem->data() + st.at, data.data() + st.from, st.n);
   }
   Image im;
   im.base = h.base;
@@ -181,8 +195,9 @@ Image Image::laid_out(std::string_view headers, std::string_view img, std::share
   return im;
 }
 
-Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections, std::map<u64, std::pair<u64, u32>> pdata,
-                        std::vector<u64> relocs, std::unordered_map<u64, Import> imports) {
+Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections,
+                        std::map<u64, std::pair<u64, u32>> pdata, std::vector<u64> relocs,
+                        std::unordered_map<u64, Import> imports) {
   Image im;
   im.base = base;
   auto buf = std::make_shared<ZeroBuffer>(mem.size());
@@ -202,8 +217,9 @@ void Image::finish() {
   reloc_sorted.erase(std::unique(reloc_sorted.begin(), reloc_sorted.end()), reloc_sorted.end());
   auto by_begin = [](const PData& a, const PData& b) { return a.begin < b.begin; };
   std::stable_sort(pdata.begin(), pdata.end(), by_begin);
-  pdata.erase(std::unique(pdata.begin(), pdata.end(), [](const PData& a, const PData& b) { return a.begin == b.begin; }),
-              pdata.end());
+  pdata.erase(
+      std::unique(pdata.begin(), pdata.end(), [](const PData& a, const PData& b) { return a.begin == b.begin; }),
+      pdata.end());
   pdata.shrink_to_fit();
 }
 
@@ -233,7 +249,7 @@ std::string_view Image::bytes(u64 va, i64 n) const {
 
 namespace {
 template <class T>
-T read_at(const Image& img, u64 va) {   // little-endian, zero-filled past the end of the image
+T read_at(const Image& img, u64 va) {  // little-endian, zero-filled past the end of the image
   T v = 0;
   auto s = img.bytes(va, sizeof(T));
   std::memcpy(&v, s.data(), s.size());
@@ -246,11 +262,18 @@ i32 Image::i32_at(u64 va) const { return static_cast<i32>(u32_at(va)); }
 u64 Image::u64_at(u64 va) const { return read_at<u64>(*this, va); }
 
 std::optional<u32> Image::flags(u64 va) const {
-  for (auto& s : sections) if (s.lo <= va && va < s.hi) return s.ch;
+  for (auto& s : sections)
+    if (s.lo <= va && va < s.hi) return s.ch;
   return std::nullopt;
 }
-bool Image::executable(u64 va) const { auto f = flags(va); return f && (*f & SCN_EXEC); }
-bool Image::writable(u64 va) const { auto f = flags(va); return f && (*f & SCN_WRITE); }
+bool Image::executable(u64 va) const {
+  auto f = flags(va);
+  return f && (*f & SCN_EXEC);
+}
+bool Image::writable(u64 va) const {
+  auto f = flags(va);
+  return f && (*f & SCN_WRITE);
+}
 
 Bytes Image::cstring(u64 va, bool wide) const {
   size_t step = wide ? 2 : 1;
@@ -271,8 +294,8 @@ std::optional<u64> Image::extent(u64 va) const {
     const PData* nx = pdata_at(end);
     if (!nx) break;
     unsigned char vf = nx->unwind < img.size() ? static_cast<unsigned char>(img[nx->unwind]) : 0;
-    if (!((vf >> 3) & 0x4)) break;               // UNW_FLAG_CHAININFO: continuation of the same function
-    if (nx->end <= end) break;                   // an empty or backward range: malformed
+    if (!((vf >> 3) & 0x4)) break;  // UNW_FLAG_CHAININFO: continuation of the same function
+    if (nx->end <= end) break;      // an empty or backward range: malformed
     end = nx->end;
   }
   return end;
@@ -287,7 +310,9 @@ Unwind Image::unwind(u32 u) const {
   unsigned flags = vf >> 3;
   if (flags & 0x4) {
     w.has_chain = true;
-    w.chain_begin = rd32(img, off); w.chain_end = rd32(img, off + 4); w.chain_unwind = rd32(img, off + 8);
+    w.chain_begin = rd32(img, off);
+    w.chain_end = rd32(img, off + 4);
+    w.chain_unwind = rd32(img, off + 8);
   } else if (flags & 0x3) {
     w.handler = base + rd32(img, off);
     w.hdata = base + off + 4;
@@ -307,8 +332,13 @@ Rtti rtti(const Image& img, u64 col) {
   if (!col || !img.flags(col)) return r;
   r.present = true;
   u32 sig = img.u32_at(col);
-  if (sig != 1) { r.bad_sig = true; r.sig = sig; return r; }
-  r.off = img.u32_at(col + 4); r.cdoff = img.u32_at(col + 8);
+  if (sig != 1) {
+    r.bad_sig = true;
+    r.sig = sig;
+    return r;
+  }
+  r.off = img.u32_at(col + 4);
+  r.cdoff = img.u32_at(col + 8);
   u32 td = img.u32_at(col + 12), chd = img.u32_at(col + 16);
   r.attrs = img.u32_at(img.base + chd + 4);
   u32 nbase = img.u32_at(img.base + chd + 8), barr = img.u32_at(img.base + chd + 12);
@@ -316,8 +346,11 @@ Rtti rtti(const Image& img, u64 col) {
     u64 bcd = img.base + img.u32_at(img.base + barr + 4 * i);
     BaseDesc b;
     b.name = type_name(img, img.base + img.u32_at(bcd));
-    b.ncont = img.u32_at(bcd + 4); b.mdisp = img.i32_at(bcd + 8); b.pdisp = img.i32_at(bcd + 12);
-    b.vdisp = img.i32_at(bcd + 16); b.attr = img.u32_at(bcd + 20);
+    b.ncont = img.u32_at(bcd + 4);
+    b.mdisp = img.i32_at(bcd + 8);
+    b.pdisp = img.i32_at(bcd + 12);
+    b.vdisp = img.i32_at(bcd + 16);
+    b.attr = img.u32_at(bcd + 20);
     r.bases.push_back(std::move(b));
   }
   r.name = type_name(img, img.base + td);
@@ -336,7 +369,10 @@ ThrowInfoSig throw_info(const Image& img, u64 ti) {
     CatchableSig c;
     c.props = img.u32_at(ct);
     i32 td = img.i32_at(ct + 4);
-    c.mdisp = img.i32_at(ct + 8); c.pdisp = img.i32_at(ct + 12); c.vdisp = img.i32_at(ct + 16); c.size = img.i32_at(ct + 20);
+    c.mdisp = img.i32_at(ct + 8);
+    c.pdisp = img.i32_at(ct + 12);
+    c.vdisp = img.i32_at(ct + 16);
+    c.size = img.i32_at(ct + 20);
     u32 copy = img.u32_at(ct + 24);
     c.name = type_name(img, img.base + u64(i64(td)));
     t.types.push_back(std::move(c));

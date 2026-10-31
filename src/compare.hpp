@@ -24,18 +24,28 @@ struct Key {
   enum Kind : u8 { VA, CONST, STR, TD, TI, VBT, UNRESOLVED, IMP } kind = UNRESOLVED;
   u64 va = 0;
   std::string_view name;
-  const Import* imp = nullptr;   // IMP only (symbolised tokens): the image's entry
-  static Key of_va(u64 v) { Key k; k.kind = VA; k.va = v; return k; }
-  static Key named(Kind kd, std::string_view n) { return named_view(kd, keep_text(n)); }   // copies the name
-  static Key named_view(Kind kd, std::string_view n) { Key k; k.kind = kd; k.name = n; return k; }   // n outlives the run
+  const Import* imp = nullptr;  // IMP only (symbolised tokens): the image's entry
+  static Key of_va(u64 v) {
+    Key k;
+    k.kind = VA;
+    k.va = v;
+    return k;
+  }
+  static Key named(Kind kd, std::string_view n) { return named_view(kd, keep_text(n)); }  // copies the name
+  static Key named_view(Kind kd, std::string_view n) {
+    Key k;
+    k.kind = kd;
+    k.name = n;
+    return k;
+  }  // n outlives the run
   bool is_va(u64 v) const { return kind == VA && va == v; }
   bool operator==(const Key& o) const {
     return kind == o.kind && va == o.va && name == o.name && (imp == o.imp || (imp && o.imp && *imp == *o.imp));
   }
-  std::string text() const;   // what a problem message shows: hex(va) or the name
+  std::string text() const;  // what a problem message shows: hex(va) or the name
 };
 
-using Problem = std::pair<std::string, std::string>;   // (category, detail)
+using Problem = std::pair<std::string, std::string>;  // (category, detail)
 using Problems = std::vector<Problem>;
 
 // -- journal: undo log of the pairing state while a pairing is only assumed ------------------------------------
@@ -52,12 +62,19 @@ class JMap {
   explicit JMap(Journal* j = nullptr) : j_(j) {}
   void attach(Journal* j) { j_ = j; }
   bool contains(const K& k) const { return m_.count(k) != 0; }
-  const V* find(const K& k) const { auto it = m_.find(k); return it == m_.end() ? nullptr : &it->second; }
+  const V* find(const K& k) const {
+    auto it = m_.find(k);
+    return it == m_.end() ? nullptr : &it->second;
+  }
   void set(const K& k, V v) {
     if (j_ && j_->active) {
       auto it = m_.find(k);
-      if (it == m_.end()) j_->log.push_back([this, k] { m_.erase(k); });
-      else { V old = it->second; j_->log.push_back([this, k, old] { m_[k] = old; }); }
+      if (it == m_.end())
+        j_->log.push_back([this, k] { m_.erase(k); });
+      else {
+        V old = it->second;
+        j_->log.push_back([this, k, old] { m_[k] = old; });
+      }
     }
     m_[k] = std::move(v);
   }
@@ -70,10 +87,12 @@ class JMap {
 };
 
 struct PairHash {
-  size_t operator()(const std::pair<u64, u64>& p) const { return std::hash<u64>()(p.first * 0x9E3779B97F4A7C15ull ^ p.second); }
+  size_t operator()(const std::pair<u64, u64>& p) const {
+    return std::hash<u64>()(p.first * 0x9E3779B97F4A7C15ull ^ p.second);
+  }
 };
 
-using NamePairs = std::vector<std::pair<Bytes, Bytes>>;   // (original decorated name, rebuilt one)
+using NamePairs = std::vector<std::pair<Bytes, Bytes>>;  // (original decorated name, rebuilt one)
 
 i64 const_size(std::string_view name);
 i64 literal_size(const Image& img, u64 start, const Key& key);
@@ -86,8 +105,8 @@ class ComparerContext {
   virtual ~ComparerContext() = default;
   // the rebuild's symbols
   virtual bool symbol_start(u64 t) const { return false; }                     // a symbol starts at t
-  virtual std::optional<u64> containing(u64 t) const { return std::nullopt; }   // the symbol t is in
-  virtual u64 span(u64 t) const { return MAX_DATA_COMPARE; }                    // bytes from t to the next symbol
+  virtual std::optional<u64> containing(u64 t) const { return std::nullopt; }  // the symbol t is in
+  virtual u64 span(u64 t) const { return MAX_DATA_COMPARE; }                   // bytes from t to the next symbol
   // (local static, offset) when t is in a local static; the symbols a local static's address has (ICF folding)
   virtual std::optional<std::pair<u64, u64>> local_base(u64 t) const { return std::nullopt; }
   virtual int folded_locals(u64 base) const { return 1; }
@@ -96,17 +115,17 @@ class ComparerContext {
   // the compiler constant or string literal t is in: (its start, its key)
   virtual std::optional<std::pair<u64, Key>> literal_at(u64 t) const { return std::nullopt; }
   // the original's objects and names
-  virtual u64 orig_object_end(u64 t) const { return t; }   // where the object at t ends (t: unknown)
-  virtual bool orig_padding(u64 t) const { return false; }   // t is alignment padding
-  virtual bool orig_named(u64 t) const { return false; }     // t has a name of its own
-  virtual std::vector<u64> orig_refs(u64 f) { return {}; }   // the addresses function f's code refers to, sorted
+  virtual u64 orig_object_end(u64 t) const { return t; }    // where the object at t ends (t: unknown)
+  virtual bool orig_padding(u64 t) const { return false; }  // t is alignment padding
+  virtual bool orig_named(u64 t) const { return false; }    // t has a name of its own
+  virtual std::vector<u64> orig_refs(u64 f) { return {}; }  // the addresses function f's code refers to, sorted
   // the pairing
-  virtual bool annotated_between(u64 lo, u64 hi) const { return false; }   // an annotated original in (lo, hi]
+  virtual bool annotated_between(u64 lo, u64 hi) const { return false; }  // an annotated original in (lo, hi]
   // the original address one past the data object before t ends at, when t starts a symbol
   virtual std::optional<u64> end_of_previous(u64 t) const { return std::nullopt; }
   // the original functions a local static's owners pair with (nullopt: unknown)
   virtual std::optional<std::vector<u64>> static_home(u64 base) const { return std::nullopt; }
-  virtual bool infer(u64 o_t, u64 r_t) { return false; }   // r_t stands for o_t, when its code compares equal
+  virtual bool infer(u64 o_t, u64 r_t) { return false; }  // r_t stands for o_t, when its code compares equal
   // decoded functions kept for the run (nullptr: the Comparer decodes)
   virtual std::shared_ptr<const Code> orig_code(u64 start, u64 end) { return nullptr; }
   virtual std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end) { return nullptr; }
@@ -116,12 +135,13 @@ class Comparer {
  public:
   // vtables (if given) and ctx (if given; else nothing is known) outlive the Comparer
   Comparer(const Image* O, const Image* R, std::function<Key(u64)> resolve,
-           const std::map<u64, std::vector<u64>>* vtables = nullptr, NameOf names = nullptr, ComparerContext* ctx = nullptr);
+           const std::map<u64, std::vector<u64>>* vtables = nullptr, NameOf names = nullptr,
+           ComparerContext* ctx = nullptr);
 
   const Image *O, *R;
   std::function<Key(u64)> resolve;
-  const std::map<u64, std::vector<u64>>& vtables;   // original vtable VA -> slot VAs
-  NameOf names;                                      // original VA -> IDA name
+  const std::map<u64, std::vector<u64>>& vtables;  // original vtable VA -> slot VAs
+  NameOf names;                                    // original VA -> IDA name
 
   Journal journal;
   // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;
@@ -135,7 +155,7 @@ class Comparer {
   JMap<std::string, std::string> hash_r{&journal}, hash_o{&journal};
   JMap<u64, u64> vt_r{&journal}, vt_o{&journal};
 
-  ComparerContext* ctx;   // what is known beyond the two images (never null)
+  ComparerContext* ctx;  // what is known beyond the two images (never null)
 
   // a function's decoded code: the context's (kept for the run), else decoded here
   std::shared_ptr<const Code> orig_code(u64 start, u64 end);
@@ -148,7 +168,7 @@ class Comparer {
   // equal names, except that each build hash in a rebuilt name (anonymous namespace `?A0x...@`, lambda) stands
   // for one hash of the original's, the same one for the whole run
   bool same_names(const NamePairs& names);
-  bool same_rtti(const Rtti& a, const Rtti& b);                    // offsets, hierarchy, then the names
+  bool same_rtti(const Rtti& a, const Rtti& b);  // offsets, hierarchy, then the names
   bool same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b);
   bool infer_data(u64 o_t, u64 r_t);
   bool infer_vtable(u64 o_vt, u64 r_vt);
@@ -163,9 +183,10 @@ class Comparer {
   Problems code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   bool same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<bool> wide = std::nullopt);
   std::optional<Problem> accessed(u64 o_t, u64 r_t, int n);
-  bool is_alternate(u64 o_t, u64 r_t);   // r_t's symbol is one of several at its address, one of them naming o_t
+  bool is_alternate(u64 o_t, u64 r_t);  // r_t's symbol is one of several at its address, one of them naming o_t
   std::optional<Problem> throw_info_cmp(u64 o_t, u64 r_t, std::string_view name);
-  Problems handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth);
+  Problems handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend,
+                        int depth);
   friend class EHContext;
 };
 

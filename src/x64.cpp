@@ -17,24 +17,30 @@ namespace {
 
 // -- registers: (fadec register type, index, size log2) packed into a u16, 0 for none ---------------------------
 
-u16 make_reg(unsigned type, unsigned idx, unsigned sizelg) { return u16(1 + ((type & 15) << 9 | (idx & 63) << 3 | (sizelg & 7))); }
+u16 make_reg(unsigned type, unsigned idx, unsigned sizelg) {
+  return u16(1 + ((type & 15) << 9 | (idx & 63) << 3 | (sizelg & 7)));
+}
 unsigned reg_type(u16 r) { return ((r - 1) >> 9) & 15; }
 unsigned reg_idx(u16 r) { return ((r - 1) >> 3) & 63; }
 unsigned reg_sizelg(u16 r) { return (r - 1) & 7; }
 
 // GPR numbering: the hardware's (rax rcx rdx rbx rsp rbp rsi rdi r8..r15)
 constexpr u32 gpr(unsigned i) { return 1u << i; }
-constexpr u32 RAX = gpr(0), RCX = gpr(1), RDX = gpr(2), RBX = gpr(3), RSP = gpr(4), RBP = gpr(5), RSI = gpr(6), RDI = gpr(7);
+constexpr u32 RAX = gpr(0), RCX = gpr(1), RDX = gpr(2), RBX = gpr(3), RSP = gpr(4), RBP = gpr(5), RSI = gpr(6),
+              RDI = gpr(7);
 constexpr u32 R11 = gpr(11);
-constexpr u32 VOLATILE = RAX | RCX | RDX | gpr(8) | gpr(9) | gpr(10) | R11;   // clobbered by a call (x64 ABI)
+constexpr u32 VOLATILE = RAX | RCX | RDX | gpr(8) | gpr(9) | gpr(10) | R11;  // clobbered by a call (x64 ABI)
 
-u32 op_gpr(const FdInstr& fi, int k) {   // the GPR a register operand is part of, as a mask
+u32 op_gpr(const FdInstr& fi, int k) {  // the GPR a register operand is part of, as a mask
   if (FD_OP_TYPE(&fi, k) != FD_OT_REG) return 0;
   unsigned idx = FD_OP_REG(&fi, k);
   switch (FD_OP_REG_TYPE(&fi, k)) {
-    case FD_RT_GPL: return idx < 16 ? gpr(idx) : 0;
-    case FD_RT_GPH: return gpr(idx - 4);
-    default: return 0;
+    case FD_RT_GPL:
+      return idx < 16 ? gpr(idx) : 0;
+    case FD_RT_GPH:
+      return gpr(idx - 4);
+    default:
+      return 0;
   }
 }
 
@@ -45,49 +51,152 @@ u32 written_gprs(const FdInstr& fi) {
   bool rep = FD_HAS_REP(&fi) || FD_HAS_REPNZ(&fi);
   switch (FD_TYPE(&fi)) {
     // the first operand is only read
-    case FDI_CMP: case FDI_TEST: case FDI_BT: case FDI_PUSH: case FDI_JMP: case FDI_CALL: case FDI_JMPF:
-    case FDI_CALLF: case FDI_OUT: case FDI_NOP: case FDI_PREFETCH: case FDI_CLFLUSH: case FDI_CLFLUSHOPT:
+    case FDI_CMP:
+    case FDI_TEST:
+    case FDI_BT:
+    case FDI_PUSH:
+    case FDI_JMP:
+    case FDI_CALL:
+    case FDI_JMPF:
+    case FDI_CALLF:
+    case FDI_OUT:
+    case FDI_NOP:
+    case FDI_PREFETCH:
+    case FDI_CLFLUSH:
+    case FDI_CLFLUSHOPT:
       break;
     default:
       w |= op_gpr(fi, 0);
   }
   switch (FD_TYPE(&fi)) {
-    case FDI_XCHG: case FDI_XADD: case FDI_MULX: w |= op_gpr(fi, 1); break;
-    case FDI_CMPXCHG: w |= RAX; break;
-    case FDI_CMPXCHGD: w |= RAX | RDX; break;
-    case FDI_MUL: case FDI_DIV: case FDI_IDIV: w |= RAX | RDX; break;
-    case FDI_IMUL: if (FD_OP_TYPE(&fi, 1) == FD_OT_NONE) w |= RAX | RDX; break;
-    case FDI_C_EX: w |= RAX; break;                      // cbw cwde cdqe
-    case FDI_C_SEP: w |= RDX; break;                     // cwd cdq cqo
-    case FDI_CPUID: w |= RAX | RBX | RCX | RDX; break;
-    case FDI_RDTSC: case FDI_RDMSR: case FDI_RDPMC: case FDI_XGETBV: w |= RAX | RDX; break;
-    case FDI_RDTSCP: w |= RAX | RDX | RCX; break;
-    case FDI_LAHF: case FDI_XLATB: case FDI_IN: w |= RAX; break;
-    case FDI_SYSCALL: w |= RCX | R11; break;
-    case FDI_SSE_PCMPISTRI: case FDI_SSE_PCMPESTRI: case FDI_VPCMPISTRI: case FDI_VPCMPESTRI: w |= RCX; break;
-    case FDI_LOOP: case FDI_LOOPZ: case FDI_LOOPNZ: w |= RCX; break;
-    case FDI_MOVS: case FDI_CMPS: w |= RSI | RDI | (rep ? RCX : 0); break;
-    case FDI_STOS: case FDI_SCAS: case FDI_INS: w |= RDI | (rep ? RCX : 0); break;
-    case FDI_LODS: w |= RAX | RSI | (rep ? RCX : 0); break;
-    case FDI_OUTS: w |= RSI | (rep ? RCX : 0); break;
-    case FDI_PUSH: case FDI_POP: case FDI_PUSHF: case FDI_POPF: case FDI_CALL: case FDI_CALLF: case FDI_RET:
-    case FDI_RETF: case FDI_IRET: case FDI_INT: case FDI_INT3: case FDI_INTO:
-      w |= RSP; break;
-    case FDI_ENTER: case FDI_LEAVE: w |= RSP | RBP; break;
-    default: break;
+    case FDI_XCHG:
+    case FDI_XADD:
+    case FDI_MULX:
+      w |= op_gpr(fi, 1);
+      break;
+    case FDI_CMPXCHG:
+      w |= RAX;
+      break;
+    case FDI_CMPXCHGD:
+      w |= RAX | RDX;
+      break;
+    case FDI_MUL:
+    case FDI_DIV:
+    case FDI_IDIV:
+      w |= RAX | RDX;
+      break;
+    case FDI_IMUL:
+      if (FD_OP_TYPE(&fi, 1) == FD_OT_NONE) w |= RAX | RDX;
+      break;
+    case FDI_C_EX:
+      w |= RAX;
+      break;  // cbw cwde cdqe
+    case FDI_C_SEP:
+      w |= RDX;
+      break;  // cwd cdq cqo
+    case FDI_CPUID:
+      w |= RAX | RBX | RCX | RDX;
+      break;
+    case FDI_RDTSC:
+    case FDI_RDMSR:
+    case FDI_RDPMC:
+    case FDI_XGETBV:
+      w |= RAX | RDX;
+      break;
+    case FDI_RDTSCP:
+      w |= RAX | RDX | RCX;
+      break;
+    case FDI_LAHF:
+    case FDI_XLATB:
+    case FDI_IN:
+      w |= RAX;
+      break;
+    case FDI_SYSCALL:
+      w |= RCX | R11;
+      break;
+    case FDI_SSE_PCMPISTRI:
+    case FDI_SSE_PCMPESTRI:
+    case FDI_VPCMPISTRI:
+    case FDI_VPCMPESTRI:
+      w |= RCX;
+      break;
+    case FDI_LOOP:
+    case FDI_LOOPZ:
+    case FDI_LOOPNZ:
+      w |= RCX;
+      break;
+    case FDI_MOVS:
+    case FDI_CMPS:
+      w |= RSI | RDI | (rep ? RCX : 0);
+      break;
+    case FDI_STOS:
+    case FDI_SCAS:
+    case FDI_INS:
+      w |= RDI | (rep ? RCX : 0);
+      break;
+    case FDI_LODS:
+      w |= RAX | RSI | (rep ? RCX : 0);
+      break;
+    case FDI_OUTS:
+      w |= RSI | (rep ? RCX : 0);
+      break;
+    case FDI_PUSH:
+    case FDI_POP:
+    case FDI_PUSHF:
+    case FDI_POPF:
+    case FDI_CALL:
+    case FDI_CALLF:
+    case FDI_RET:
+    case FDI_RETF:
+    case FDI_IRET:
+    case FDI_INT:
+    case FDI_INT3:
+    case FDI_INTO:
+      w |= RSP;
+      break;
+    case FDI_ENTER:
+    case FDI_LEAVE:
+      w |= RSP | RBP;
+      break;
+    default:
+      break;
   }
   return w;
 }
 
-u8 branch_bits(const FdInstr& fi) {   // the Group bits
+u8 branch_bits(const FdInstr& fi) {  // the Group bits
   u8 g = 0;
   switch (FD_TYPE(&fi)) {
-    case FDI_CALL: case FDI_CALLF: g |= GRP_CALL; break;
-    case FDI_JMP: case FDI_JMPF: case FDI_JO: case FDI_JNO: case FDI_JC: case FDI_JNC: case FDI_JZ: case FDI_JNZ:
-    case FDI_JBE: case FDI_JA: case FDI_JS: case FDI_JNS: case FDI_JP: case FDI_JNP: case FDI_JL: case FDI_JGE:
-    case FDI_JLE: case FDI_JG: case FDI_JCXZ: case FDI_LOOP: case FDI_LOOPZ: case FDI_LOOPNZ:
-      g |= GRP_JUMP; break;
-    default: break;
+    case FDI_CALL:
+    case FDI_CALLF:
+      g |= GRP_CALL;
+      break;
+    case FDI_JMP:
+    case FDI_JMPF:
+    case FDI_JO:
+    case FDI_JNO:
+    case FDI_JC:
+    case FDI_JNC:
+    case FDI_JZ:
+    case FDI_JNZ:
+    case FDI_JBE:
+    case FDI_JA:
+    case FDI_JS:
+    case FDI_JNS:
+    case FDI_JP:
+    case FDI_JNP:
+    case FDI_JL:
+    case FDI_JGE:
+    case FDI_JLE:
+    case FDI_JG:
+    case FDI_JCXZ:
+    case FDI_LOOP:
+    case FDI_LOOPZ:
+    case FDI_LOOPNZ:
+      g |= GRP_JUMP;
+      break;
+    default:
+      break;
   }
   if (FD_OP_TYPE(&fi, 0) == FD_OT_OFF) g |= GRP_BRANCH_RELATIVE;
   return g;
@@ -95,11 +204,13 @@ u8 branch_bits(const FdInstr& fi) {   // the Group bits
 
 // Where an instruction's displacement and branch offset sit in its bytes: after the prefixes (legacy, REX,
 // VEX, EVEX), the opcode, ModRM and SIB. disp_size is 0 when there is no displacement.
-struct Layout { u8 opcode_end = 0, disp_offset = 0, disp_size = 0; };
+struct Layout {
+  u8 opcode_end = 0, disp_offset = 0, disp_size = 0;
+};
 Layout layout(const u8* b, size_t n, bool has_mem, unsigned addrsz) {
   Layout l;
   size_t p = 0;
-  while (p < n) {   // legacy prefixes and REX
+  while (p < n) {  // legacy prefixes and REX
     u8 c = b[p];
     if (c == 0xf0 || c == 0xf2 || c == 0xf3 || c == 0x2e || c == 0x36 || c == 0x3e || c == 0x26 || c == 0x64 ||
         c == 0x65 || c == 0x66 || c == 0x67 || (c & 0xf0) == 0x40)
@@ -110,9 +221,12 @@ Layout layout(const u8* b, size_t n, bool has_mem, unsigned addrsz) {
   if (p >= n) return l;
   bool legacy_map0 = false;
   u8 op = 0;
-  if (b[p] == 0xc5) p += 2;                 // VEX, 2 bytes
-  else if (b[p] == 0xc4) p += 3;            // VEX, 3 bytes
-  else if (b[p] == 0x62) p += 4;            // EVEX
+  if (b[p] == 0xc5)
+    p += 2;  // VEX, 2 bytes
+  else if (b[p] == 0xc4)
+    p += 3;  // VEX, 3 bytes
+  else if (b[p] == 0x62)
+    p += 4;  // EVEX
   else if (b[p] == 0x0f) {
     ++p;
     if (p < n && (b[p] == 0x38 || b[p] == 0x3a)) ++p;
@@ -122,7 +236,7 @@ Layout layout(const u8* b, size_t n, bool has_mem, unsigned addrsz) {
   if (p >= n) return l;
   op = b[p++];
   l.opcode_end = u8(p);
-  if (legacy_map0 && op >= 0xa0 && op <= 0xa3) {   // mov with an absolute address (moffs): no ModRM
+  if (legacy_map0 && op >= 0xa0 && op <= 0xa3) {  // mov with an absolute address (moffs): no ModRM
     l.disp_offset = u8(p);
     l.disp_size = u8(addrsz);
     return l;
@@ -132,34 +246,45 @@ Layout layout(const u8* b, size_t n, bool has_mem, unsigned addrsz) {
   unsigned mod = modrm >> 6, rm = modrm & 7;
   if (mod != 3 && rm == 4 && p < n) {
     u8 sib = b[p++];
-    if (mod == 0 && (sib & 7) == 5) { l.disp_offset = u8(p); l.disp_size = 4; return l; }
+    if (mod == 0 && (sib & 7) == 5) {
+      l.disp_offset = u8(p);
+      l.disp_size = 4;
+      return l;
+    }
   }
-  if (mod == 1) l.disp_size = 1;
-  else if (mod == 2 || (mod == 0 && rm == 5)) l.disp_size = 4;
+  if (mod == 1)
+    l.disp_size = 1;
+  else if (mod == 2 || (mod == 0 && rm == 5))
+    l.disp_size = 4;
   if (l.disp_size) l.disp_offset = u8(p);
   return l;
 }
 
 // For a gather/scatter (vector-indexed memory): the VEX/EVEX vector length (0 128-bit, 1 256-bit, 2 512-bit) and
 // the index register's size log2 (4 xmm, 5 ymm, 6 zmm), halved (`half`) for dword indices of qword elements.
-struct Vsib { int len, index_sizelg; };
+struct Vsib {
+  int len, index_sizelg;
+};
 Vsib vsib_of(const u8* b, size_t n, bool half) {
   size_t p = 0;
   while (p < n && (b[p] == 0x66 || b[p] == 0x67 || b[p] == 0xf2 || b[p] == 0xf3 || b[p] == 0x2e || b[p] == 0x3e ||
                    b[p] == 0x26 || b[p] == 0x36 || b[p] == 0x64 || b[p] == 0x65))
     ++p;
-  int len = 0;   // vector length: 0 128-bit, 1 256-bit, 2 512-bit
-  if (p + 2 < n && b[p] == 0xc4) len = (b[p + 2] >> 2) & 1;
-  else if (p + 1 < n && b[p] == 0xc5) len = (b[p + 1] >> 2) & 1;
-  else if (p + 3 < n && b[p] == 0x62) len = (b[p + 3] >> 5) & 3;
+  int len = 0;  // vector length: 0 128-bit, 1 256-bit, 2 512-bit
+  if (p + 2 < n && b[p] == 0xc4)
+    len = (b[p + 2] >> 2) & 1;
+  else if (p + 1 < n && b[p] == 0xc5)
+    len = (b[p + 1] >> 2) & 1;
+  else if (p + 3 < n && b[p] == 0x62)
+    len = (b[p + 3] >> 5) & 3;
   return Vsib{len, 4 + std::max(0, len - (half ? 1 : 0))};
 }
 
 // the mnemonic in fadec's text: prefix words (lock, rep, ...) and the instruction's name
 std::string_view mnemonic_of(std::string_view text) {
-  static const std::array<std::string_view, 15> prefixes = {"lock", "rep", "repnz", "xacquire", "xrelease", "notrack",
-                                                           "hint-taken", "addr32", "addr16", "es", "cs", "ss", "ds",
-                                                           "fs", "gs"};
+  static const std::array<std::string_view, 15> prefixes = {"lock",    "rep",        "repnz",  "xacquire", "xrelease",
+                                                            "notrack", "hint-taken", "addr32", "addr16",   "es",
+                                                            "cs",      "ss",         "ds",     "fs",       "gs"};
   size_t p = 0;
   for (;;) {
     size_t e = text.find(' ', p);
@@ -173,7 +298,10 @@ std::string_view mnemonic_of(std::string_view text) {
 // An instruction's mnemonic, as fadec's formatter spells it, and whether it is a gather/scatter (`vsib`, with
 // `half` for dword indices of qword elements). It depends only on the fields in the key (type, prefixes, operand
 // and address size, the first operand's kind and size, segment), so each is formatted once.
-struct MnemInfo { Mnem mnemonic; bool vsib, half; };
+struct MnemInfo {
+  Mnem mnemonic;
+  bool vsib, half;
+};
 const MnemInfo& mnemonic(const FdInstr& fi) {
   int t0 = FD_OP_TYPE(&fi, 0);
   u64 key = u64(FD_TYPE(&fi)) | u64(FD_HAS_LOCK(&fi) ? 1 : 0) << 16 | u64(FD_HAS_REP(&fi) ? 1 : 0) << 17 |
@@ -182,7 +310,10 @@ const MnemInfo& mnemonic(const FdInstr& fi) {
             u64(t0 == FD_OT_REG ? FD_OP_REG_TYPE(&fi, 0) : 0) << 33 | u64(FD_SEGMENT(&fi)) << 38 |
             u64(FD_HAS_3E(&fi) ? 1 : 0) << 45;
   // a direct-mapped table in front of the map: one probe for almost every instruction
-  struct Slot { u64 key = ~0ull; const MnemInfo* info = nullptr; };
+  struct Slot {
+    u64 key = ~0ull;
+    const MnemInfo* info = nullptr;
+  };
   static std::array<Slot, 4096> recent;
   Slot& slot = recent[(key ^ key >> 25 ^ key >> 38) & 4095];
   if (slot.key == key) return *slot.info;
@@ -231,19 +362,19 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
         op.type = OP_IMM;
         op.value = FD_OP_IMM(&fi, k);
         break;
-      case FD_OT_OFF:   // a branch target, relative to the next instruction
+      case FD_OT_OFF:  // a branch target, relative to the next instruction
         op.type = OP_IMM;
         op.value = i64(addr + u64(len) + u64(FD_OP_IMM(&fi, k)));
         break;
-      default: {        // memory (also an AVX-512 broadcast)
+      default: {  // memory (also an AVX-512 broadcast)
         has_mem = true;
         op.type = OP_MEM;
         unsigned base = FD_OP_BASE(&fi, k), index = FD_OP_INDEX(&fi, k);
         op.reg = base == FD_REG_NONE ? 0 : make_reg(FD_RT_GPL, base, addrlg);
         op.index = index == FD_REG_NONE ? 0
-                   : vsib          ? make_reg(FD_RT_VEC, index, unsigned(vsib->index_sizelg))
-                                   : make_reg(FD_RT_GPL, index, addrlg);
-        if (vsib) op.size = u8(16 << vsib->len);   // the vector the elements are gathered from, not one element
+                   : vsib               ? make_reg(FD_RT_VEC, index, unsigned(vsib->index_sizelg))
+                                        : make_reg(FD_RT_GPL, index, addrlg);
+        if (vsib) op.size = u8(16 << vsib->len);  // the vector the elements are gathered from, not one element
         op.scale = i8(1 << FD_OP_SCALE(&fi, k));
         op.value = FD_OP_DISP(&fi, k);
         op.segment = FD_SEGMENT(&fi) == FD_REG_NONE ? 0 : u8(FD_SEGMENT(&fi) + 1);
@@ -258,7 +389,7 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
   Layout l = layout(p, size_t(len), has_mem, 1u << addrlg);
   r.disp_offset = l.disp_offset;
   r.disp_size = l.disp_size;
-  if (r.group(GRP_BRANCH_RELATIVE)) {   // the branch offset ends the instruction
+  if (r.group(GRP_BRANCH_RELATIVE)) {  // the branch offset ends the instruction
     r.imm_offset = l.opcode_end;
     r.imm_size = u8(len - l.opcode_end);
   }
@@ -295,21 +426,32 @@ std::vector<std::unique_ptr<Mnem::Entry>>& Mnem::entries() {
 Mnem Mnem::from_id(u16 id) { return Mnem(entries()[id].get()); }
 size_t Mnem::count() { return entries().size(); }
 
-static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96, "instructions are decoded in bulk: keep them flat");
+static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96,
+              "instructions are decoded in bulk: keep them flat");
 
 std::string Insn::op_str() const {
   auto size_ptr = [](int n) -> std::string {
     switch (n) {
-      case 1: return "byte ptr ";
-      case 2: return "word ptr ";
-      case 4: return "dword ptr ";
-      case 6: return "fword ptr ";
-      case 8: return "qword ptr ";
-      case 10: return "tbyte ptr ";
-      case 16: return "xmmword ptr ";
-      case 32: return "ymmword ptr ";
-      case 64: return "zmmword ptr ";
-      default: return "";
+      case 1:
+        return "byte ptr ";
+      case 2:
+        return "word ptr ";
+      case 4:
+        return "dword ptr ";
+      case 6:
+        return "fword ptr ";
+      case 8:
+        return "qword ptr ";
+      case 10:
+        return "tbyte ptr ";
+      case 16:
+        return "xmmword ptr ";
+      case 32:
+        return "ymmword ptr ";
+      case 64:
+        return "zmmword ptr ";
+      default:
+        return "";
     }
   };
   std::string out;
@@ -370,9 +512,12 @@ int gpr_index(u16 reg) {
   if (!reg) return -1;
   unsigned idx = reg_idx(reg);
   switch (reg_type(reg)) {
-    case FD_RT_GPL: return idx < 16 ? int(idx) : -1;
-    case FD_RT_GPH: return int(idx) - 4;
-    default: return -1;
+    case FD_RT_GPL:
+      return idx < 16 ? int(idx) : -1;
+    case FD_RT_GPH:
+      return int(idx) - 4;
+    default:
+      return -1;
   }
 }
 
@@ -386,7 +531,10 @@ bool Field::operator<(const Field& o) const {
 
 std::vector<Insn> decode_linear(std::string_view code, u64 start) {
   std::vector<Insn> out;
-  decode_each(code, start, [&](const Insn& ins, size_t) { out.push_back(ins); return true; });
+  decode_each(code, start, [&](const Insn& ins, size_t) {
+    out.push_back(ins);
+    return true;
+  });
   return out;
 }
 
@@ -397,13 +545,14 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   i64 n = i64(code.size());
   cut = n;
   u16 rip = reg_rip();
-  static std::vector<Insn> ins_;   // the decoded instructions, kept only while the lean form is made
+  static std::vector<Insn> ins_;  // the decoded instructions, kept only while the lean form is made
   std::vector<Insn>& all = ins_;
   all.clear();
   decode_each(code, s, [&](const Insn& ins, size_t off) {
     if (i64(off) >= cut) return false;
     for (auto& op : ins.ops) {
-      if (op.type == OP_MEM && op.base() != rip && op.index && frva <= op.disp() && op.disp() < erva + i64(TABLE_SLACK)) {
+      if (op.type == OP_MEM && op.base() != rip && op.index && frva <= op.disp() &&
+          op.disp() < erva + i64(TABLE_SLACK)) {
         i64 t = op.disp() - frva;
         int& size = tables[t];
         size = std::max(size, int(op.size));
@@ -423,9 +572,14 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   // a dword table at the cut whose entries point past every in-span table: decoding resumes there
   if (cut < n && tables.count(cut) && tables[cut] == 4) {
     i64 nxt = n;
-    for (auto& [t, sz] : tables) if (cut < t && t < n) { nxt = t; break; }
+    for (auto& [t, sz] : tables)
+      if (cut < t && t < n) {
+        nxt = t;
+        break;
+      }
     i64 last = cut;
-    for (auto& [t, sz] : tables) if (t < n) last = std::max(last, t);
+    for (auto& [t, sz] : tables)
+      if (t < n) last = std::max(last, t);
     std::vector<i64> targets;
     i64 j = cut;
     while (j + 4 <= nxt) {
@@ -434,7 +588,8 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
       targets.push_back(tgt);
       j += 4;
     }
-    for (i64 t : targets) if (t >= j && t > last && (!resume || t < *resume)) resume = t;
+    for (i64 t : targets)
+      if (t >= j && t > last && (!resume || t < *resume)) resume = t;
   }
   if (resume) {
     auto more = decode_linear(code.substr(size_t(*resume)), s + u64(*resume));
@@ -467,7 +622,7 @@ bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::s
 
 bool same_outside_fields(std::string_view a, std::string_view b, std::span<const Field> f) {
   if (a.size() != b.size()) return false;
-  u32 masked = 0;   // instructions are at most 15 bytes; a field can reach past the end
+  u32 masked = 0;  // instructions are at most 15 bytes; a field can reach past the end
   for (auto& x : f)
     for (size_t i = x.off; i < size_t(x.off) + x.size && i < a.size(); ++i) masked |= 1u << i;
   for (size_t i = 0; i < a.size(); ++i)
@@ -478,14 +633,16 @@ bool same_outside_fields(std::string_view a, std::string_view b, std::span<const
 Insn Code::insn(const Lean& l) const {
   Insn ins;
   // the same bytes, limit and address as the first decode
-  decode_one(reinterpret_cast<const u8*>(decoded_from_.data()) + l.off, decoded_from_.size() - l.off, start + l.off, ins);
+  decode_one(reinterpret_cast<const u8*>(decoded_from_.data()) + l.off, decoded_from_.size() - l.off, start + l.off,
+             ins);
   return ins;
 }
 
 void Code::trim_padding() {
   i64 n = i64(code.size());
   if (cut < n && !resume) {
-    for (auto& [t, sz] : tables) if (t < n) return;
+    for (auto& [t, sz] : tables)
+      if (t < n) return;
     code = code.substr(0, size_t(cut));
   }
 }
@@ -495,18 +652,26 @@ std::vector<TableItem> Code::table_region() const {
   i64 size = i64(code.size()), n = resume ? *resume : size, k = cut;
   i64 frva = i64(start - img->base);
   std::vector<i64> starts;
-  for (auto& [t, sz] : tables) if (cut <= t && t < n) starts.push_back(t);
+  for (auto& [t, sz] : tables)
+    if (cut <= t && t < n) starts.push_back(t);
   auto entry = [&](i64 x) { return i64(le32(code.data() + x)) - frva; };
   Bytes raw;
   while (k < n) {
     auto it = tables.find(k);
     if (it != tables.end() && it->second == 4) {
       i64 nxt = n;
-      for (i64 t : starts) if (t > k) { nxt = t; break; }
+      for (i64 t : starts)
+        if (t > k) {
+          nxt = t;
+          break;
+        }
       i64 j = k;
       while (j + 4 <= nxt && 0 <= entry(j) && entry(j) < size) j += 4;
       if (j > k) {
-        if (!raw.empty()) { out.push_back({false, 0, raw}); raw.clear(); }
+        if (!raw.empty()) {
+          out.push_back({false, 0, raw});
+          raw.clear();
+        }
         for (i64 x = k; x < j; x += 4) out.push_back({true, entry(x), {}});
         k = j;
         continue;
@@ -522,7 +687,8 @@ std::vector<TableItem> Code::table_region() const {
 std::vector<OutsideTable> Code::outside_tables() const {
   i64 n = i64(code.size());
   std::vector<i64> starts;
-  for (auto& [t, sz] : tables) if (t >= n) starts.push_back(t);
+  for (auto& [t, sz] : tables)
+    if (t >= n) starts.push_back(t);
   std::vector<OutsideTable> out;
   for (size_t i = 0; i < starts.size(); ++i) {
     i64 t = starts[i];
@@ -558,12 +724,16 @@ void Code::add_fields(const Insn& ins, u32 image_base) {
   auto image_relative = [&](const Operand& op) {
     if (!image_base) return false;
     u32 regs = 0;
-    for (u16 r : {op.base(), op.index}) if (r) { int g = gpr_index(r); if (g >= 0) regs |= 1u << g; }
+    for (u16 r : {op.base(), op.index})
+      if (r) {
+        int g = gpr_index(r);
+        if (g >= 0) regs |= 1u << g;
+      }
     return (image_base & regs) && op.disp() > 0 && img->flags(img->base + u64(op.disp())).has_value();
   };
   for (auto& op : ins.ops) {
     if (op.type != OP_MEM) continue;
-    int size = ins.type == FDI_LEA ? 0 : op.size;   // bytes read there; lea only takes the address
+    int size = ins.type == FDI_LEA ? 0 : op.size;  // bytes read there; lea only takes the address
     if (op.base() == reg_rip()) {
       add(ins.disp_offset, 4, F_RIP, i64(ins.address + ins.size) + op.disp(), size);
     } else if (op.index && tables.count(op.disp() - frva)) {
@@ -609,24 +779,31 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
         if (x >= 0) g = 1u << x;
       }
     }
-    kill[k] = kl; gen[k] = g;
+    kill[k] = kl;
+    gen[k] = g;
     any_gen |= g != 0;
   }
   // nothing loads __ImageBase: no register holds it anywhere (an empty vector says so for every instruction)
   if (!any_gen) return {};
-  auto index_of = [&](u64 a) -> long {   // instructions are in address order
+  auto index_of = [&](u64 a) -> long {  // instructions are in address order
     auto it = std::lower_bound(insns.begin(), insns.end(), a, [](const Insn& i, u64 x) { return i.address < x; });
     return it != insns.end() && it->address == a ? long(it - insns.begin()) : -1;
   };
   // predecessors as flat arrays (CSR): fall-through from k-1, and jumps with an immediate target
   std::vector<u32> npred(n + 1, 0);
-  std::vector<std::pair<u32, u32>> edges;   // (to, from)
+  std::vector<std::pair<u32, u32>> edges;  // (to, from)
   edges.reserve(n + n / 4);
   std::vector<u32> switches;
-  auto falls = [](const Insn& ins) {   // execution can continue with the next instruction
+  auto falls = [](const Insn& ins) {  // execution can continue with the next instruction
     switch (ins.type) {
-      case FDI_JMP: case FDI_UD2: case FDI_INT3: case FDI_RET: case FDI_RETF: return false;
-      default: return true;
+      case FDI_JMP:
+      case FDI_UD2:
+      case FDI_INT3:
+      case FDI_RET:
+      case FDI_RETF:
+        return false;
+      default:
+        return true;
     }
   };
   for (size_t k = 0; k < n; ++k) {
@@ -647,11 +824,16 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
   }
   // an instruction nothing reaches (after a computed jump) may be any switch's case
   auto preds_of = [&](size_t k, const u32*& b, const u32*& e) {
-    if (npred[k] == npred[k + 1] && k >= 1) { b = switches.data(); e = b + switches.size(); }
-    else { b = pred.data() + npred[k]; e = pred.data() + npred[k + 1]; }
+    if (npred[k] == npred[k + 1] && k >= 1) {
+      b = switches.data();
+      e = b + switches.size();
+    } else {
+      b = pred.data() + npred[k];
+      e = pred.data() + npred[k + 1];
+    }
   };
 
-  constexpr u32 TOP = 0xFFFFFFFFu;   // "not reached yet": every register (must-analysis from the top)
+  constexpr u32 TOP = 0xFFFFFFFFu;  // "not reached yet": every register (must-analysis from the top)
   std::vector<u32> state(n);
   std::vector<char> reached(n);
   for (size_t k = 0; k < n; ++k) {
@@ -681,7 +863,8 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
       }
     }
   }
-  for (size_t k = 0; k < n; ++k) if (!reached[k]) state[k] = 0;
+  for (size_t k = 0; k < n; ++k)
+    if (!reached[k]) state[k] = 0;
   return state;
 }
 
@@ -697,8 +880,7 @@ std::optional<u64> leaf_extent(const Image& img, u64 va) {
     for (auto& ins : decode_linear(std::string_view(window).substr(at, endp - at), va + at)) {
       nxt = ins.address + ins.size;
       for (auto& op : ins.ops)
-        if (op.type == OP_IMM && ins.branches() &&
-            i64(va) <= op.imm() && op.imm() < i64(va + MAX_DATA_COMPARE))
+        if (op.type == OP_IMM && ins.branches() && i64(va) <= op.imm() && op.imm() < i64(va + MAX_DATA_COMPARE))
           reach = std::max(reach, u64(op.imm()));
       if ((ins.type == FDI_RET || ins.type == FDI_RETF || ins.type == FDI_JMP || ins.type == FDI_INT3) && reach < nxt)
         return ins.type != FDI_INT3 ? nxt : ins.address;

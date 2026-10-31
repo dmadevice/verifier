@@ -12,7 +12,7 @@
 
 namespace verifier {
 
-std::string cache_header(std::string_view magic, std::string_view key);   // magic + key + "\n"
+std::string cache_header(std::string_view magic, std::string_view key);  // magic + key + "\n"
 // the file at `path` when it starts with `header`, mapped (else nullptr: absent, unreadable or another header)
 std::unique_ptr<const MappedFile> open_cache_file(const std::string& path, std::string_view header);
 // writes the file whole, creating its directory; false on failure (the cache is then only not kept)
@@ -26,12 +26,15 @@ class BinWriter {
     out.append(reinterpret_cast<const char*>(&v), sizeof v);
   }
   template <class T>
-  void array(const T* p, size_t n) {   // n items, without their count
+  void array(const T* p, size_t n) {  // n items, without their count
     static_assert(std::is_trivially_copyable_v<T>);
     out.append(reinterpret_cast<const char*>(p), n * sizeof(T));
   }
-  void str(std::string_view s) { put(u32(s.size())); out += s; }   // u32 length, then the bytes
-  void pad8() { out.append((8 - out.size() % 8) % 8, '\0'); }      // to a multiple of 8 from the file's start
+  void str(std::string_view s) {
+    put(u32(s.size()));
+    out += s;
+  }  // u32 length, then the bytes
+  void pad8() { out.append((8 - out.size() % 8) % 8, '\0'); }  // to a multiple of 8 from the file's start
   std::string out;
 };
 
@@ -51,8 +54,11 @@ class BinReader {
     if (get(n)) s.assign(take(n));
     return ok_;
   }
-  std::string_view take(size_t n) {   // the next n bytes, as a view of the file
-    if (!ok_ || in_.size() - p_ < n) { ok_ = false; return {}; }
+  std::string_view take(size_t n) {  // the next n bytes, as a view of the file
+    if (!ok_ || in_.size() - p_ < n) {
+      ok_ = false;
+      return {};
+    }
     std::string_view v = in_.substr(p_, n);
     p_ += n;
     return v;

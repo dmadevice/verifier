@@ -13,7 +13,8 @@ constexpr std::string_view MAGIC = "verifier-sources 1\n";
 
 }  // namespace
 
-SourceCache::SourceCache(std::string path, std::string key, i64 recent) : path_(std::move(path)), key_(std::move(key)), recent_(recent) {
+SourceCache::SourceCache(std::string path, std::string key, i64 recent)
+    : path_(std::move(path)), key_(std::move(key)), recent_(recent) {
   std::string head = cache_header(MAGIC, key_);
   auto file = open_cache_file(path_, head);
   if (!file) return;
@@ -51,7 +52,7 @@ SourceCache::SourceCache(std::string path, std::string key, i64 recent) : path_(
     }
     if (r.ok()) m.emplace(std::move(name), std::move(st));
   }
-  if (r.ok()) old_ = std::move(m);   // a damaged file is not used at all
+  if (r.ok()) old_ = std::move(m);  // a damaged file is not used at all
 }
 
 const SourceCache::Entry* SourceCache::find(const ListedFile& f) const {
@@ -66,7 +67,8 @@ const SourceCache::Entry* SourceCache::find(const ListedFile& f) const {
 
 void SourceCache::keep(const ListedFile& f, const Entry& e) {
   auto it = old_.find(f.path);
-  if (it == old_.end() || it->second.size != f.size || it->second.time != f.time || it->second.e.hash != e.hash) changed_ = true;
+  if (it == old_.end() || it->second.size != f.size || it->second.time != f.time || it->second.e.hash != e.hash)
+    changed_ = true;
   new_.emplace_back(f, e);
 }
 

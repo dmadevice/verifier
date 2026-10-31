@@ -33,7 +33,8 @@ std::shared_ptr<const Code> CodeCache::code(u64 start, u64 end) {
   return live_.emplace(std::make_pair(start, end), std::move(c)).first->second;
 }
 
-CodeStore::CodeStore(std::string path, const Image& img, const std::string& decoder) : path_(std::move(path)), img_(img) {
+CodeStore::CodeStore(std::string path, const Image& img, const std::string& decoder)
+    : path_(std::move(path)), img_(img) {
   key_ = "decoder " + decoder + " base " + hex(img.base) + " headers " + hex(xxh64(img.headers, 0));
   if (!path_.empty()) load();
 }
@@ -56,7 +57,7 @@ void CodeStore::load() {
   }
   r.pad8();
   if (!r.get(n)) return fail();
-  std::string_view index = r.take(n * sizeof(Index));   // used in place: 8-byte aligned (the file is mapped at a page)
+  std::string_view index = r.take(n * sizeof(Index));  // used in place: 8-byte aligned (the file is mapped at a page)
   if (!r.ok()) return fail();
   index_ = reinterpret_cast<const Index*>(index.data());
   nindex_ = n;
@@ -121,13 +122,13 @@ std::shared_ptr<const Code> CodeStore::from_blob(u64 start, u64 end, std::string
   std::string_view insns = r.take(h.ninsns * sizeof(Lean));
   r.pad8();
   std::string_view fields = r.take(h.nfields * sizeof(Field));
-  if (!r.ok() || reinterpret_cast<uintptr_t>(b.data()) % 8) return nullptr;   // entries are 8-byte aligned in the file
+  if (!r.ok() || reinterpret_cast<uintptr_t>(b.data()) % 8) return nullptr;  // entries are 8-byte aligned in the file
   auto lean = reinterpret_cast<const Lean*>(insns.data());
   auto field = reinterpret_cast<const Field*>(fields.data());
   c->insns.assign(lean, lean + h.ninsns);
   for (auto& l : c->insns) {
     if (l.mnem >= mnem_.size()) return nullptr;
-    l.mnem = mnem_[l.mnem];   // the file's numbering to this run's
+    l.mnem = mnem_[l.mnem];  // the file's numbering to this run's
   }
   c->field_list.assign(field, field + h.nfields);
   for (u32 i = 0; i < h.ntables; ++i) {
@@ -150,7 +151,8 @@ std::shared_ptr<const Code> CodeStore::code(u64 start, u64 end) {
   const Index* it = std::lower_bound(index_, index_ + nindex_, k, [](const Index& x, const std::pair<u64, u64>& y) {
     return std::make_pair(x.start, x.end) < y;
   });
-  if (it != index_ + nindex_ && it->start == start && it->end == end && it->check == ck && it->offset + it->size <= blobs_.size()) {
+  if (it != index_ + nindex_ && it->start == start && it->end == end && it->check == ck &&
+      it->offset + it->size <= blobs_.size()) {
     if (auto c = from_blob(start, end, blobs_.substr(it->offset, it->size))) {
       ++stats_.hits;
       return c;
@@ -194,7 +196,7 @@ void CodeStore::save() {
     off += v.second.size();
   }
   for (auto& [k, v] : all) w.out += v.second;
-  fail();   // the mapping released before the file is replaced
+  fail();  // the mapping released before the file is replaced
   write_cache_file(path_, w.out);
   if (std::getenv("VERIFIER_TIMING"))
     std::fprintf(stderr, "code store %s rewritten: %zu bytes, %.1f ms\n", path_.c_str(), w.out.size(),

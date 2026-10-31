@@ -21,21 +21,25 @@ class Pairing : public ComparerContext {
   const Original& orig;
   const Rebuilt& reb;
   std::unique_ptr<Comparer> cmp;
-  std::optional<u64> named(std::string_view n) const;   // the original address the name has (the original's names, then vftables')
+  std::optional<u64> named(
+      std::string_view n) const;  // the original address the name has (the original's names, then vftables')
   std::unordered_map<u64, u64> reb_to_orig;
   std::unordered_map<u64, std::set<u64>> reb_to_origs;
-  std::vector<u64> annotated_o;   // sorted
+  std::vector<u64> annotated_o;  // sorted
 
-  std::set<u64> paired_o;   // originals a non-STUB annotation pairs
+  std::set<u64> paired_o;  // originals a non-STUB annotation pairs
 
   // a compared annotation's rebuilt symbols and the overloads of its name, as pairing looked them up (nullptr for an
   // annotation pairing was not given)
-  struct Paired { Lookup lookup; std::vector<std::string> overloads; };
+  struct Paired {
+    Lookup lookup;
+    std::vector<std::string> overloads;
+  };
   const Paired* paired(const Annotation& a) const;
 
   using Votes = std::map<u64, std::map<std::optional<u64>, u64>>;
   Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache);
-  void use(std::unique_ptr<Comparer> c);   // fixtures: a Comparer with hooks of their own
+  void use(std::unique_ptr<Comparer> c);  // fixtures: a Comparer with hooks of their own
   // a compared pair's code is no longer needed (its comparison is kept): free it, if the caches hold it
   void release_code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   Key resolve_symbol(u64 t) const;
@@ -56,7 +60,9 @@ class Pairing : public ComparerContext {
   u64 orig_object_end(u64 t) const override { return orig.object_end(t); }
   bool orig_padding(u64 t) const override { return orig.in_padding(t); }
   bool orig_named(u64 t) const override;
-  std::shared_ptr<const Code> orig_code(u64 start, u64 end) override { return orig_cache_ ? orig_cache_->code(start, end) : nullptr; }
+  std::shared_ptr<const Code> orig_code(u64 start, u64 end) override {
+    return orig_cache_ ? orig_cache_->code(start, end) : nullptr;
+  }
   std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end) override {
     return rebuilt_cache_ ? rebuilt_cache_->code(start, end) : nullptr;
   }
@@ -69,14 +75,15 @@ class Pairing : public ComparerContext {
  private:
   void pair_vftables();
   SvViewMap<u64> vftables_;
-  std::unordered_map<std::string, Paired> paired_;   // by paired_key()   // rebuilt vftable names of classes with several bases, not among the original's names
+  std::unordered_map<std::string, Paired> paired_;  // by paired_key()   // rebuilt vftable names of classes with
+                                                    // several bases, not among the original's names
   void prebind_locals();
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
-  std::vector<u64> named_;   // original addresses with a name (sorted, distinct)
+  std::vector<u64> named_;  // original addresses with a name (sorted, distinct)
   JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
   JMap<u64, u64> inferred_r_;
   Key resolve_symbol_uncached(u64 t) const;
-  mutable std::unordered_map<u64, Key> resolved_;   // resolve_symbol's answers
+  mutable std::unordered_map<u64, Key> resolved_;  // resolve_symbol's answers
   int infer_depth_ = 0;
   std::unordered_map<u64, std::vector<u64>> refs_of_;
 };

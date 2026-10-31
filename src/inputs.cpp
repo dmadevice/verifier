@@ -3,10 +3,10 @@
 #include "cache_file.hpp"
 
 #include <algorithm>
-#include <cstring>
-#include <limits>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 
 #include "json.hpp"
 #include "sha256.hpp"
@@ -30,9 +30,12 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
 // strings as (offset, length) in the table, which holds each distinct string once. Only the table is kept once read.
 struct Writer {
   std::string out, strings;
-  std::unordered_map<std::string, u64> at;   // string -> offset in `strings`
+  std::unordered_map<std::string, u64> at;  // string -> offset in `strings`
   void u(u64 v) { out.append(reinterpret_cast<const char*>(&v), 8); }
-  void bytes(std::string_view x) { u(x.size()); out += x; }   // a length-prefixed part (Reader::raw)
+  void bytes(std::string_view x) {
+    u(x.size());
+    out += x;
+  }  // a length-prefixed part (Reader::raw)
   void s(std::string_view x) {
     auto [it, fresh] = at.try_emplace(std::string(x), strings.size());
     if (fresh) strings += x;
@@ -54,21 +57,30 @@ struct Reader {
   size_t p = 0;
   bool ok = true;
   u64 u() {
-    if (!ok || in.size() - p < 8) { ok = false; return 0; }
+    if (!ok || in.size() - p < 8) {
+      ok = false;
+      return 0;
+    }
     u64 v = le64(in.data() + p);
     p += 8;
     return v;
   }
-  std::string_view raw() {   // a length-prefixed part
+  std::string_view raw() {  // a length-prefixed part
     u64 n = u();
-    if (!ok || in.size() - p < n) { ok = false; return {}; }
+    if (!ok || in.size() - p < n) {
+      ok = false;
+      return {};
+    }
     std::string_view r = in.substr(p, n);
     p += n;
     return r;
   }
-  std::string_view s() {   // a string in the table
+  std::string_view s() {  // a string in the table
     u64 off = u(), n = u();
-    if (!ok || off > strings.size() || strings.size() - off < n) { ok = false; return {}; }
+    if (!ok || off > strings.size() || strings.size() - off < n) {
+      ok = false;
+      return {};
+    }
     return strings.substr(off, n);
   }
   // a count of items each at least `min_bytes` long (guards the reservations against a damaged file)
@@ -99,8 +111,10 @@ const IdaFunction& FunctionTable::at(u64 ea) const {
 
 void FunctionTable::set(const IdaFunction& f) {
   auto it = std::lower_bound(fs_.begin(), fs_.end(), f.ea, ea_below);
-  if (it != fs_.end() && it->ea == f.ea) *it = f;
-  else fs_.insert(it, f);
+  if (it != fs_.end() && it->ea == f.ea)
+    *it = f;
+  else
+    fs_.insert(it, f);
 }
 
 void FunctionTable::assign(std::vector<IdaFunction> fs) {
@@ -113,8 +127,10 @@ void FunctionTable::assign(std::vector<IdaFunction> fs) {
   std::stable_sort(fs.begin(), fs.end(), [](const IdaFunction& a, const IdaFunction& b) { return a.ea < b.ea; });
   fs_.clear();
   for (auto& f : fs) {
-    if (!fs_.empty() && fs_.back().ea == f.ea) fs_.back() = f;   // the later one
-    else fs_.push_back(f);
+    if (!fs_.empty() && fs_.back().ea == f.ea)
+      fs_.back() = f;  // the later one
+    else
+      fs_.push_back(f);
   }
   fs_.shrink_to_fit();
 }
@@ -124,7 +140,7 @@ Symbols::Symbols(const std::vector<std::pair<u64, std::string_view>>& syms) {
   std::vector<u32> by_addr(syms.size());
   for (u32 i = 0; i < by_addr.size(); ++i) by_addr[i] = i;
   std::stable_sort(by_addr.begin(), by_addr.end(), [&](u32 a, u32 b) { return syms[a].first < syms[b].first; });
-  std::vector<std::pair<u32, u64>> first_seen;   // (first symbol, address)
+  std::vector<std::pair<u32, u64>> first_seen;  // (first symbol, address)
   names_.reserve(syms.size());
   for (u32 i : by_addr) {
     u64 va = syms[i].first;
@@ -176,7 +192,7 @@ Original::Original(const Config& p, const std::function<std::string(const std::s
 
 void Original::load_exports() {
   const Config& p = *config_;
-  std::vector<IdaFunction> fs;   // in the file's order
+  std::vector<IdaFunction> fs;  // in the file's order
   for_each_file_line(p.functions, [&](std::string_view line) {
     if (strip(line).empty()) return;
     auto v = json::parse(line);
@@ -271,11 +287,19 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
     for (u64 s : slots) w.u(s);
   }
   w.u(by_name.size());
-  for (auto& [name, va] : by_name) { w.s(name); w.u(va); }
-  const std::vector<u32>& index = by_name.index();   // restored as it is, not made again from the names
+  for (auto& [name, va] : by_name) {
+    w.s(name);
+    w.u(va);
+  }
+  const std::vector<u32>& index = by_name.index();  // restored as it is, not made again from the names
   w.bytes(std::string_view(reinterpret_cast<const char*>(index.data()), index.size() * 4));
   w.u(linked.size());
-  for (auto& [ea, l] : linked) { w.u(ea); w.s(l.lib); w.s(l.symbol); w.u(l.has_symbol); }
+  for (auto& [ea, l] : linked) {
+    w.u(ea);
+    w.s(l.lib);
+    w.s(l.symbol);
+    w.u(l.has_symbol);
+  }
   for (auto* v : {&boundaries_, &align_starts_, &align_ends_}) {
     w.u(v->size());
     for (u64 x : *v) w.u(x);
@@ -298,12 +322,14 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
 
 bool Original::load_snapshot(const std::string& path, const std::string& key) {
   if (!file_exists(path)) return false;
-  Original o;   // filled, then taken only when the whole file reads
-  try { o.snapshot_ = std::make_shared<MappedFile>(path); } catch (...) { return false; }
+  Original o;  // filled, then taken only when the whole file reads
+  try {
+    o.snapshot_ = std::make_shared<MappedFile>(path);
+  } catch (...) { return false; }
   std::string_view data = o.snapshot_->view();
   Reader r{data, {}};
   if (r.raw() != key) return false;
-  r.strings = r.raw();   // the names are views of it
+  r.strings = r.raw();  // the names are views of it
   std::vector<IdaFunction> fs;
   u64 nfs = r.count(32);
   fs.reserve(nfs);
@@ -352,20 +378,18 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
   o.data_names_.reserve(n);
   while (n--) o.data_names_.push_back(r.u());
   if (std::adjacent_find(o.data_names_.begin(), o.data_names_.end(), std::greater_equal<u64>()) != o.data_names_.end())
-    return false;   // not sorted and distinct
+    return false;  // not sorted and distinct
   if (r.s() != "end" || !r.ok) return false;
   std::string_view headers = r.raw();
   u64 at = r.u(), size = r.u();
   if (!r.ok || at % 4096 || at < r.p || at > data.size() || data.size() - at != size) return false;
   try {
     o.img = Image::laid_out(headers, data.substr(at), o.snapshot_);
-  } catch (...) {
-    return false;
-  }
+  } catch (...) { return false; }
   o.digest = std::move(digest);
   o.config_ = config_;
   o.cache_key_ = cache_key_;
-  *this = std::move(o);   // a vector keeps its buffer when moved: the views stay valid
+  *this = std::move(o);  // a vector keeps its buffer when moved: the views stay valid
   return true;
 }
 
@@ -407,7 +431,10 @@ void Original::load_items() {
   data_names_.erase(std::unique(data_names_.begin(), data_names_.end()), data_names_.end());
   for (u64 x : data_names_) b.insert(x);
   boundaries_.assign(b.begin(), b.end());
-  for (auto& [s, e] : align) { align_starts_.push_back(s); align_ends_.push_back(e); }
+  for (auto& [s, e] : align) {
+    align_starts_.push_back(s);
+    align_ends_.push_back(e);
+  }
 }
 
 u64 Original::object_end(u64 va) const {
@@ -426,8 +453,8 @@ bool Original::in_padding(u64 va) const {
 
 Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc) : names_(&nc) {
   img = Image::load(path);
-  std::vector<std::pair<u64, std::string_view>> syms;   // (address, decorated name) in map order
-  std::vector<NameIds> infos;   // infos[i]: syms[i]'s
+  std::vector<std::pair<u64, std::string_view>> syms;  // (address, decorated name) in map order
+  std::vector<NameIds> infos;                          // infos[i]: syms[i]'s
   {
     MappedFile map_file(map_path);
     syms = parse_map(map_file.view());
@@ -447,7 +474,8 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   qual_syms_.resize(syms.size());
   {
     std::vector<u32> fill(qual_first_.begin(), qual_first_.end() - 1);
-    for (size_t i = 0; i < syms.size(); ++i) qual_syms_[fill[infos[i].qualified]++] = {syms[i].first, nc.text(infos[i].signature)};
+    for (size_t i = 0; i < syms.size(); ++i)
+      qual_syms_[fill[infos[i].qualified]++] = {syms[i].first, nc.text(infos[i].signature)};
   }
   // the qualified names by last one and two components, in map order
   std::vector<char> seen(nids), code_q(nids);
@@ -484,14 +512,18 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
       if (auto it = code_by_dec.find(std::string_view(probe)); it != code_by_dec.end()) owner = it->second;
     }
     auto& owners = static_owner.try_emplace(va, std::set<u64>()).first->second;
-    if (!owner || !owners) owners = std::nullopt;
-    else owners->insert(*owner);
+    if (!owner || !owners)
+      owners = std::nullopt;
+    else
+      owners->insert(*owner);
   }
 }
 
 void Rebuilt::Chain::add(u32 k, u32 q) {
-  if (last[k]) next[last[k] - 1] = q + 1;
-  else first[k] = q + 1;
+  if (last[k])
+    next[last[k] - 1] = q + 1;
+  else
+    first[k] = q + 1;
   last[k] = q + 1;
 }
 
@@ -508,7 +540,8 @@ std::vector<u32> Rebuilt::matching(const std::string& key) const {
     std::string_view q = names_->text(q1 - 1);
     bool hit = q == key;
     if (!hit && q.size() > key.size() + 1 && q.ends_with(key))
-      for (size_t p = q.find("::"); !hit && p != std::string_view::npos; p = q.find("::", p + 2)) hit = q.substr(p + 2) == key;
+      for (size_t p = q.find("::"); !hit && p != std::string_view::npos; p = q.find("::", p + 2))
+        hit = q.substr(p + 2) == key;
     if (hit) out.push_back(q1 - 1);
   }
   return out;
@@ -517,7 +550,7 @@ std::vector<u32> Rebuilt::matching(const std::string& key) const {
 Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>& sig, bool code) const {
   std::string key = norm_name(key0);
   std::vector<u32> hits = matching(key);
-  last_.name = key0;   // overloads_of on the same name (pairing asks for both) reads these
+  last_.name = key0;  // overloads_of on the same name (pairing asks for both) reads these
   last_.hits = hits;
   std::set<u64> vas;
   for (u32 q : hits) {
@@ -528,7 +561,8 @@ Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>
       vas.insert(s.va);
     }
   }
-  return {std::vector<u64>(vas.begin(), vas.end()), hits.size() == 1 ? std::string(names_->text(hits[0])) : key, hits.size()};
+  return {std::vector<u64>(vas.begin(), vas.end()), hits.size() == 1 ? std::string(names_->text(hits[0])) : key,
+          hits.size()};
 }
 
 std::vector<std::string> Rebuilt::overloads_of(const std::string& key) const {

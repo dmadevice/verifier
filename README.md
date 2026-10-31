@@ -159,6 +159,8 @@ cmake --build build --config Release
 ctest --test-dir build -C Release
 ```
 
+The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
+
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
 exact problems it must report, and 39 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key and

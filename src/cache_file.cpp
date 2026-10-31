@@ -13,9 +13,7 @@ std::unique_ptr<const MappedFile> open_cache_file(const std::string& path, std::
   std::unique_ptr<const MappedFile> f;
   try {
     f = std::make_unique<const MappedFile>(path);
-  } catch (...) {
-    return nullptr;
-  }
+  } catch (...) { return nullptr; }
   if (f->view().substr(0, header.size()) != header) return nullptr;
   return f;
 }

@@ -7,7 +7,7 @@ namespace verifier {
 class Phases {
  public:
   Phases();
-  void mark(const char* what);   // the time since the last mark (or the start), under `what`
+  void mark(const char* what);  // the time since the last mark (or the start), under `what`
 
  private:
   bool on_;

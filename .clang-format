@@ -1,0 +1,13 @@
+# clang-format 18 (cmake --build build --target format)
+BasedOnStyle: Google
+ColumnLimit: 120
+Standard: c++20
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortBlocksOnASingleLine: Always
+AllowShortLambdasOnASingleLine: All
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive

@@ -37,8 +37,9 @@ class OpenFile {
   explicit OpenFile(const std::string& path) {
 #ifdef _WIN32
     // a directory does not open without FILE_FLAG_BACKUP_SEMANTICS
-    h_ = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                     nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    h_ = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_READ,
+                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                     FILE_ATTRIBUTE_NORMAL, nullptr);
     LARGE_INTEGER size{};
     if (h_ != INVALID_HANDLE_VALUE && GetFileType(h_) == FILE_TYPE_DISK && GetFileSizeEx(h_, &size)) {
       n_ = size_t(size.QuadPart);
@@ -46,7 +47,7 @@ class OpenFile {
     }
 #else
     fd_ = ::open(path.c_str(), O_RDONLY);
-    struct stat st{};
+    struct stat st {};
     if (fd_ >= 0 && fstat(fd_, &st) == 0 && S_ISREG(st.st_mode)) {
       n_ = size_t(st.st_size);
       ok_ = true;
@@ -71,7 +72,7 @@ class OpenFile {
     HANDLE m = CreateFileMappingW(h_, nullptr, PAGE_READONLY, 0, 0, nullptr);
     if (!m) return nullptr;
     auto p = static_cast<const char*>(MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0));
-    CloseHandle(m);   // the view keeps the mapping
+    CloseHandle(m);  // the view keeps the mapping
     return p;
 #else
     void* p = mmap(nullptr, n_, PROT_READ, MAP_PRIVATE, fd_, 0);
@@ -207,7 +208,7 @@ bool write_file_atomic(const std::string& path, std::string_view data) {
   std::error_code ec;
   std::filesystem::rename(tmp, path, ec);
   if (!ec) return true;
-  std::filesystem::remove(tmp, ec);   // (resets ec: the rename's failure is the result)
+  std::filesystem::remove(tmp, ec);  // (resets ec: the rename's failure is the result)
   return false;
 }
 
@@ -229,7 +230,10 @@ std::string hex_bytes(std::string_view b) {
   static const char* d = "0123456789abcdef";
   std::string out;
   out.reserve(b.size() * 2);
-  for (unsigned char c : b) { out += d[c >> 4]; out += d[c & 15]; }
+  for (unsigned char c : b) {
+    out += d[c >> 4];
+    out += d[c & 15];
+  }
   return out;
 }
 
@@ -245,7 +249,9 @@ u64 parse_hex(std::string_view s) {
 }
 
 bool starts_with(std::string_view s, std::string_view p) { return s.substr(0, p.size()) == p; }
-bool ends_with(std::string_view s, std::string_view p) { return s.size() >= p.size() && s.substr(s.size() - p.size()) == p; }
+bool ends_with(std::string_view s, std::string_view p) {
+  return s.size() >= p.size() && s.substr(s.size() - p.size()) == p;
+}
 
 std::string strip(std::string_view s) {
   size_t a = 0, b = s.size();
@@ -281,19 +287,26 @@ std::vector<std::string> split_ws(std::string_view s) {
 
 std::string join(const std::vector<std::string>& v, std::string_view sep) {
   std::string out;
-  for (size_t i = 0; i < v.size(); ++i) { if (i) out += sep; out += v[i]; }
+  for (size_t i = 0; i < v.size(); ++i) {
+    if (i) out += sep;
+    out += v[i];
+  }
   return out;
 }
 
 std::string replace_all(std::string s, std::string_view from, std::string_view to) {
   if (from.empty()) return s;
   size_t p = 0;
-  while ((p = s.find(from, p)) != std::string::npos) { s.replace(p, from.size(), to); p += to.size(); }
+  while ((p = s.find(from, p)) != std::string::npos) {
+    s.replace(p, from.size(), to);
+    p += to.size();
+  }
   return s;
 }
 
 std::string lower(std::string s) {
-  for (auto& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  for (auto& c : s)
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
   return s;
 }
 
@@ -336,11 +349,14 @@ void NameTable::set(std::string_view name, u64 v) {
   size_t i = 0;
   if (!index_.empty()) {
     i = slot(name);
-    if (u32 e = index_[i]) { entries_[e - 1].second = v; return; }
+    if (u32 e = index_[i]) {
+      entries_[e - 1].second = v;
+      return;
+    }
   }
   entries_.emplace_back(name, v);
   if (index_.size() < 2 * entries_.size()) {
-    reindex(4 * entries_.size());   // grow
+    reindex(4 * entries_.size());  // grow
   } else {
     index_[i] = u32(entries_.size());
   }
@@ -365,7 +381,7 @@ void NameTable::reserve(size_t n) {
   if (index_.size() < 2 * n) reindex(2 * n);
 }
 
-void NameTable::reindex(size_t at_least) {   // an index of at least that many slots, every entry indexed again
+void NameTable::reindex(size_t at_least) {  // an index of at least that many slots, every entry indexed again
   size_t n = 16;
   while (n < at_least) n *= 2;
   index_.assign(n, 0);
@@ -443,7 +459,7 @@ std::string basename(const std::string& p) {
 std::string relpath(const std::string& path, const std::string& root) {
   std::filesystem::path a = std::filesystem::path(abspath(path)), b = std::filesystem::path(abspath(root));
 #ifdef _WIN32
-  if (lower(a.root_name().string()) != lower(b.root_name().string())) return path;   // another drive: as given
+  if (lower(a.root_name().string()) != lower(b.root_name().string())) return path;  // another drive: as given
 #endif
   std::string r = a.lexically_relative(b).make_preferred().string();
   return r.empty() ? "." : r;

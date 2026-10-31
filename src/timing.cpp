@@ -6,8 +6,8 @@
 #ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <psapi.h>
+#include <windows.h>
 #else
 #include <malloc.h>
 #include <sys/resource.h>
@@ -24,7 +24,7 @@ void Phases::mark(const char* what) {
   t_ = now;
   long rss = 0, heap = 0;
 #ifdef _WIN32
-  PROCESS_MEMORY_COUNTERS_EX pmc{};   // peak working set; private commit in use
+  PROCESS_MEMORY_COUNTERS_EX pmc{};  // peak working set; private commit in use
   if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) {
     rss = long(pmc.PeakWorkingSetSize >> 20);
     heap = long(pmc.PrivateUsage >> 20);

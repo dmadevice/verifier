@@ -27,8 +27,10 @@ bool Journal::speculate(const std::function<bool()>& attempt) {
     throw;
   }
   --active;
-  if (!ok) undo();
-  else if (!active) log.resize(mark);   // held by no assumption any more
+  if (!ok)
+    undo();
+  else if (!active)
+    log.resize(mark);  // held by no assumption any more
   return ok;
 }
 
@@ -93,10 +95,14 @@ void mask(Bytes& buf, i64 lo, i64 hi) {
 
 }  // namespace
 
-Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res, const std::map<u64, std::vector<u64>>* vt,
-                   NameOf nm, ComparerContext* context)
-    : O(o), R(r), resolve(std::move(res)), vtables(vt ? *vt : no_vtables()),
-      names(nm ? std::move(nm) : NameOf([](u64) { return std::string_view(); })), ctx(context ? context : &nothing_known()) {}
+Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res,
+                   const std::map<u64, std::vector<u64>>* vt, NameOf nm, ComparerContext* context)
+    : O(o),
+      R(r),
+      resolve(std::move(res)),
+      vtables(vt ? *vt : no_vtables()),
+      names(nm ? std::move(nm) : NameOf([](u64) { return std::string_view(); })),
+      ctx(context ? context : &nothing_known()) {}
 
 std::shared_ptr<const Code> Comparer::orig_code(u64 start, u64 end) {
   auto c = ctx->orig_code(start, end);
@@ -109,7 +115,7 @@ std::shared_ptr<const Code> Comparer::rebuilt_code(u64 start, u64 end) {
 }
 
 bool Comparer::same_names(const NamePairs& names) {
-  std::vector<std::pair<Bytes, Bytes>> pairs;   // (original hash, rebuilt hash)
+  std::vector<std::pair<Bytes, Bytes>> pairs;  // (original hash, rebuilt hash)
   for (auto& [x, y] : names) {
     std::vector<Bytes> px, hx, py, hy;
     split_hashes(x, px, hx);
@@ -119,7 +125,7 @@ bool Comparer::same_names(const NamePairs& names) {
   }
   std::unordered_map<std::string, std::string> new_o, new_r;
   for (auto& [o, r] : pairs) {
-    if (o == r && !hash_o.contains(o) && !hash_r.contains(r)) continue;   // spelled the same: nothing to pair
+    if (o == r && !hash_o.contains(o) && !hash_r.contains(r)) continue;  // spelled the same: nothing to pair
     auto get = [](const JMap<std::string, std::string>& m, const std::unordered_map<std::string, std::string>& nw,
                   const std::string& k, const std::string& dflt) {
       if (auto p = m.find(k)) return *p;
@@ -145,7 +151,8 @@ bool Comparer::same_rtti(const Rtti& a, const Rtti& b) {
   NamePairs names{{a.name, b.name}};
   for (size_t i = 0; i < a.bases.size(); ++i) {
     const BaseDesc &x = a.bases[i], &y = b.bases[i];
-    if (x.ncont != y.ncont || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.attr != y.attr) return false;
+    if (x.ncont != y.ncont || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.attr != y.attr)
+      return false;
     names.emplace_back(x.name, y.name);
   }
   return same_names(names);
@@ -156,7 +163,8 @@ bool Comparer::same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b) {
   NamePairs names;
   for (size_t i = 0; i < a.types.size(); ++i) {
     const CatchableSig &x = a.types[i], &y = b.types[i];
-    if (x.props != y.props || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.size != y.size) return false;
+    if (x.props != y.props || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.size != y.size)
+      return false;
     names.emplace_back(x.name, y.name);
   }
   return same_names(names);
@@ -168,11 +176,16 @@ std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
   auto [base, off] = *at;
   u64 o_base = o_t - off;
   if (!bound.contains(base) && !bound_o.contains(o_base)) {
-    if (ctx->orig_padding(o_base) || !static_fits(o_base, base) || static_overlaps(o_base, o_t, base)) return std::nullopt;
+    if (ctx->orig_padding(o_base) || !static_fits(o_base, base) || static_overlaps(o_base, o_t, base))
+      return std::nullopt;
     auto homes = ctx->static_home(base);
     if (homes) {
       bool any = false;
-      for (u64 f : *homes) if (refers_to(f, o_base, std::max<u64>(ctx->span(base), 1))) { any = true; break; }
+      for (u64 f : *homes)
+        if (refers_to(f, o_base, std::max<u64>(ctx->span(base), 1))) {
+          any = true;
+          break;
+        }
       if (!any) return std::nullopt;
     }
     bound.set(base, o_base);
@@ -210,7 +223,8 @@ bool Comparer::static_fits(u64 o_base, u64 base) {
 
 bool Comparer::static_overlaps(u64 o_base, u64 o_t, u64 base) {
   if (ctx->annotated_between(o_base, o_t)) return true;
-  for (auto& [ob, rb] : bound_o.items()) if (rb != base && o_base < ob && ob <= o_t) return true;
+  for (auto& [ob, rb] : bound_o.items())
+    if (rb != base && o_base < ob && ob <= o_t) return true;
   return false;
 }
 
@@ -236,7 +250,7 @@ bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
 }
 
 std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
-  if (o_t == O->base && r_t == R->base) return std::nullopt;   // __ImageBase
+  if (o_t == O->base && r_t == R->base) return std::nullopt;  // __ImageBase
   auto oi = O->imports.find(o_t);
   auto ri = R->imports.find(r_t);
   if (oi != O->imports.end() || ri != R->imports.end()) {
@@ -294,14 +308,15 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
   if (!key.is_va(o_t)) {
     if (!access && !O->executable(o_t) && !ctx->orig_named(o_t)) {
       auto e = ctx->end_of_previous(r_t);
-      if (e && *e == o_t) return std::nullopt;   // one past the end of the data object before (a loop bound)
+      if (e && *e == o_t) return std::nullopt;  // one past the end of the data object before (a loop bound)
     }
-    return Problem{"reference", hex(o_t) + " vs " + (key.kind == Key::UNRESOLVED ? std::string(key.name) : hex(key.va))};
+    return Problem{"reference",
+                   hex(o_t) + " vs " + (key.kind == Key::UNRESOLVED ? std::string(key.name) : hex(key.va))};
   }
   if (vtables.count(o_t)) return vtable(o_t, r_t);
-  if (O->executable(o_t)) return std::nullopt;   // code: identity; callees are verified on their own
+  if (O->executable(o_t)) return std::nullopt;  // code: identity; callees are verified on their own
   if (access) return accessed(o_t, r_t, access);
-  return rodata(o_t, r_t);   // address taken: the object's initial contents, writable or not
+  return rodata(o_t, r_t);  // address taken: the object's initial contents, writable or not
 }
 
 bool Comparer::same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<bool> wide) {
@@ -315,7 +330,8 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
   std::vector<i64> ptrs;
   for (i64 p = i64(r_t) - 7; p < i64(r_t) + n; ++p) {
     if (R->has_reloc(u64(p))) {
-      if (!O->has_reloc(u64(i64(o_t) + (p - i64(r_t))))) return Problem{"data", std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
+      if (!O->has_reloc(u64(i64(o_t) + (p - i64(r_t)))))
+        return Problem{"data", std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
       ptrs.push_back(p - i64(r_t));
     }
   }
@@ -340,7 +356,7 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
 std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
   auto k = std::make_pair(o_t, r_t);
   if (auto m = memo_ro.find(k)) return *m;
-  memo_ro.set(k, std::nullopt);   // tables that point at each other count as consistent
+  memo_ro.set(k, std::nullopt);  // tables that point at each other count as consistent
   u64 n = ctx->span(r_t);
   Bytes all(R->bytes(r_t, i64(n)));
   i64 want = i64(rstrip_char(all, '\0').size());
@@ -348,9 +364,11 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
   std::vector<i64> ptrs;
   for (size_t i = lo; i < hi; ++i) ptrs.push_back(i64(R->reloc_sorted[i] - r_t));
   i64 size = std::max<i64>(want, std::min<i64>(i64(n), i64(ctx->orig_object_end(o_t)) - i64(o_t)));
-  for (i64 off : ptrs) if (off < want) size = std::max(size, off + 8);
+  for (i64 off : ptrs)
+    if (off < want) size = std::max(size, off + 8);
   std::vector<i64> kept;
-  for (i64 off : ptrs) if (off < size) kept.push_back(off);
+  for (i64 off : ptrs)
+    if (off < size) kept.push_back(off);
   Bytes a(O->bytes(o_t, size)), b(R->bytes(r_t, size));
   for (i64 off : kept) {
     mask(a, off, off + 8);
@@ -381,10 +399,11 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
 bool Comparer::infer_data(u64 o_t, u64 r_t) {
   if (auto p = data_r.find(r_t); p && *p == o_t) return true;
   if (data_r.contains(r_t) || data_o.contains(o_t) || resolve(r_t).kind != Key::UNRESOLVED) return false;
-  if (!ctx->symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t)) return false;
+  if (!ctx->symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t))
+    return false;
   if (!O->flags(o_t)) return false;
   auto rb = R->bytes(r_t, i64(ctx->span(r_t)));
-  if (rb.find_first_not_of('\0') == std::string_view::npos) return false;   // zero-filled (strip(b"\0") is empty)
+  if (rb.find_first_not_of('\0') == std::string_view::npos) return false;  // zero-filled (strip(b"\0") is empty)
   return journal.speculate([&] {
     data_r.set(r_t, o_t);
     data_o.set(o_t, r_t);
@@ -394,10 +413,12 @@ bool Comparer::infer_data(u64 o_t, u64 r_t) {
 
 std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_view name) {
   ThrowInfoSig os = throw_info(*O, o_t), rs = throw_info(*R, r_t);
-  if (!same_catchables(os, rs)) return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": catchable types differ"};
+  if (!same_catchables(os, rs))
+    return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": catchable types differ"};
   for (size_t i = 0; i < std::min(os.funcs.size(), rs.funcs.size()); ++i) {
     u64 a = os.funcs[i], b = rs.funcs[i];
-    if (bool(a) != bool(b)) return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
+    if (bool(a) != bool(b))
+      return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
     if (a) {
       auto p = ref(a, b, 0);
       if (p) return Problem{p->first, std::string(name) + ": " + p->second};
@@ -409,7 +430,7 @@ std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_vi
 std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
   auto k = std::make_pair(o_vt, r_vt);
   if (auto m = memo_vt.find(k)) return *m;
-  memo_vt.set(k, std::nullopt);   // cycles (a slot that refers back) count as consistent
+  memo_vt.set(k, std::nullopt);  // cycles (a slot that refers back) count as consistent
   std::optional<Problem> res;
   const auto& slots = vtables.at(o_vt);
   for (size_t i = 0; i < slots.size(); ++i) {
@@ -418,8 +439,7 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
     Key got = resolve(r_s);
     if (got.is_va(s) || is_alternate(s, r_s)) continue;
     if (got.kind == Key::UNRESOLVED && O->executable(s) && ctx->infer(s, r_s)) continue;
-    res = Problem{"vtable", "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " +
-                                got.text()};
+    res = Problem{"vtable", "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
     break;
   }
   if (!res && !same_rtti(rtti(*O, O->u64_at(o_vt - 8)), rtti(*R, R->u64_at(r_vt - 8))))
@@ -432,11 +452,16 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
   auto ocp = orig_code(ostart, oend), rcp = rebuilt_code(rstart, rend);
   const Code &oc = *ocp, &rc = *rcp;
   Problems probs;
-  auto decoded = [](const Code& c) { i64 s = 0; for (auto& i : c.insns) s += i.size; return s; };
+  auto decoded = [](const Code& c) {
+    i64 s = 0;
+    for (auto& i : c.insns) s += i.size;
+    return s;
+  };
   if (!oc.complete || !rc.complete)
     probs.push_back({"undecodable", "decoded " + std::to_string(decoded(oc)) + "/" + std::to_string(oc.cut) + " | " +
                                         std::to_string(decoded(rc)) + "/" + std::to_string(rc.cut) + " code bytes"});
-  if (oc.code.size() != rc.code.size() || oc.cut != rc.cut || oc.resume != rc.resume || oc.insns.size() != rc.insns.size()) {
+  if (oc.code.size() != rc.code.size() || oc.cut != rc.cut || oc.resume != rc.resume ||
+      oc.insns.size() != rc.insns.size()) {
     probs.push_back({"length", std::to_string(oc.code.size()) + "/" + std::to_string(rc.code.size()) + " bytes, code " +
                                    std::to_string(oc.cut) + "/" + std::to_string(rc.cut)});
     return probs;
@@ -444,14 +469,16 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
   for (size_t k = 0; k < oc.insns.size(); ++k) {
     const Lean &a = oc.insns[k], &b = rc.insns[k];
     auto fa = oc.fields(a), fb = rc.fields(b);
-    auto enc = [&] {
-      return "@" + std::to_string(k) + ": `" + oc.insn(a).text() + "` | `" + rc.insn(b).text() + "`";
-    };
-    if (!same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) { probs.push_back({"encoding", enc()}); continue; }
+    auto enc = [&] { return "@" + std::to_string(k) + ": `" + oc.insn(a).text() + "` | `" + rc.insn(b).text() + "`"; };
+    if (!same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) {
+      probs.push_back({"encoding", enc()});
+      continue;
+    }
     for (size_t z = 0; z < fa.size(); ++z) {
       if (fa[z].kind == F_TBL) {
         if (fa[z].value != fb[z].value)
-          probs.push_back({"encoding", "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) + " vs " + hex_signed(fb[z].value)});
+          probs.push_back({"encoding", "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) + " vs " +
+                                           hex_signed(fb[z].value)});
         continue;
       }
       auto p = ref(u64(fa[z].value), u64(fb[z].value), fa[z].access);
@@ -459,7 +486,8 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
     }
   }
   if (!(oc.table_region() == rc.table_region())) probs.push_back({"encoding", "switch table region differs"});
-  if (!(oc.outside_tables() == rc.outside_tables())) probs.push_back({"encoding", "switch tables after the function differ"});
+  if (!(oc.outside_tables() == rc.outside_tables()))
+    probs.push_back({"encoding", "switch tables after the function differ"});
   return probs;
 }
 
@@ -467,7 +495,8 @@ Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth
   auto ob = O->pdata_in(ostart, oend), rb = R->pdata_in(rstart, rend);
   bool same = ob.size() == rb.size();
   for (size_t i = 0; same && i < ob.size(); ++i)
-    if (ob[i] - ostart != rb[i] - rstart || O->pdata_at(ob[i])->end - ostart != R->pdata_at(rb[i])->end - rstart) same = false;
+    if (ob[i] - ostart != rb[i] - rstart || O->pdata_at(ob[i])->end - ostart != R->pdata_at(rb[i])->end - rstart)
+      same = false;
   if (!same) return {{"unwind", ".pdata ranges differ"}};
   Problems probs;
   for (size_t i = 0; i < ob.size(); ++i) {
@@ -480,9 +509,11 @@ Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth
 Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth, int chain_depth) {
   Unwind o = O->unwind(ou), r = R->unwind(ru);
   if (o.body != r.body) return {{"unwind", "UNWIND_INFO codes differ"}};
-  if (o.has_chain != r.has_chain || o.handler.has_value() != r.handler.has_value()) return {{"unwind", "chain/handler presence differs"}};
+  if (o.has_chain != r.has_chain || o.handler.has_value() != r.handler.has_value())
+    return {{"unwind", "chain/handler presence differs"}};
   if (o.has_chain) {
-    if (O->base + o.chain_begin - ostart != R->base + r.chain_begin - rstart || O->base + o.chain_end - ostart != R->base + r.chain_end - rstart)
+    if (O->base + o.chain_begin - ostart != R->base + r.chain_begin - rstart ||
+        O->base + o.chain_end - ostart != R->base + r.chain_end - rstart)
       return {{"unwind", "chained range differs"}};
     if (chain_depth >= MAX_CHAIN) return {{"unwind", "unwind chain too long"}};
     return unwind_info(o.chain_unwind, r.chain_unwind, ostart, oend, rstart, rend, depth, chain_depth + 1);
@@ -496,7 +527,7 @@ Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart,
 // -- EH ----------------------------------------------------------------------------------------------------------
 
 namespace {
-std::optional<u64> extent_or_leaf(const Image& img, u64 va) {   // .pdata's extent, else a leaf function's
+std::optional<u64> extent_or_leaf(const Image& img, u64 va) {  // .pdata's extent, else a leaf function's
   auto e = img.extent(va);
   return e ? e : leaf_extent(img, va);
 }
@@ -504,7 +535,8 @@ std::optional<u64> extent_or_leaf(const Image& img, u64 va) {   // .pdata's exte
 
 class EHContext {
  public:
-  EHContext(Comparer* c, u64 os, u64 oe, u64 rs, u64 re, int d) : c(c), O(c->O), R(c->R), ostart(os), oend(oe), rstart(rs), rend(re), depth(d) {}
+  EHContext(Comparer* c, u64 os, u64 oe, u64 rs, u64 re, int d)
+      : c(c), O(c->O), R(c->R), ostart(os), oend(oe), rstart(rs), rend(re), depth(d) {}
   Comparer* c;
   const Image *O, *R;
   u64 ostart, oend, rstart, rend;
@@ -513,12 +545,18 @@ class EHContext {
   Problems probs;
 
   void funclet(u32 orva, u32 rrva) {
-    if ((orva == 0) != (rrva == 0)) { probs.push_back({"eh", "funclet presence differs"}); return; }
+    if ((orva == 0) != (rrva == 0)) {
+      probs.push_back({"eh", "funclet presence differs"});
+      return;
+    }
     if (orva == 0) return;
     u64 o = O->base + orva, r = R->base + rrva;
     auto io = std::find(ofun.begin(), ofun.end(), o), ir = std::find(rfun.begin(), rfun.end(), r);
     long ix = io == ofun.end() ? -1 : long(io - ofun.begin()), jx = ir == rfun.end() ? -1 : long(ir - rfun.begin());
-    if (ix != jx) { probs.push_back({"eh", "funclet sharing differs"}); return; }
+    if (ix != jx) {
+      probs.push_back({"eh", "funclet sharing differs"});
+      return;
+    }
     if (ix >= 0) return;
     ofun.push_back(o);
     rfun.push_back(r);
@@ -527,16 +565,26 @@ class EHContext {
       return;
     }
     auto oe = extent_or_leaf(*O, o), re = extent_or_leaf(*R, r);
-    if (!O->pdata_at(o) != !R->pdata_at(r)) { probs.push_back({"eh", "funclet " + hex(o) + ": .pdata presence differs"}); return; }
-    if (!oe || !re) { probs.push_back({"eh", "funclet " + hex(o) + " has no .pdata"}); return; }
-    if (depth >= MAX_FUNCLET_DEPTH) { probs.push_back({"eh", "funclet nesting too deep"}); return; }
+    if (!O->pdata_at(o) != !R->pdata_at(r)) {
+      probs.push_back({"eh", "funclet " + hex(o) + ": .pdata presence differs"});
+      return;
+    }
+    if (!oe || !re) {
+      probs.push_back({"eh", "funclet " + hex(o) + " has no .pdata"});
+      return;
+    }
+    if (depth >= MAX_FUNCLET_DEPTH) {
+      probs.push_back({"eh", "funclet nesting too deep"});
+      return;
+    }
     for (auto& [cat, why] : c->function(o, *oe, r, *re, depth + 1))
       probs.push_back({"eh", "funclet " + std::to_string(ofun.size() - 1) + ": " + cat + ": " + why});
   }
 
   // ('p', off) / ('f', k, off) / ('?',)
   struct Where {
-    char t; i64 k, off;
+    char t;
+    i64 k, off;
     bool operator==(const Where& o) const { return t == o.t && k == o.k && off == o.off; }
   };
   Where where(const Image& img, u64 va, u64 start, u64 end, const std::vector<u64>& funs) {
@@ -556,7 +604,10 @@ class EHContext {
       i32 odisp = O->i32_at(o + 8), oframe = O->i32_at(o + 16);
       u32 radj = R->u32_at(r), rtd = R->u32_at(r + 4), raddr = R->u32_at(r + 12);
       i32 rdisp = R->i32_at(r + 8), rframe = R->i32_at(r + 16);
-      if (oadj != radj || odisp != rdisp || oframe != rframe) { probs.push_back({"eh", "catch handler " + std::to_string(i) + " differs"}); continue; }
+      if (oadj != radj || odisp != rdisp || oframe != rframe) {
+        probs.push_back({"eh", "catch handler " + std::to_string(i) + " differs"});
+        continue;
+      }
       if ((otd == 0) != (rtd == 0) ||
           (otd && !c->same_names({{type_name(*O, O->base + otd), type_name(*R, R->base + rtd)}}))) {
         probs.push_back({"eh", "catch type " + std::to_string(i) + " differs"});
@@ -575,7 +626,9 @@ class EHContext {
     }
     c->memo_fi.set(ofi, rfi);
     c->memo_fir.set(rfi, ofi);
-    auto rd = [](const Image* im, u64 p, u32 (&m)[10]) { for (int k = 0; k < 10; ++k) m[k] = im->u32_at(p + 4 * k); };
+    auto rd = [](const Image* im, u64 p, u32(&m)[10]) {
+      for (int k = 0; k < 10; ++k) m[k] = im->u32_at(p + 4 * k);
+    };
     u32 om[10], rm[10];
     rd(O, ofi, om);
     rd(R, rfi, rm);
@@ -588,14 +641,23 @@ class EHContext {
     for (i32 i = 0; i < max_state; ++i) {
       i32 ost = O->i32_at(O->base + om[2] + 8 * u64(i)), rst = R->i32_at(R->base + rm[2] + 8 * u64(i));
       u32 oact = O->u32_at(O->base + om[2] + 8 * u64(i) + 4), ract = R->u32_at(R->base + rm[2] + 8 * u64(i) + 4);
-      if (ost != rst) { probs.push_back({"eh", "unwind map entry " + std::to_string(i) + " differs"}); continue; }
+      if (ost != rst) {
+        probs.push_back({"eh", "unwind map entry " + std::to_string(i) + " differs"});
+        continue;
+      }
       funclet(oact, ract);
     }
     for (u32 i = 0; i < ntry; ++i) {
       u64 ob = O->base + om[4] + 20 * u64(i), rb = R->base + rm[4] + 20 * u64(i);
       i32 o4[4], r4[4];
-      for (int z = 0; z < 4; ++z) { o4[z] = O->i32_at(ob + 4 * z); r4[z] = R->i32_at(rb + 4 * z); }
-      if (std::memcmp(o4, r4, sizeof o4) != 0) { probs.push_back({"eh", "try block " + std::to_string(i) + " differs"}); continue; }
+      for (int z = 0; z < 4; ++z) {
+        o4[z] = O->i32_at(ob + 4 * z);
+        r4[z] = R->i32_at(rb + 4 * z);
+      }
+      if (std::memcmp(o4, r4, sizeof o4) != 0) {
+        probs.push_back({"eh", "try block " + std::to_string(i) + " differs"});
+        continue;
+      }
       handlers(O->base + O->u32_at(ob + 16), R->base + R->u32_at(rb + 16), o4[3]);
     }
     if ((om[8] == 0) != (rm[8] == 0)) {
@@ -603,14 +665,19 @@ class EHContext {
     } else if (om[8]) {
       i32 on = O->i32_at(O->base + om[8]), rn = R->i32_at(R->base + rm[8]);
       u32 oarr = O->u32_at(O->base + om[8] + 4), rarr = R->u32_at(R->base + rm[8] + 4);
-      if (on != rn || !(0 <= on && on <= 0x100)) probs.push_back({"eh", "exception specification differs"});
-      else handlers(O->base + oarr, R->base + rarr, on);
+      if (on != rn || !(0 <= on && on <= 0x100))
+        probs.push_back({"eh", "exception specification differs"});
+      else
+        handlers(O->base + oarr, R->base + rarr, on);
     }
     for (u32 i = 0; i < nip; ++i) {
       u32 oip = O->u32_at(O->base + om[6] + 8 * u64(i)), rip = R->u32_at(R->base + rm[6] + 8 * u64(i));
       i32 ost = O->i32_at(O->base + om[6] + 8 * u64(i) + 4), rst = R->i32_at(R->base + rm[6] + 8 * u64(i) + 4);
       Where ow = where(*O, O->base + oip, ostart, oend, ofun), rw = where(*R, R->base + rip, rstart, rend, rfun);
-      if (ost != rst || !(ow == rw) || ow.t == '?') { probs.push_back({"eh", "IP-to-state entry " + std::to_string(i) + " differs"}); break; }
+      if (ost != rst || !(ow == rw) || ow.t == '?') {
+        probs.push_back({"eh", "IP-to-state entry " + std::to_string(i) + " differs"});
+        break;
+      }
     }
     return probs;
   }
@@ -624,9 +691,15 @@ class EHContext {
       u32 rb = R->u32_at(ro), re = R->u32_at(ro + 4), rh = R->u32_at(ro + 8), rt = R->u32_at(ro + 12);
       Where ow1 = where(*O, O->base + ob, ostart, oend, {}), ow2 = where(*O, O->base + oe, ostart, oend + 1, {});
       Where rw1 = where(*R, R->base + rb, rstart, rend, {}), rw2 = where(*R, R->base + re, rstart, rend + 1, {});
-      if (!(ow1 == rw1) || !(ow2 == rw2) || ow1.t == '?' || ow2.t == '?') { probs.push_back({"eh", "scope " + std::to_string(i) + " range differs"}); continue; }
-      if ((ot == 0) != (rt == 0) || (ot && O->base + ot - ostart != R->base + rt - rstart)) { probs.push_back({"eh", "scope " + std::to_string(i) + " target differs"}); continue; }
-      if (oh < 0x10 || rh < 0x10) {   // EXCEPTION_EXECUTE_HANDLER etc. are constants, not RVAs
+      if (!(ow1 == rw1) || !(ow2 == rw2) || ow1.t == '?' || ow2.t == '?') {
+        probs.push_back({"eh", "scope " + std::to_string(i) + " range differs"});
+        continue;
+      }
+      if ((ot == 0) != (rt == 0) || (ot && O->base + ot - ostart != R->base + rt - rstart)) {
+        probs.push_back({"eh", "scope " + std::to_string(i) + " target differs"});
+        continue;
+      }
+      if (oh < 0x10 || rh < 0x10) {  // EXCEPTION_EXECUTE_HANDLER etc. are constants, not RVAs
         if (oh != rh) probs.push_back({"eh", "scope " + std::to_string(i) + " filter differs"});
         continue;
       }
@@ -636,7 +709,8 @@ class EHContext {
   }
 };
 
-Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth) {
+Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend,
+                                int depth) {
   EHContext ctx(this, ostart, oend, rstart, rend, depth);
   if (handler == "__CxxFrameHandler3") return ctx.funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
   if (handler == "__GSHandlerCheck") {
@@ -649,7 +723,8 @@ Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 os
     return p;
   }
   if (handler == "__C_specific_handler") return ctx.scope_table(od, rd);
-  return {{"eh", "handler " + (handler.empty() ? std::string("unknown") : std::string(handler)) + " data is not verifiable"}};
+  return {{"eh",
+           "handler " + (handler.empty() ? std::string("unknown") : std::string(handler)) + " data is not verifiable"}};
 }
 
 Problems Comparer::function(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth) {

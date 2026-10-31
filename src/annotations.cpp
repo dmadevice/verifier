@@ -35,13 +35,13 @@ namespace {
 // list_files, appending to out (a link to a directory is a file): on Windows the sizes and times come from the listing
 // itself (FindFirstFileEx gives every entry's), elsewhere from a stat each
 void walk(const std::string& root, std::vector<ListedFile>& out) {
-  std::vector<ListedFile> files;   // by name, until joined to root
+  std::vector<ListedFile> files;  // by name, until joined to root
   std::vector<std::string> dirs;
 #ifdef _WIN32
   WIN32_FIND_DATAW d;
   HANDLE h = FindFirstFileExW((std::filesystem::path(root) / L"*").c_str(), FindExInfoBasic, &d, FindExSearchNameMatch,
                               nullptr, FIND_FIRST_EX_LARGE_FETCH);
-  if (h == INVALID_HANDLE_VALUE) return;   // no such directory
+  if (h == INVALID_HANDLE_VALUE) return;  // no such directory
   do {
     if (!wcscmp(d.cFileName, L".") || !wcscmp(d.cFileName, L"..")) continue;
     std::string name = std::filesystem::path(d.cFileName).string();
@@ -70,7 +70,7 @@ void walk(const std::string& root, std::vector<ListedFile>& out) {
     f.size = it->file_size(e2);
     if (e2) f.size = u64(-1);
     auto time = it->last_write_time(e2);
-    f.time = e2 ? std::numeric_limits<i64>::max() : i64(time.time_since_epoch().count());   // unknown: recent
+    f.time = e2 ? std::numeric_limits<i64>::max() : i64(time.time_since_epoch().count());  // unknown: recent
     files.push_back(std::move(f));
   }
 #endif
@@ -104,7 +104,10 @@ bool match_annotation(std::string_view line, const std::string& module, std::str
     const char* k = nullptr;
     for (const char* c : KINDS) {
       size_t n = std::strlen(c);
-      if (line.compare(i, n, c) == 0 && line.compare(i + n, 1, ":") == 0) { k = c; break; }
+      if (line.compare(i, n, c) == 0 && line.compare(i + n, 1, ":") == 0) {
+        k = c;
+        break;
+      }
     }
     if (!k) continue;
     i += std::strlen(k) + 1;
@@ -143,8 +146,12 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
     u64 va = parse_hex(hexs);
     std::string rest = strip(rest0);
     AnnotationFlags flags;
-    if (starts_with(rest, "FOLDED")) { flags.folded = true; rest = strip(rest.substr(6)); }
-    std::vector<std::string> following(lines.begin() + long(i) + 1, lines.begin() + long(std::min(lines.size(), i + 4)));
+    if (starts_with(rest, "FOLDED")) {
+      flags.folded = true;
+      rest = strip(rest.substr(6));
+    }
+    std::vector<std::string> following(lines.begin() + long(i) + 1,
+                                       lines.begin() + long(std::min(lines.size(), i + 4)));
     size_t before = out.size();
     if (kind == "SYNTHETIC" || kind == "TEMPLATE" || kind == "LIBRARY") {
       std::string name = rest;
@@ -155,7 +162,7 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
         name = strip(f.substr(k));
       }
       long p = param_start(name);
-      if (p > 0 && ends_with(name, ")")) {   // `Name(params)`: pairs with that overload only
+      if (p > 0 && ends_with(name, ")")) {  // `Name(params)`: pairs with that overload only
         flags.sig = norm_params(name.substr(size_t(p)));
         name = strip(name.substr(0, size_t(p)));
       }
@@ -165,11 +172,17 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
     if (starts_with(rest, "(") && ends_with(rest, ")")) flags.sig = norm_params(rest);
     if (kind == "GLOBAL") {
       for (auto& nxt : following) {
-        if (auto name = global_decl_name(nxt)) { out.push_back({kind, va, *name, flags, kept_path, int(i + 1)}); break; }
+        if (auto name = global_decl_name(nxt)) {
+          out.push_back({kind, va, *name, flags, kept_path, int(i + 1)});
+          break;
+        }
       }
     } else if (kind == "VTABLE") {
       for (auto& nxt : following) {
-        if (auto name = class_decl_name(nxt)) { out.push_back({kind, va, *name, flags, kept_path, int(i + 1)}); break; }
+        if (auto name = class_decl_name(nxt)) {
+          out.push_back({kind, va, *name, flags, kept_path, int(i + 1)});
+          break;
+        }
       }
     } else {
       for (auto& nxt : following) {
@@ -196,14 +209,15 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
   for (auto& root : roots) {
     for (auto& file : list_files(root)) {
       const std::string& path = file.path;
-      bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") || ends_with(path, ".hpp") ||
-                    ends_with(path, ".inl");
+      bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") ||
+                    ends_with(path, ".hpp") || ends_with(path, ".inl");
       if (!source && !seen && !hashed) continue;
-      if (const SourceCache::Entry* e = cache ? cache->find(file) : nullptr) {   // as the cache has it: not read
+      if (const SourceCache::Entry* e = cache ? cache->find(file) : nullptr) {  // as the cache has it: not read
         if (hashed) hashed(file, e->hash);
         std::string_view kept_path = keep_text(path);
         for (auto& a : e->anns) out.push_back({a.kind, a.va, a.name, a.flags, kept_path, a.line});
-        if (ignored) for (auto& ig : e->ignored) ignored->push_back({path, ig.line, ig.text});
+        if (ignored)
+          for (auto& ig : e->ignored) ignored->push_back({path, ig.line, ig.text});
         cache->keep(file, *e);
         continue;
       }
@@ -212,7 +226,7 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
       std::string hash = hashed || cache ? content_hash(data) : std::string();
       if (hashed) hashed(file, hash);
       SourceCache::Entry e{hash, {}, {}};
-      if (source && data.find(module) != std::string::npos) {   // else no annotation of this module here
+      if (source && data.find(module) != std::string::npos) {  // else no annotation of this module here
         std::vector<Annotation> anns;
         std::vector<Ignored> ign;
         parse_file(data, path, keep_text(path), module, anns, &ign);

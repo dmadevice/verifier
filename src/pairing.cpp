@@ -8,7 +8,8 @@ namespace verifier {
 namespace {
 
 bool any_prefix(std::string_view n, std::initializer_list<const char*> ps) {
-  for (auto p : ps) if (starts_with(n, p)) return true;
+  for (auto p : ps)
+    if (starts_with(n, p)) return true;
   return false;
 }
 
@@ -42,7 +43,7 @@ std::string orig_mi_vftable(std::string_view n) {
 // a rebuilt one, `??_7<class>@@6B<base>@@`: the part up to the last `@@6B` that leaves a base name, or ""
 std::string reb_mi_vftable(std::string_view n) {
   if (!starts_with(n, "??_7") || !ends_with(n, "@@") || n.size() < 4 + 4 + 3) return "";
-  for (size_t k = n.size() - 3; k >= 8; --k)   // k: end of group 1; n[k : len-2] is .+ (non-empty)
+  for (size_t k = n.size() - 3; k >= 8; --k)  // k: end of group 1; n[k : len-2] is .+ (non-empty)
     if (n.compare(k - 4, 4, "@@6B") == 0) return std::string(n.substr(0, k));
   return "";
 }
@@ -111,8 +112,9 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
 }
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc) {
-  use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables,
-                                   [this](u64 va) { return orig.ida_name(va); }, this));
+  use(std::make_unique<Comparer>(
+      &orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables,
+      [this](u64 va) { return orig.ida_name(va); }, this));
   Comparer& c = *cmp;
   orig_cache_ = &oc;
   rebuilt_cache_ = &rc;
@@ -206,7 +208,7 @@ std::map<u64, u64> Pairing::decide_locals(const std::map<u64, Votes>& votes) con
   std::map<u64, std::optional<u64>> chosen;
   for (auto& [base, by_start] : support) {
     auto owners = reb.owners_of(base);
-    if (owners && *owners && (*owners)->size() > 1) continue;   // ICF folded from several owners: first use
+    if (owners && *owners && (*owners)->size() > 1) continue;  // ICF folded from several owners: first use
     auto os = owner_says.find(base);
     if (os != owner_says.end()) {
       if (os->second.size() == 1) chosen[base] = *os->second.begin();
@@ -216,15 +218,17 @@ std::map<u64, u64> Pairing::decide_locals(const std::map<u64, Votes>& votes) con
     for (auto& [s, fs] : by_start) ranked.emplace_back(s, fs.size());
     std::sort(ranked.begin(), ranked.end(), [](auto& a, auto& b) {
       if (a.second != b.second) return a.second > b.second;
-      if (a.first.has_value() != b.first.has_value()) return a.first.has_value();   // "cannot be a start" last
+      if (a.first.has_value() != b.first.has_value()) return a.first.has_value();  // "cannot be a start" last
       return a.first.value_or(0) < b.first.value_or(0);
     });
     if (ranked.size() == 1 || ranked[0].second > ranked[1].second) chosen[base] = ranked[0].first;
   }
   std::map<u64, int> claims;
-  for (auto& [b, o] : chosen) if (o) ++claims[*o];
+  for (auto& [b, o] : chosen)
+    if (o) ++claims[*o];
   std::map<u64, u64> kept;
-  for (auto& [b, o] : chosen) if (o && claims[*o] == 1) kept[b] = *o;
+  for (auto& [b, o] : chosen)
+    if (o && claims[*o] == 1) kept[b] = *o;
   std::vector<u64> starts;
   for (auto& [b, o] : kept) starts.push_back(o);
   std::sort(starts.begin(), starts.end());
@@ -234,13 +238,14 @@ std::map<u64, u64> Pairing::decide_locals(const std::map<u64, Votes>& votes) con
     return it != starts.end() && *it <= o + (r == reach.end() ? 0 : r->second);
   };
   std::map<u64, u64> out;
-  for (auto& [b, o] : kept) if (owner_says.count(b) || !crosses(b, o)) out[b] = o;
+  for (auto& [b, o] : kept)
+    if (owner_says.count(b) || !crosses(b, o)) out[b] = o;
   return out;
 }
 
 std::optional<std::vector<u64>> Pairing::static_home(u64 base) const {
   auto owners = reb.owners_of(base);
-  if (!owners || !*owners || (*owners)->empty()) return std::nullopt;   // an owner without a symbol: unknown
+  if (!owners || !*owners || (*owners)->empty()) return std::nullopt;  // an owner without a symbol: unknown
   std::vector<u64> homes;
   for (u64 owner : **owners) {
     Key r = resolve_symbol(owner);
@@ -269,13 +274,20 @@ Key Pairing::resolve_symbol(u64 t) const {
 Key Pairing::resolve_symbol_uncached(u64 t) const {
   if (auto it = reb_to_orig.find(t); it != reb_to_orig.end()) return Key::of_va(it->second);
   auto names = reb.symbols.names(t);
-  for (auto& n : names) if (is_const_name(n)) return Key::named_view(Key::CONST, n);
-  for (auto& n : names) if (starts_with(n, "??_C@")) return Key::named_view(Key::STR, n);
-  for (auto& n : names) if (auto va = named(n)) return Key::of_va(*va);
-  for (auto& n : names) if (auto va = named(reb.qualified(n))) return Key::of_va(*va);
-  for (auto& n : names) if (starts_with(n, "??_R0")) return Key::named_view(Key::TD, n);
-  for (auto& n : names) if (starts_with(n, "_TI")) return Key::named_view(Key::TI, n);
-  for (auto& n : names) if (starts_with(n, "??_8")) return Key::named_view(Key::VBT, n);
+  for (auto& n : names)
+    if (is_const_name(n)) return Key::named_view(Key::CONST, n);
+  for (auto& n : names)
+    if (starts_with(n, "??_C@")) return Key::named_view(Key::STR, n);
+  for (auto& n : names)
+    if (auto va = named(n)) return Key::of_va(*va);
+  for (auto& n : names)
+    if (auto va = named(reb.qualified(n))) return Key::of_va(*va);
+  for (auto& n : names)
+    if (starts_with(n, "??_R0")) return Key::named_view(Key::TD, n);
+  for (auto& n : names)
+    if (starts_with(n, "_TI")) return Key::named_view(Key::TI, n);
+  for (auto& n : names)
+    if (starts_with(n, "??_8")) return Key::named_view(Key::VBT, n);
   return names.empty() ? Key::named(Key::UNRESOLVED, hex(t)) : Key::named_view(Key::UNRESOLVED, names[0]);
 }
 
@@ -318,8 +330,10 @@ std::vector<u64> Pairing::alternates(u64 t) const {
   auto names = reb.symbols.names(t);
   if (names.size() < 2) return {};
   std::set<u64> vas;
-  for (auto& n : names) if (auto va = named(n)) vas.insert(*va);
-  for (auto& n : names) if (auto va = named(reb.qualified(n))) vas.insert(*va);
+  for (auto& n : names)
+    if (auto va = named(n)) vas.insert(*va);
+  for (auto& n : names)
+    if (auto va = named(reb.qualified(n))) vas.insert(*va);
   if (auto it = reb_to_origs.find(t); it != reb_to_origs.end()) vas.insert(it->second.begin(), it->second.end());
   return std::vector<u64>(vas.begin(), vas.end());
 }
@@ -341,7 +355,11 @@ bool Pairing::infer(u64 o_t, u64 r_t) {
   return cmp->journal.speculate([&] {
     inferred_.set({o_t, r_t}, true);
     inferred_r_.set(r_t, o_t);
-    struct Depth { int& d; Depth(int& x) : d(++x) {} ~Depth() { --d; } } depth(infer_depth_);
+    struct Depth {
+      int& d;
+      Depth(int& x) : d(++x) {}
+      ~Depth() { --d; }
+    } depth(infer_depth_);
     return cmp->function(o_t, oend, r_t, rend, 1).empty();
   });
 }

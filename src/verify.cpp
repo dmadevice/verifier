@@ -84,7 +84,8 @@ bool same_tokens(const Code& oc, const Code& rc, u64 ova, u64 oend, u64 rva, u64
   for (size_t k = 0; k < oc.insns.size(); ++k) {
     const Lean &a = oc.insns[k], &b = rc.insns[k];
     auto fa = oc.fields(a), fb = rc.fields(b);
-    if (a.mnem != b.mnem || !same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) return false;
+    if (a.mnem != b.mnem || !same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa))
+      return false;
     if (!a.addressed && !b.addressed) continue;
     Tok to = symbolise_one(oc.insn(a), ova, oend, by_va(), O, false);
     Tok tr = symbolise_one(rc.insn(b), rva, rend, resolve, R, true);
@@ -115,7 +116,10 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     lk = reb.lookup(ann.name, sig_flag(ann.flags), true);
     rec.overloads = reb.overloads_of(ann.name);
   }
-  if (!orig.functions.contains(ova)) { rec.status = "BADADDR"; return rec; }
+  if (!orig.functions.contains(ova)) {
+    rec.status = "BADADDR";
+    return rec;
+  }
   if (is_counted(ann.kind) && orig.linked.count(ova)) {
     rec.status = "LIBCODE";
     auto& l = orig.linked.at(ova);
@@ -124,12 +128,15 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     if (l.has_symbol) rec.symbol = l.symbol;
     return rec;
   }
-  if (lk.vas.empty() || lk.nhits > 1) { rec.status = lk.vas.empty() ? "MISSING" : "AMBIGUOUS"; return rec; }
+  if (lk.vas.empty() || lk.nhits > 1) {
+    rec.status = lk.vas.empty() ? "MISSING" : "AMBIGUOUS";
+    return rec;
+  }
   rec.name = lk.qname;
   u64 rva = lk.vas[0];
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
   Problems probs = cmp.function(ova, oend, rva, rend);
-  auto ocp = cmp.orig_code(ova, oend), rcp = cmp.rebuilt_code(rva, rend);   // decoded by the comparison
+  auto ocp = cmp.orig_code(ova, oend), rcp = cmp.rebuilt_code(rva, rend);  // decoded by the comparison
   const Code &oc = *ocp, &rc = *rcp;
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
@@ -143,7 +150,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   } else {
     same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
   }
-  Toks ot, rt;   // only when the report shows instructions
+  Toks ot, rt;  // only when the report shows instructions
   if (!same || show) {
     ot = symbolise(oc, by_va(), false);
     rt = symbolise(rc, resolve, true);
@@ -153,7 +160,11 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     same = ot == rt;
   }
   rec.compared = true;
-  auto offsets = [](const Code& c) { std::vector<u32> v; for (auto& l : c.insns) v.push_back(l.off); return v; };
+  auto offsets = [](const Code& c) {
+    std::vector<u32> v;
+    for (auto& l : c.insns) v.push_back(l.off);
+    return v;
+  };
   // a DIFF's category and diff, kept between runs (a function of the tokens): read from the store when it has them
   std::optional<DiffStore::Entry> kept;
   if (diffs && !same && !probs.empty() && want_diff) kept = diffs->get(offsets(oc), offsets(rc), ot, rt, cmp.names);
@@ -173,8 +184,8 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     if (want_diff) rec.diff = kept ? std::move(kept->diff) : insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
   }
   if (show) {
-    out.print("--- " + lk.qname + "  orig " + std::to_string(oend - ova) + "B | rebuilt " + std::to_string(rend - rva) + "B  " +
-              (probs.empty() ? "MATCH" : "DIFF"));
+    out.print("--- " + lk.qname + "  orig " + std::to_string(oend - ova) + "B | rebuilt " + std::to_string(rend - rva) +
+              "B  " + (probs.empty() ? "MATCH" : "DIFF"));
     for (auto& [c, d] : probs) out.print("  problem " + c + ": " + d);
     for (size_t k = 0; k < std::max(oc.insns.size(), rc.insns.size()); ++k) {
       std::string x = k < oc.insns.size() ? oc.insn(oc.insns[k]).text() : "";
@@ -183,18 +194,26 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
       out.print(std::string(eq ? " " : "*") + " " + pad_right(x, 48) + " | " + y);
     }
   }
-  pairing.release_code(ova, oend, rva, rend);   // compared: the code is not needed again
+  pairing.release_code(ova, oend, rva, rend);  // compared: the code is not needed again
   return rec;
 }
 
 void write_result(std::string& out, const Result& r, int level) {
   json::ObjectWriter o(out, level);
   int in = o.value_level();
-  auto str = [&](const char* k, const std::string& v) { o.key(k); json::put_quoted(out, v); };
-  auto strs = [&](const char* k, const std::vector<std::string>& v) { o.key(k); json::put_strings(out, v, in); };
+  auto str = [&](const char* k, const std::string& v) {
+    o.key(k);
+    json::put_quoted(out, v);
+  };
+  auto strs = [&](const char* k, const std::vector<std::string>& v) {
+    o.key(k);
+    json::put_strings(out, v, in);
+  };
   auto str_or_null = [&](const std::optional<std::string>& v) {
-    if (v) json::put_quoted(out, *v);
-    else out += "null";
+    if (v)
+      json::put_quoted(out, *v);
+    else
+      out += "null";
   };
   str("orig", r.orig);
   str("name", r.name);
@@ -211,7 +230,10 @@ void write_result(std::string& out, const Result& r, int level) {
   if (r.linked) {
     o.key("library");
     out += '[';
-    auto indent = [&](int level) { out += '\n'; out.append(2 * size_t(level), ' '); };
+    auto indent = [&](int level) {
+      out += '\n';
+      out.append(2 * size_t(level), ' ');
+    };
     indent(in + 1);
     json::put_quoted(out, r.lib);
     out += ',';
@@ -242,11 +264,13 @@ void write_result(std::string& out, const Result& r, int level) {
 }
 
 std::string result_line(const Result& r, const std::string& module) {
-  std::string line = pad_right(r.status, 9) + " " + r.orig + " " + pad_left(r.compared ? std::to_string(r.osize) : "-", 5) + "/" +
-                     pad_right(r.compared ? std::to_string(r.rsize) : "-", 5) + " " + pad_right(r.category.value_or(""), 12) + " " +
-                     r.name;
+  std::string line = pad_right(r.status, 9) + " " + r.orig + " " +
+                     pad_left(r.compared ? std::to_string(r.osize) : "-", 5) + "/" +
+                     pad_right(r.compared ? std::to_string(r.rsize) : "-", 5) + " " +
+                     pad_right(r.category.value_or(""), 12) + " " + r.name;
   if (r.first_diff) {
-    line += "\n            @" + std::to_string(r.first_diff->index) + ": orig `" + r.first_diff->orig + "` | rebuilt `" + r.first_diff->rebuilt + "`";
+    line += "\n            @" + std::to_string(r.first_diff->index) + ": orig `" + r.first_diff->orig +
+            "` | rebuilt `" + r.first_diff->rebuilt + "`";
   } else if (!r.problems.empty()) {
     line += "\n            " + head_chars(r.problems[0], 160);
   }
@@ -256,11 +280,13 @@ std::string result_line(const Result& r, const std::string& module) {
     line += "\n            unresolved: " + join(xs, ", ");
   }
   if (r.overloads.size() > 1 && r.status != "MATCH")
-    line += "\n            overloads: " + head_chars(join(r.overloads, " "), 200) + " (pick one: `// FUNCTION: " + module + " 0x... (<params>)`)";
+    line += "\n            overloads: " + head_chars(join(r.overloads, " "), 200) +
+            " (pick one: `// FUNCTION: " + module + " 0x... (<params>)`)";
   return line;
 }
 
-std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns, const std::function<std::vector<u64>(const std::string&)>& lookup,
+std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
+                                      const std::function<std::vector<u64>(const std::string&)>& lookup,
                                       const std::unordered_map<u64, u64>& reb_to_orig, Comparer& cmp) {
   const Image &O = *cmp.O, &R = *cmp.R;
   std::vector<const Annotation*> sorted;
@@ -295,7 +321,7 @@ std::vector<std::pair<std::string, i64>> by_count(const std::map<std::string, i6
   return v;
 }
 
-std::string count_list(const std::vector<std::pair<std::string, i64>>& v) {   // "a 3, b 1"
+std::string count_list(const std::vector<std::pair<std::string, i64>>& v) {  // "a 3, b 1"
   std::vector<std::string> parts;
   for (auto& [k, n] : v) parts.push_back(k + " " + std::to_string(n));
   return join(parts, ", ");
@@ -330,24 +356,30 @@ Totals summarize(const std::vector<Result>& results, const Original& orig, Out& 
   }
   size_t lib_checked = 0, lib_match = 0;
   for (auto& r : results) {
-    if (r.kind == "LIBRARY") { ++lib_checked; lib_match += r.status == "MATCH"; }
+    if (r.kind == "LIBRARY") {
+      ++lib_checked;
+      lib_match += r.status == "MATCH";
+    }
     if (r.status == "LIBCODE") t.libcode.push_back(&r);
   }
   for (auto* r : t.libcode) {
     std::string sym = r->symbol.value_or("");
     out.print("ERROR " + r->orig + " (" + r->src + ") is linked library code from " + r->lib +
               (sym.empty() ? "" : ", `" + sym + "`") +
-              ": remove the definition and reach it as the original does (through the library call or class that uses it); `// " +
-              r->kind + ":` is for decompiled code, `// LIBRARY: " + module + " " + r->orig + " <symbol>` for library code");
+              ": remove the definition and reach it as the original does (through the library call or class that uses "
+              "it); `// " +
+              r->kind + ":` is for decompiled code, `// LIBRARY: " + module + " " + r->orig +
+              " <symbol>` for library code");
   }
   out.print("\nannotated " + std::to_string(results.size()) + ": " + std::to_string(t.matched.size()) + " match, " +
             std::to_string(differ) + " do not" + (cats.empty() ? "" : " (" + count_list(cats) + ")"));
   out.print("coverage: " + std::to_string(t.matched.size()) + "/" + std::to_string(universe) + " functions (" +
-            percent(t.matched.size(), universe) + "), " + std::to_string(mbytes) + "/" + std::to_string(ubytes) + " bytes (" +
-            percent(mbytes, ubytes) + ")");
+            percent(t.matched.size(), universe) + "), " + std::to_string(mbytes) + "/" + std::to_string(ubytes) +
+            " bytes (" + percent(mbytes, ubytes) + ")");
   out.print("linked library code (not counted): " + std::to_string(orig.linked.size()) + " functions, " +
-            std::to_string(lib_bytes) + " bytes" + (lib_counts.empty() ? "" : " (" + count_list(by_count(lib_counts)) + ")") +
-            "; LIBRARY annotations " + std::to_string(lib_match) + "/" + std::to_string(lib_checked) + " match");
+            std::to_string(lib_bytes) + " bytes" +
+            (lib_counts.empty() ? "" : " (" + count_list(by_count(lib_counts)) + ")") + "; LIBRARY annotations " +
+            std::to_string(lib_match) + "/" + std::to_string(lib_checked) + " match");
   t.fields.set("matched", Value::integer(i64(t.matched.size())));
   t.fields.set("universe", Value::integer(i64(universe)));
   t.fields.set("matched_bytes", Value::integer(i64(mbytes)));
@@ -360,7 +392,8 @@ Totals summarize(const std::vector<Result>& results, const Original& orig, Out& 
   return t;
 }
 
-bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Result>& results, bool update, Out& out) {
+bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Result>& results,
+                     bool update, Out& out) {
   std::map<u64, std::string> prev;
   if (file_exists(path)) {
     for (auto& line : read_lines(path)) {
@@ -372,9 +405,11 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
     }
   }
   std::vector<u64> lost;
-  for (auto& [v, n] : prev) if (!matched.count(v)) lost.push_back(v);
+  for (auto& [v, n] : prev)
+    if (!matched.count(v)) lost.push_back(v);
   for (u64 v : lost) out.print("REGRESSION " + hex(v) + " " + prev[v]);
-  for (u64 v : matched) if (!prev.count(v)) out.print("NEW MATCH  " + hex(v));
+  for (u64 v : matched)
+    if (!prev.count(v)) out.print("NEW MATCH  " + hex(v));
   if (update) {
     if (!lost.empty()) {
       out.print("refusing --update while regressions exist");
@@ -383,7 +418,8 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
       for (auto& r : results) names[r.va] = r.name;
       std::set<u64> all(matched);
       for (auto& [v, n] : prev) all.insert(v);
-      std::string text = "# Functions that byte-match. Maintained by verifier --update; --check fails if one regresses.\n";
+      std::string text =
+          "# Functions that byte-match. Maintained by verifier --update; --check fails if one regresses.\n";
       for (u64 v : all) {
         auto it = names.find(v);
         text += hex(v) + " " + (it != names.end() ? it->second : prev.count(v) ? prev[v] : "") + "\n";
@@ -398,12 +434,15 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
 
 namespace {
 
-// A run's arguments, configuration and phase timer, and its replay record's bookkeeping: the files it hashes (each once),
-// and the record's command, stamps and key, worked out only when the record needs them
+// A run's arguments, configuration and phase timer, and its replay record's bookkeeping: the files it hashes (each
+// once), and the record's command, stamps and key, worked out only when the record needs them
 class RunState {
  public:
   RunState(int argc, char** argv)
-      : a(parse_args(argc, argv)), p(Config::load(a.config)), args_(argv + 1, argv + argc), exe_(self_exe()),
+      : a(parse_args(argc, argv)),
+        p(Config::load(a.config)),
+        args_(argv + 1, argv + argc),
+        exe_(self_exe()),
         start_(two_seconds_ago()) {
     // every run but --update (which writes the regression list and the name cache) and --show (a look at one function)
     // keeps a record; its key holds the arguments, so a record is only replayed for the same command
@@ -439,16 +478,19 @@ class RunState {
     image_stamp_ = file_stamp(a.rebuilt);
     Last rec;
     auto walk_key = [&] { return key_ = key_of(source_files(a)); };
-    if (!load_last(last_, command_, image_stamp_, [&] { return stamps_now(); }, [&] { return hash_if_present(a.rebuilt); },
-                   walk_key, rec) ||
-        !(a.json ? !rec.report_hash.empty() && content_hash_file_if_present(*a.json) == rec.report_hash : rec.report_hash.empty()))
+    if (!load_last(
+            last_, command_, image_stamp_, [&] { return stamps_now(); }, [&] { return hash_if_present(a.rebuilt); },
+            walk_key, rec) ||
+        !(a.json ? !rec.report_hash.empty() && content_hash_file_if_present(*a.json) == rec.report_hash
+                 : rec.report_hash.empty()))
       return std::nullopt;
     std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
     std::fwrite(rec.out.data(), 1, rec.out.size(), stdout);
     std::fflush(stdout);
     // the same contents under new stamps (a file rewritten as it was): the record takes them, for the next run
     if (!rec.by_stamps && !stamps_now().empty())
-      save_last(last_, command_, image_stamp_, stamps_, hash_if_present(a.rebuilt), key_, rec.out, rec.report_hash, rec.rc);
+      save_last(last_, command_, image_stamp_, stamps_, hash_if_present(a.rebuilt), key_, rec.out, rec.report_hash,
+                rec.rc);
     return rec.rc;
   }
 
@@ -498,7 +540,8 @@ std::string sha256_of(const std::string& f) {
   return h;
 }
 
-// a destructor's annotation names the scalar deleting destructor when its address is a vtable slot (see pick_destructor)
+// a destructor's annotation names the scalar deleting destructor when its address is a vtable slot (see
+// pick_destructor)
 void pick_destructors(std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb) {
   std::unordered_set<u64> slots;
   for (auto& [v, ss] : orig.vtables) slots.insert(ss.begin(), ss.end());
@@ -511,20 +554,22 @@ void pick_destructors(std::vector<Annotation>& anns, const Original& orig, const
 // keeps only what stdout and the summary need)
 struct Evaluated {
   std::vector<Result> results;
-  std::string report;   // "{ "results": [...]" when there is a report; the totals are added after
+  std::string report;  // "{ "results": [...]" when there is a report; the totals are added after
 };
 Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb, Pairing& pairing,
                        Comparer& cmp, DiffStore& diffs, const RunState& s, Out& out) {
   std::optional<u64> show;
   if (s.a.show) show = parse_hex(*s.a.show);
   std::vector<const Annotation*> order;
-  for (auto& ann : anns) if (is_paired(ann.kind)) order.push_back(&ann);
+  for (auto& ann : anns)
+    if (is_paired(ann.kind)) order.push_back(&ann);
   std::stable_sort(order.begin(), order.end(), [](auto* x, auto* y) { return x->va < y->va; });
   Evaluated ev;
   ev.results.reserve(order.size());
   if (s.a.json) ev.report = "{\n  \"results\": ";
   for (auto* ann : order) {
-    ev.results.push_back(evaluate(*ann, orig, reb, pairing, cmp, s.p.root, show && *show == ann->va, out, true, &diffs));
+    ev.results.push_back(
+        evaluate(*ann, orig, reb, pairing, cmp, s.p.root, show && *show == ann->va, out, true, &diffs));
     if (!s.a.json) continue;
     ev.report += ev.results.size() == 1 ? "[\n    " : ",\n    ";
     write_result(ev.report, ev.results.back(), 2);
@@ -554,9 +599,10 @@ void print_warnings(const std::vector<Annotation>& anns, const std::vector<Ignor
     out.print("GLOBAL DIFFERS " + hex(g.ann->va) + " " + g.ann->name + " (" + where_of(g.ann->path, root) + ":" +
               std::to_string(g.ann->line) + "): " + g.problem + "; is the address right?");
   for (auto& ig : ignored)
-    out.print("IGNORED ANNOTATION " + where_of(ig.path, root) + ":" + std::to_string(ig.line) + ": `" + ig.text +
-              "` names nothing: no definition (FUNCTION/STUB/SYNTHETIC without a name), variable (GLOBAL) or class (VTABLE) "
-              "within the next three lines");
+    out.print(
+        "IGNORED ANNOTATION " + where_of(ig.path, root) + ":" + std::to_string(ig.line) + ": `" + ig.text +
+        "` names nothing: no definition (FUNCTION/STUB/SYNTHETIC without a name), variable (GLOBAL) or class (VTABLE) "
+        "within the next three lines");
 }
 
 // the report's totals, and the file written
@@ -586,11 +632,13 @@ int run(int argc, char** argv) {
 
   // each source file's annotations kept between runs (with a cache directory): unchanged files are not read again
   std::vector<Ignored> ignored;
-  SourceCache sources(s.build_cache("sources-cache.bin"), "verifier " + s.self_hash() + " module " + p.module, s.start());
+  SourceCache sources(s.build_cache("sources-cache.bin"), "verifier " + s.self_hash() + " module " + p.module,
+                      s.start());
   auto anns = parse_annotations(a.src, p.module, &ignored, nullptr, &sources, s.hashed());
   sources.save();
   if (std::getenv("VERIFIER_TIMING"))
-    std::fprintf(stderr, "source files from the sources cache: %zu (read %zu)\n", sources.stats().hits, sources.stats().misses);
+    std::fprintf(stderr, "source files from the sources cache: %zu (read %zu)\n", sources.stats().hits,
+                 sources.stats().misses);
   check_duplicates(anns);
   s.ph.mark("annotations");
 

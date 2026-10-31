@@ -90,15 +90,18 @@ void DiffStore::load() {
   r.pad8();
   u64 n = 0;
   r.get(n);
-  std::string_view index = r.take(n * sizeof(Index));   // used in place: 8-byte aligned (the file is mapped at a page)
-  if (!r.ok() || n > file_->view().size() / sizeof(Index)) { file_.reset(); return; }
+  std::string_view index = r.take(n * sizeof(Index));  // used in place: 8-byte aligned (the file is mapped at a page)
+  if (!r.ok() || n > file_->view().size() / sizeof(Index)) {
+    file_.reset();
+    return;
+  }
   index_ = reinterpret_cast<const Index*>(index.data());
   nindex_ = n;
   blobs_ = file_->view().substr(size_t(index.data() + index.size() - file_->view().data()));
 }
 
-DiffStore::Entry DiffStore::get(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot, const Toks& rt,
-                                const NameOf& names) {
+DiffStore::Entry DiffStore::get(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot,
+                                const Toks& rt, const NameOf& names) {
   auto make = [&] { return Entry{classify(ot, rt), insn_diff(o_off, r_off, ot, rt, names)}; };
   if (path_.empty()) return make();
   KeyHash h;
@@ -134,7 +137,7 @@ DiffStore::Entry DiffStore::get(const std::vector<u32>& o_off, const std::vector
 }
 
 void DiffStore::save() {
-  if (path_.empty() || (!stats_.misses && used_.size() == nindex_)) return;   // as it was
+  if (path_.empty() || (!stats_.misses && used_.size() == nindex_)) return;  // as it was
   BinWriter w;
   w.out = cache_header(MAGIC, key_);
   w.pad8();
@@ -147,7 +150,7 @@ void DiffStore::save() {
   for (auto& [k, b] : used_) w.out += b;
   index_ = nullptr;
   nindex_ = 0;
-  file_.reset();   // the mapping released before the file is replaced
+  file_.reset();  // the mapping released before the file is replaced
   write_cache_file(path_, w.out);
 }
 

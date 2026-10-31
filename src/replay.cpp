@@ -27,11 +27,13 @@ void add_field(Sha256& h, std::string_view data) {
 
 std::vector<std::string> source_files(const Args& a) {
   std::vector<std::string> out;
-  for (auto& top : a.src) for (auto& f : list_files(top)) out.push_back(std::move(f.path));
+  for (auto& top : a.src)
+    for (auto& f : list_files(top)) out.push_back(std::move(f.path));
   return out;
 }
 
-std::string run_key(const Args& a, const Config& p, const std::string& verifier, const std::vector<std::string>& sources,
+std::string run_key(const Args& a, const Config& p, const std::string& verifier,
+                    const std::vector<std::string>& sources,
                     const std::function<std::string(const std::string&)>& hash) {
   Sha256 h;
   auto add = [&](std::string_view data) { add_field(h, data); };
@@ -41,8 +43,10 @@ std::string run_key(const Args& a, const Config& p, const std::string& verifier,
   // the original and the exports: a run that reads them only through the snapshot (a cache, and none of them changed
   // within two seconds) is keyed by the snapshot's key; otherwise by their contents
   std::string snapshot = p.cache_dir.empty() ? std::string() : Original::snapshot_key(p);
-  if (snapshot.empty()) for (auto* f : p.snapshot_inputs()) files.push_back(*f);
-  else add(snapshot);
+  if (snapshot.empty())
+    for (auto* f : p.snapshot_inputs()) files.push_back(*f);
+  else
+    add(snapshot);
   files.insert(files.end(), sources.begin(), sources.end());
   for (auto& f : files) {
     add(f);
@@ -69,7 +73,7 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe, co
   auto add = [&](std::string_view data) { add_field(h, data); };
   bool racy = false;
   auto stamp = [&](const std::string& f) {
-    i64 t = std::numeric_limits<i64>::min();   // none for an absent file (the clock's epoch may make times negative)
+    i64 t = std::numeric_limits<i64>::min();  // none for an absent file (the clock's epoch may make times negative)
     add(f.empty() ? "" : file_stamp(f, &t));
     racy |= t >= recent;
   };
@@ -106,8 +110,10 @@ bool load_last(const std::string& path, const std::string& command, const std::s
                const std::function<std::string()>& stamps, const std::function<std::string()>& image,
                const std::function<std::string()>& key, Last& last) {
   if (!file_exists(path)) return false;
-  std::unique_ptr<MappedFile> file;   // released before save_last renames a new record over it
-  try { file = std::make_unique<MappedFile>(path); } catch (...) { return false; }
+  std::unique_ptr<MappedFile> file;  // released before save_last renames a new record over it
+  try {
+    file = std::make_unique<MappedFile>(path);
+  } catch (...) { return false; }
   std::string_view d = file->view();
   size_t p = 0;
   auto line = [&](std::string_view& v) {
@@ -138,15 +144,16 @@ bool load_last(const std::string& path, const std::string& command, const std::s
   return true;
 }
 
-void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
-               const std::string& image, const std::string& key, const std::string& out, const std::string& report_hash,
-               int rc) {
-  std::string rec;   // built in place: the output is megabytes
+void save_last(const std::string& path, const std::string& command, const std::string& image_stamp,
+               const std::string& stamps, const std::string& image, const std::string& key, const std::string& out,
+               const std::string& report_hash, int rc) {
+  std::string rec;  // built in place: the output is megabytes
   rec.reserve(256 + command.size() + stamps.size() + out.size());
-  for (std::string_view part : {std::string_view("verifier-last 8\n"), std::string_view(command), std::string_view("\n"),
-                                std::string_view(image_stamp), std::string_view("\n"),
-                                stamps.empty() ? std::string_view("-") : std::string_view(stamps), std::string_view("\n"), std::string_view(image),
-                                std::string_view("\n"), std::string_view(key), std::string_view("\n")})
+  for (std::string_view part :
+       {std::string_view("verifier-last 8\n"), std::string_view(command), std::string_view("\n"),
+        std::string_view(image_stamp), std::string_view("\n"),
+        stamps.empty() ? std::string_view("-") : std::string_view(stamps), std::string_view("\n"),
+        std::string_view(image), std::string_view("\n"), std::string_view(key), std::string_view("\n")})
     rec += part;
   rec += std::to_string(rc) + "\n" + (report_hash.empty() ? std::string("-") : report_hash) + "\n";
   rec += std::to_string(out.size()) + "\n";

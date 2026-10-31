@@ -12,13 +12,13 @@
 namespace verifier {
 
 struct AnnotationFlags {
-  bool folded = false;   // FOLDED: identical-code folding gave several functions the address
-  bool dtor = false;     // the definition is a destructor
-  std::string sig;       // the parameter list it pairs with (normalised; "" for any)
+  bool folded = false;  // FOLDED: identical-code folding gave several functions the address
+  bool dtor = false;    // the definition is a destructor
+  std::string sig;      // the parameter list it pairs with (normalised; "" for any)
 };
 
 struct Annotation {
-  std::string kind;       // FUNCTION STUB SYNTHETIC TEMPLATE LIBRARY GLOBAL VTABLE
+  std::string kind;  // FUNCTION STUB SYNTHETIC TEMPLATE LIBRARY GLOBAL VTABLE
   u64 va = 0;
   std::string name;
   AnnotationFlags flags;
@@ -32,27 +32,26 @@ struct Ignored {
   std::string text;
 };
 
-bool is_counted(const std::string& kind);   // FUNCTION SYNTHETIC TEMPLATE
-bool is_paired(const std::string& kind);    // counted + LIBRARY
-std::optional<std::string> sig_flag(const AnnotationFlags& flags);   // the parameter list, if any
+bool is_counted(const std::string& kind);                           // FUNCTION SYNTHETIC TEMPLATE
+bool is_paired(const std::string& kind);                            // counted + LIBRARY
+std::optional<std::string> sig_flag(const AnnotationFlags& flags);  // the parameter list, if any
 
 // The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name), with their
 // sizes and modification times (on Windows from the directory listing, without opening each file)
 struct ListedFile {
   std::string path;
   u64 size = 0;
-  i64 time = 0;   // the file clock's ticks
+  i64 time = 0;  // the file clock's ticks
 };
 std::vector<ListedFile> list_files(const std::string& root);
 
-class SourceCache;   // source_cache.hpp: each file's annotations kept between runs
+class SourceCache;  // source_cache.hpp: each file's annotations kept between runs
 // The annotations in the files under roots. `seen`, when given, gets every file as list_files gives it and its
 // contents, in that order, the files that cannot hold an annotation included.
-std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
-                                          std::vector<Ignored>* ignored,
-                                          const std::function<void(const ListedFile&, std::string_view)>& seen = {},
-                                          SourceCache* cache = nullptr,
-                                          const std::function<void(const ListedFile&, const std::string&)>& hashed = {});
+std::vector<Annotation> parse_annotations(
+    const std::vector<std::string>& roots, const std::string& module, std::vector<Ignored>* ignored,
+    const std::function<void(const ListedFile&, std::string_view)>& seen = {}, SourceCache* cache = nullptr,
+    const std::function<void(const ListedFile&, const std::string&)>& hashed = {});
 // exits (message on stderr, code 1) when two annotations claim one address without both saying FOLDED
 void check_duplicates(const std::vector<Annotation>& anns);
 
