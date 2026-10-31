@@ -499,6 +499,8 @@ std::vector<u32> Rebuilt::matching(const std::string& key) const {
 Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>& sig, bool code) const {
   std::string key = norm_name(key0);
   std::vector<u32> hits = matching(key);
+  last_.name = key0;   // overloads_of on the same name (pairing asks for both) reads these
+  last_.hits = hits;
   std::set<u64> vas;
   for (u32 q : hits) {
     for (u32 k = qual_first_[q]; k < qual_first_[q + 1]; ++k) {
@@ -513,7 +515,7 @@ Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>
 
 std::vector<std::string> Rebuilt::overloads_of(const std::string& key) const {
   std::set<std::string_view> out;
-  for (u32 q : matching(norm_name(key)))
+  for (u32 q : key == last_.name ? last_.hits : matching(norm_name(key)))
     for (u32 k = qual_first_[q]; k < qual_first_[q + 1]; ++k)
       if (img.executable(qual_syms_[k].va)) out.insert(qual_syms_[k].sig);
   return std::vector<std::string>(out.begin(), out.end());

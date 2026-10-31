@@ -154,6 +154,7 @@ class Rebuilt {
   };
   Chain by_last_[2];
   std::vector<u32> matching(const std::string& key) const;   // the qualified names `key` names, in map order
+  struct { std::string name; std::vector<u32> hits; } mutable last_;   // the last name lookup() matched, and its matches
 };
 
 }  // namespace verifier
