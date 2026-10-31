@@ -42,13 +42,28 @@ std::string head_chars(const std::string& s, size_t n) {
   return s.substr(0, std::min(i, s.size()));
 }
 
-// a source path as the report gives it (relative to the root); many annotations share a file
+// a source path as the report gives it (relative to the root); many annotations share a file, and many files a
+// directory (relpath's work is the directory's)
 const std::string& where_of(std::string_view path, const std::string& root) {
-  static std::unordered_map<std::string, std::string> memo;
+  static std::unordered_map<std::string, std::string> memo, dirs;
   std::string key = root + '\0' + std::string(path);
   auto it = memo.find(key);
-  if (it == memo.end()) it = memo.emplace(std::move(key), relpath(std::string(path), root)).first;
-  return it->second;
+  if (it != memo.end()) return it->second;
+  std::string p(path), dir = dirname(p), base = basename(p), rel;
+#ifdef _WIN32
+  bool by_dir = false;  // another drive than the root's: relpath gives the path as it is
+#else
+  bool by_dir = !base.empty() && base != "." && base != "..";
+#endif
+  if (by_dir) {
+    std::string dkey = root + '\0' + dir;
+    auto d = dirs.find(dkey);
+    if (d == dirs.end()) d = dirs.emplace(std::move(dkey), relpath(dir.empty() ? "." : dir, root)).first;
+    rel = d->second == "." ? base : path_join(d->second, base);
+  } else {
+    rel = relpath(p, root);
+  }
+  return memo.emplace(std::move(key), std::move(rel)).first->second;
 }
 
 const std::function<Key(u64)>& by_va() {
