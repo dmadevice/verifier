@@ -427,12 +427,16 @@ bool Original::in_padding(u64 va) const {
 
 // -- Rebuilt -------------------------------------------------------------------------------------------------
 
-Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc) : names_(&nc) {
-  img = Image::load(path);
+Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc,
+                 const std::function<void(const std::string&, std::string_view)>& read)
+    : names_(&nc) {
+  img = Image::load(path,
+                    read ? [&](std::string_view data) { read(path, data); } : std::function<void(std::string_view)>());
   std::vector<std::pair<u64, std::string_view>> syms;  // (address, decorated name) in map order
   std::vector<NameIds> infos;                          // infos[i]: syms[i]'s
   {
     MappedFile map_file(map_path);
+    if (read) read(map_path, map_file.view());
     syms = parse_map(map_file.view());
     std::vector<std::string_view> decs;
     decs.reserve(syms.size());

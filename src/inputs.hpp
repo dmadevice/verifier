@@ -121,7 +121,9 @@ struct Lookup {
 // answers, the tables filled by hand).
 class Rebuilt {
  public:
-  Rebuilt(const std::string& path, const std::string& map_path, NameCache& names);
+  // `read`: given each file (the image, the map) and its bytes as they are read
+  Rebuilt(const std::string& path, const std::string& map_path, NameCache& names,
+          const std::function<void(const std::string&, std::string_view)>& read = nullptr);
   virtual ~Rebuilt() = default;
   Image img;
   Symbols symbols;  // names are views of strings the NameCache owns (it outlives the tables)

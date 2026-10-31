@@ -519,6 +519,12 @@ class RunState {
     return rec.rc;
   }
 
+  // an input's bytes as the run reads them: its hash for the record's key, worked out while they are at hand
+  std::function<void(const std::string&, std::string_view)> read() {
+    if (last_.empty() || !key_.empty()) return nullptr;
+    return [this](const std::string& f, std::string_view data) { hashes_.try_emplace(f, content_hash(data)); };
+  }
+
   // each source file as the annotations are read: listed for the record's stamps, and its hash for its key
   std::function<void(const ListedFile&, const std::string&)> hashed() {
     if (last_.empty()) return nullptr;
@@ -684,7 +690,7 @@ int run(int argc, char** argv) {
   s.ph.mark("annotations");
 
   NameCache name_cache(p.names_cache(), "verifier names 1 " + sha256_of(p.undname), p.undname);
-  Rebuilt reb(a.rebuilt, a.map, name_cache);
+  Rebuilt reb(a.rebuilt, a.map, name_cache, s.read());
   s.ph.mark("rebuilt+names");
 
   pick_destructors(anns, orig, reb);

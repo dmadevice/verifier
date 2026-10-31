@@ -2,6 +2,7 @@
 // imports, unwind data and the POGO debug entry.
 #pragma once
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -43,7 +44,8 @@ struct Unwind {
 
 class Image {
  public:
-  static Image load(const std::string& path);
+  // `read`: given the file's bytes as they are read (the replay record's key hashes them then)
+  static Image load(const std::string& path, const std::function<void(std::string_view)>& read = nullptr);
   // an image already laid out at its virtual addresses (Image::img of a load), with the file's headers
   // (Image::headers); `owner` keeps both alive
   static Image laid_out(std::string_view headers, std::string_view img, std::shared_ptr<const void> owner);
