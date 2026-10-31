@@ -249,6 +249,23 @@ bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
   });
 }
 
+// One address field: the original's target o_t against the rebuild's r_t (`access`: the bytes the instruction reads
+// there, 0 when it only takes the address). The rebuilt target is first given a key, what it stands for, trying in
+// order (each step only while the ones before have not decided):
+//   1. __ImageBase and imports compare directly (an import by its DLL and name or ordinal);
+//   2. resolve(): an annotation's original address, the original's name for the symbol, a constant or string literal
+//      by name, an RTTI or EH type by name, a local static the pairing has bound, or an offset into a resolved symbol;
+//   3. one of several names at r_t naming o_t (ICF-folded symbols) stands for o_t;
+//   4. a local static not yet bound is bound to o_t when it fits there (bind_local);
+//   5. an unresolved function is inferred to be o_t when its code compares equal (ctx->infer, speculative);
+//   6. an unresolved vtable is inferred to be o_t when its slots and RTTI compare equal (infer_vtable);
+//   7. inside a compiler constant or string literal: the literal, with o_t moved back by the same offset;
+//   8. inside unresolved read-only data: its containing object is inferred to be o_t's object (infer_data).
+// Then the key decides what is compared: a constant or string by its bytes (and the bytes the instruction reads from
+// it), a type descriptor by name, ThrowInfo by its catchable types, a vbtable by its offsets; a key that is not o_t is
+// a reference problem, unless it is one past the end of the data object before (a loop bound). A key that is o_t
+// compares what is there: a vtable's slots and RTTI, nothing more for code (each function is compared on its own), the
+// bytes read for an access, else the object's initial contents.
 std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
   if (o_t == O->base && r_t == R->base) return std::nullopt;  // __ImageBase
   auto oi = O->imports.find(o_t);
