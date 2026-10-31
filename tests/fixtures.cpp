@@ -173,79 +173,88 @@ Problems replay(const Value& c) {
     auto it = keys->find(t);
     return it != keys->end() ? it->second : Key::named(Key::UNRESOLVED, hex(t));
   };
-  Comparer cmp(&O, &R, resolve, &vtables, name_of(names));
-  std::map<u64, std::vector<u64>> folded, refs;
-  for (auto& f : m["folded"].arr) folded[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
-  for (auto& f : m["refs"].arr) refs[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
-  std::map<u64, int> folded_locals;
-  for (auto& f : m["folded_locals"].arr) folded_locals[u64(f.arr[0].as_int())] = int(f.arr[1].as_int());
-  std::map<u64, std::optional<std::vector<u64>>> home;
-  for (auto& h : m["home"].arr) home[u64(h.arr[0].as_int())] = h.arr[1].is_null() ? std::nullopt : std::optional(u64s(&h.arr[1]));
-  std::map<u64, u64> same_code, orig_ends;
-  for (auto& s : m["same_code"].arr) same_code[u64(s.arr[0].as_int())] = u64(s.arr[1].as_int());
-  if (auto* e = m.get("orig_ends")) for (auto& x : e->arr) orig_ends[u64(x.arr[0].as_int())] = u64(x.arr[1].as_int());
-  std::vector<std::pair<u64, u64>> padding;
-  if (auto* p = m.get("padding")) for (auto& x : p->arr) padding.emplace_back(u64(x.arr[0].as_int()), u64(x.arr[1].as_int()));
-  auto local = u64s(m.get("local")), literals = u64s(m.get("literals")), starts = u64s(m.get("starts")),
-       named = u64s(m.get("named")), annotated = u64s(m.get("annotated"));
-  std::sort(starts.begin(), starts.end());
-
-  cmp.alternates = [folded](u64 t) { auto it = folded.find(t); return it == folded.end() ? std::vector<u64>() : it->second; };
-  cmp.local_base = [local](u64 t) -> std::optional<std::pair<u64, u64>> {
-    for (u64 s : local) if (s <= t && t < s + 16) return std::make_pair(s, t - s);
-    return std::nullopt;
-  };
-  cmp.folded_locals = [folded_locals](u64 t) { auto it = folded_locals.find(t); return it == folded_locals.end() ? 1 : it->second; };
-  cmp.static_home = [home](u64 t) -> std::optional<std::vector<u64>> {
-    auto it = home.find(t);
-    return it == home.end() ? std::nullopt : it->second;
-  };
-  cmp.orig_object_end = [orig_ends](u64 t) { auto it = orig_ends.find(t); return it == orig_ends.end() ? t : it->second; };
-  cmp.orig_padding = [padding](u64 t) {
-    for (auto& [lo, hi] : padding) if (lo <= t && t < hi) return true;
-    return false;
-  };
-  cmp.orig_refs = [refs](u64 f) { auto it = refs.find(f); return it == refs.end() ? std::vector<u64>() : it->second; };
-  cmp.infer = [same_code](u64 o_t, u64 r_t) { auto it = same_code.find(r_t); return it != same_code.end() && it->second == o_t; };
-  const Image* Rp = &R;
-  cmp.literal_at = [literals, keys, Rp](u64 t) -> std::optional<std::pair<u64, Key>> {
-    for (u64 v : literals) {
-      Key k = keys->at(v);
-      if (v <= t && i64(t - v) < literal_size(*Rp, v, k)) return std::make_pair(v, k);
+  // what the case says beyond its two images
+  struct DataContext : ComparerContext {
+    std::map<u64, std::vector<u64>> folded, refs;
+    std::map<u64, int> folded_locals_;
+    std::map<u64, std::optional<std::vector<u64>>> home;
+    std::map<u64, u64> same_code, orig_ends;
+    std::vector<std::pair<u64, u64>> padding;
+    std::vector<u64> local, literals, starts, named, annotated;
+    std::shared_ptr<std::map<u64, Key>> keys;
+    const Image* R = nullptr;
+    std::vector<u64> alternates(u64 t) const override { auto it = folded.find(t); return it == folded.end() ? std::vector<u64>() : it->second; }
+    std::optional<std::pair<u64, u64>> local_base(u64 t) const override {
+      for (u64 s : local) if (s <= t && t < s + 16) return std::make_pair(s, t - s);
+      return std::nullopt;
     }
-    return std::nullopt;
-  };
-  cmp.symbol_start = [starts](u64 t) { return std::binary_search(starts.begin(), starts.end(), t); };
-  if (!starts.empty()) {
-    cmp.span = [starts](u64 t) -> u64 {
+    int folded_locals(u64 t) const override { auto it = folded_locals_.find(t); return it == folded_locals_.end() ? 1 : it->second; }
+    std::optional<std::vector<u64>> static_home(u64 t) const override {
+      auto it = home.find(t);
+      return it == home.end() ? std::nullopt : it->second;
+    }
+    u64 orig_object_end(u64 t) const override { auto it = orig_ends.find(t); return it == orig_ends.end() ? t : it->second; }
+    bool orig_padding(u64 t) const override {
+      for (auto& [lo, hi] : padding) if (lo <= t && t < hi) return true;
+      return false;
+    }
+    std::vector<u64> orig_refs(u64 f) override { auto it = refs.find(f); return it == refs.end() ? std::vector<u64>() : it->second; }
+    bool infer(u64 o_t, u64 r_t) override { auto it = same_code.find(r_t); return it != same_code.end() && it->second == o_t; }
+    std::optional<std::pair<u64, Key>> literal_at(u64 t) const override {
+      for (u64 v : literals) {
+        Key k = keys->at(v);
+        if (v <= t && i64(t - v) < literal_size(*R, v, k)) return std::make_pair(v, k);
+      }
+      return std::nullopt;
+    }
+    bool symbol_start(u64 t) const override { return std::binary_search(starts.begin(), starts.end(), t); }
+    u64 span(u64 t) const override {
+      if (starts.empty()) return ComparerContext::span(t);
       for (u64 s : starts) if (s > t) return s - t;
       return 0x100;
-    };
-    cmp.containing = [starts](u64 t) -> std::optional<u64> {
+    }
+    std::optional<u64> containing(u64 t) const override {
+      if (starts.empty()) return ComparerContext::containing(t);
       std::optional<u64> best;
       for (u64 s : starts) if (s <= t) best = s;
       return best;
-    };
-  }
-  cmp.orig_named = [named](u64 t) { return std::find(named.begin(), named.end(), t) != named.end(); };
-  cmp.annotated_between = [annotated](u64 lo, u64 hi) {
-    for (u64 a : annotated) if (lo < a && a <= hi) return true;
-    return false;
-  };
+    }
+    bool orig_named(u64 t) const override { return std::find(named.begin(), named.end(), t) != named.end(); }
+    bool annotated_between(u64 lo, u64 hi) const override {
+      for (u64 a : annotated) if (lo < a && a <= hi) return true;
+      return false;
+    }
+    std::optional<u64> end_of_previous(u64 t) const override {
+      if (!std::binary_search(starts.begin(), starts.end(), t)) return std::nullopt;
+      for (auto it = starts.rbegin(); it != starts.rend(); ++it) {
+        u64 p = *it;
+        auto k = keys->find(p);
+        if (p < t && k != keys->end() && k->second.kind == Key::VA) return k->second.va + t - p;
+      }
+      return std::nullopt;
+    }
+  } dc;
+  for (auto& f : m["folded"].arr) dc.folded[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
+  for (auto& f : m["refs"].arr) dc.refs[u64(f.arr[0].as_int())] = u64s(&f.arr[1]);
+  for (auto& f : m["folded_locals"].arr) dc.folded_locals_[u64(f.arr[0].as_int())] = int(f.arr[1].as_int());
+  for (auto& h : m["home"].arr) dc.home[u64(h.arr[0].as_int())] = h.arr[1].is_null() ? std::nullopt : std::optional(u64s(&h.arr[1]));
+  for (auto& x : m["same_code"].arr) dc.same_code[u64(x.arr[0].as_int())] = u64(x.arr[1].as_int());
+  if (auto* e = m.get("orig_ends")) for (auto& x : e->arr) dc.orig_ends[u64(x.arr[0].as_int())] = u64(x.arr[1].as_int());
+  if (auto* p = m.get("padding")) for (auto& x : p->arr) dc.padding.emplace_back(u64(x.arr[0].as_int()), u64(x.arr[1].as_int()));
+  dc.local = u64s(m.get("local"));
+  dc.literals = u64s(m.get("literals"));
+  dc.starts = u64s(m.get("starts"));
+  dc.named = u64s(m.get("named"));
+  dc.annotated = u64s(m.get("annotated"));
+  std::sort(dc.starts.begin(), dc.starts.end());
+  dc.keys = keys;
+  dc.R = &R;
+  Comparer cmp(&O, &R, resolve, &vtables, name_of(names), &dc);
   if (auto* pb = m.get("pre_bound")) {
     u64 rb = u64(pb->arr[0].as_int()), ob = u64(pb->arr[1].as_int());
     cmp.bound.set(rb, ob);
     cmp.bound_o.set(ob, rb);
   }
-  cmp.end_of_previous = [starts, keys](u64 t) -> std::optional<u64> {
-    if (!std::binary_search(starts.begin(), starts.end(), t)) return std::nullopt;
-    for (auto it = starts.rbegin(); it != starts.rend(); ++it) {
-      u64 p = *it;
-      auto k = keys->find(p);
-      if (p < t && k != keys->end() && k->second.kind == Key::VA) return k->second.va + t - p;
-    }
-    return std::nullopt;
-  };
   u64 o0 = u64(c["ofn"].arr[0].as_int()), o1 = u64(c["ofn"].arr[1].as_int());
   u64 r0 = u64(c["rfn"].arr[0].as_int()), r1 = u64(c["rfn"].arr[1].as_int());
   auto oe = O.extent(o0), re = R.extent(r0);
@@ -582,11 +591,13 @@ Problems global_bytes() {
                                   {"GLOBAL", ow, "g_w", {}, "a.cpp", 3}, {"GLOBAL", ob, "g_gone", {}, "a.cpp", 4},
                                   {"FUNCTION", ob, "g_std", {}, "a.cpp", 5}};
   std::unordered_map<u64, u64> reb_to_orig{{ra, oa}, {rb, oa}, {rw, ow}};
+  struct Spans : ComparerContext {
+    u64 span(u64) const override { return 16; }
+  } spans;
   Comparer c(&O, &R, [&](u64 t) {
     auto it = reb_to_orig.find(t);
     return it != reb_to_orig.end() ? Key::of_va(it->second) : Key::named(Key::UNRESOLVED, "");
-  });
-  c.span = [](u64) { return u64(16); };
+  }, nullptr, nullptr, &spans);
   auto lookup = [&](const std::string& n) { auto it = names.find(n); return it == names.end() ? std::vector<u64>() : std::vector<u64>{it->second}; };
   std::vector<std::string> got;
   for (auto& g : check_globals(anns, lookup, reb_to_orig, c)) got.push_back(g.ann->name);
@@ -713,8 +724,12 @@ Problems failed_inference() {
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb, {{"GLOBAL", fo.X, "X", {}, "x.cpp", 1}, {"FUNCTION", fo.G, "G", {}, "g.cpp", 1}, {"FUNCTION", fo.F, "F", {}, "f.cpp", 1}});
   Image O = o.image(), R = r.image();
-  p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }));
-  p.cmp->infer = [&p](u64 a, u64 b) { return p.infer(a, b); };
+  struct InferOnly : ComparerContext {   // the pairing's inference, nothing else known
+    Pairing& p;
+    explicit InferOnly(Pairing& x) : p(x) {}
+    bool infer(u64 a, u64 b) override { return p.infer(a, b); }
+  } infer_only(p);
+  p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
   auto g = p.cmp->function(fo.G, fo.G + 6, fr.G, fr.G + 6);
   auto f = p.cmp->function(fo.F, fo.F + 8, fr.F, fr.F + 8);
   return g.empty() ? Problems{{"setup", "G should differ"}} : f;

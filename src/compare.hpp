@@ -78,11 +78,45 @@ using NamePairs = std::vector<std::pair<Bytes, Bytes>>;   // (original decorated
 i64 const_size(std::string_view name);
 i64 literal_size(const Image& img, u64 start, const Key& key);
 
+// What a comparison asks beyond the two images: where the rebuild's symbols lie, what the original's names and data
+// are, and what the pairing has decided. Pairing answers for a run; each default answers that nothing is known (no
+// symbols, no names, nothing inferred), and the tests answer what each case sets.
+class ComparerContext {
+ public:
+  virtual ~ComparerContext() = default;
+  // the rebuild's symbols
+  virtual bool symbol_start(u64 t) const { return false; }                     // a symbol starts at t
+  virtual std::optional<u64> containing(u64 t) const { return std::nullopt; }   // the symbol t is in
+  virtual u64 span(u64 t) const { return MAX_DATA_COMPARE; }                    // bytes from t to the next symbol
+  // (local static, offset) when t is in a local static; the symbols a local static's address has (ICF folding)
+  virtual std::optional<std::pair<u64, u64>> local_base(u64 t) const { return std::nullopt; }
+  virtual int folded_locals(u64 base) const { return 1; }
+  // the original addresses the names of a symbol of several names stand for
+  virtual std::vector<u64> alternates(u64 t) const { return {}; }
+  // the compiler constant or string literal t is in: (its start, its key)
+  virtual std::optional<std::pair<u64, Key>> literal_at(u64 t) const { return std::nullopt; }
+  // the original's objects and names
+  virtual u64 orig_object_end(u64 t) const { return t; }   // where the object at t ends (t: unknown)
+  virtual bool orig_padding(u64 t) const { return false; }   // t is alignment padding
+  virtual bool orig_named(u64 t) const { return false; }     // t has a name of its own
+  virtual std::vector<u64> orig_refs(u64 f) { return {}; }   // the addresses function f's code refers to, sorted
+  // the pairing
+  virtual bool annotated_between(u64 lo, u64 hi) const { return false; }   // an annotated original in (lo, hi]
+  // the original address one past the data object before t ends at, when t starts a symbol
+  virtual std::optional<u64> end_of_previous(u64 t) const { return std::nullopt; }
+  // the original functions a local static's owners pair with (nullopt: unknown)
+  virtual std::optional<std::vector<u64>> static_home(u64 base) const { return std::nullopt; }
+  virtual bool infer(u64 o_t, u64 r_t) { return false; }   // r_t stands for o_t, when its code compares equal
+  // decoded functions kept for the run (nullptr: the Comparer decodes)
+  virtual std::shared_ptr<const Code> orig_code(u64 start, u64 end) { return nullptr; }
+  virtual std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end) { return nullptr; }
+};
+
 class Comparer {
  public:
-  // vtables (if given) outlive the Comparer
+  // vtables (if given) and ctx (if given; else nothing is known) outlive the Comparer
   Comparer(const Image* O, const Image* R, std::function<Key(u64)> resolve,
-           const std::map<u64, std::vector<u64>>* vtables = nullptr, NameOf names = nullptr);
+           const std::map<u64, std::vector<u64>>* vtables = nullptr, NameOf names = nullptr, ComparerContext* ctx = nullptr);
 
   const Image *O, *R;
   std::function<Key(u64)> resolve;
@@ -101,24 +135,11 @@ class Comparer {
   JMap<std::string, std::string> hash_r{&journal}, hash_o{&journal};
   JMap<u64, u64> vt_r{&journal}, vt_o{&journal};
 
-  // hooks
-  std::function<std::vector<u64>(u64)> alternates = [](u64) { return std::vector<u64>(); };
-  std::function<std::optional<std::pair<u64, u64>>(u64)> local_base = [](u64) { return std::nullopt; };
-  std::function<std::optional<std::vector<u64>>(u64)> static_home = [](u64) { return std::nullopt; };
-  std::function<u64(u64)> orig_object_end = [](u64 t) { return t; };
-  std::function<bool(u64)> orig_padding = [](u64) { return false; };
-  std::function<bool(u64, u64)> annotated_between = [](u64, u64) { return false; };
-  std::function<std::vector<u64>(u64)> orig_refs = [](u64) { return std::vector<u64>(); };
-  std::function<int(u64)> folded_locals = [](u64) { return 1; };
-  std::function<std::optional<u64>(u64)> containing = [](u64) { return std::nullopt; };
-  std::function<std::optional<u64>(u64)> end_of_previous = [](u64) { return std::nullopt; };
-  std::function<bool(u64)> orig_named = [](u64) { return false; };
-  std::function<std::optional<std::pair<u64, Key>>(u64)> literal_at = [](u64) { return std::nullopt; };
-  std::function<std::shared_ptr<const Code>(u64, u64)> orig_code;
-  std::function<std::shared_ptr<const Code>(u64, u64)> rebuilt_code;
-  std::function<bool(u64, u64)> infer = [](u64, u64) { return false; };
-  std::function<bool(u64)> symbol_start = [](u64) { return false; };
-  std::function<u64(u64)> span = [](u64) { return MAX_DATA_COMPARE; };
+  ComparerContext* ctx;   // what is known beyond the two images (never null)
+
+  // a function's decoded code: the context's (kept for the run), else decoded here
+  std::shared_ptr<const Code> orig_code(u64 start, u64 end);
+  std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end);
 
   Problems function(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth = 0);
   std::optional<Problem> ref(u64 o_t, u64 r_t, int access);

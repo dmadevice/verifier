@@ -15,7 +15,7 @@
 
 namespace verifier {
 
-class Pairing {
+class Pairing : public ComparerContext {
  public:
   Pairing(const Original& orig, const Rebuilt& reb, const std::vector<Annotation>& anns);
   // the same name pairing as `base`, without its comparer or anything learnt while comparing (mutation probes)
@@ -44,13 +44,26 @@ class Pairing {
   void release_code(u64 ostart, u64 oend, u64 rstart, u64 rend);
   Key resolve_symbol(u64 t) const;
   Key resolve(u64 t) const;
-  bool annotated_between(u64 lo, u64 hi) const;
-  std::optional<u64> end_of_previous(u64 t) const;
-  std::vector<u64> alternates(u64 t) const;
-  std::optional<std::pair<u64, Key>> literal_at(u64 t) const;
-  bool infer(u64 o_t, u64 r_t);
-  std::optional<std::vector<u64>> static_home(u64 base) const;
-  std::vector<u64> orig_refs(u64 f);
+  // what the comparer asks (ComparerContext), answered from the two sides' tables and the pairing
+  bool annotated_between(u64 lo, u64 hi) const override;
+  std::optional<u64> end_of_previous(u64 t) const override;
+  std::vector<u64> alternates(u64 t) const override;
+  std::optional<std::pair<u64, Key>> literal_at(u64 t) const override;
+  bool infer(u64 o_t, u64 r_t) override;
+  std::optional<std::vector<u64>> static_home(u64 base) const override;
+  std::vector<u64> orig_refs(u64 f) override;
+  bool symbol_start(u64 t) const override { return reb.symbols.contains(t); }
+  std::optional<u64> containing(u64 t) const override { return reb.containing(t); }
+  u64 span(u64 t) const override { return reb.span(t); }
+  std::optional<std::pair<u64, u64>> local_base(u64 t) const override { return reb.local_base(t); }
+  int folded_locals(u64 base) const override { return int(reb.symbols.names(base).size()); }
+  u64 orig_object_end(u64 t) const override { return orig.object_end(t); }
+  bool orig_padding(u64 t) const override { return orig.in_padding(t); }
+  bool orig_named(u64 t) const override;
+  std::shared_ptr<const Code> orig_code(u64 start, u64 end) override { return orig_cache_ ? orig_cache_->code(start, end) : nullptr; }
+  std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end) override {
+    return rebuilt_cache_ ? rebuilt_cache_->code(start, end) : nullptr;
+  }
 
   // local static votes: {static: {original start (nullopt: one that cannot be): furthest offset referenced}}
   std::vector<std::pair<u64, u64>> voting_pairs() const;

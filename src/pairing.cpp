@@ -116,37 +116,22 @@ void Pairing::use(std::unique_ptr<Comparer> c) {
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc, const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn) {
   use(std::make_unique<Comparer>(&orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables,
-                                   [this](u64 va) { return orig.ida_name(va); }));
+                                   [this](u64 va) { return orig.ida_name(va); }, this));
   Comparer& c = *cmp;
   orig_cache_ = &oc;
   rebuilt_cache_ = &rc;
-  c.orig_code = [&oc](u64 s, u64 e) { return oc.code(s, e); };
-  c.rebuilt_code = [&rc](u64 s, u64 e) { return rc.code(s, e); };
-  c.infer = [this](u64 o, u64 r) { return infer(o, r); };
-  c.alternates = [this](u64 t) { return alternates(t); };
-  c.literal_at = [this](u64 t) { return literal_at(t); };
-  c.local_base = [this](u64 t) { return reb.local_base(t); };
-  c.span = [this](u64 t) { return reb.span(t); };
-  c.static_home = [this](u64 b) { return static_home(b); };
-  c.orig_refs = [this](u64 f) { return orig_refs(f); };
-  c.orig_object_end = [this](u64 t) { return orig.object_end(t); };
-  c.orig_padding = [this](u64 t) { return orig.in_padding(t); };
-  c.containing = [this](u64 t) { return reb.containing(t); };
-  c.end_of_previous = [this](u64 t) { return end_of_previous(t); };
-  c.annotated_between = [this](u64 lo, u64 hi) { return annotated_between(lo, hi); };
   for (auto& [n, ea] : orig.by_name) named_.push_back(ea);
   for (auto& [n, ea] : vftables_) named_.push_back(ea);
   for (auto& [r, o] : reb_to_orig) named_.push_back(o);
   for (auto& [v, s] : orig.vtables) named_.push_back(v);
   std::sort(named_.begin(), named_.end());
   named_.erase(std::unique(named_.begin(), named_.end()), named_.end());
-  c.orig_named = [this](u64 t) { return std::binary_search(named_.begin(), named_.end(), t) || orig.named_data(t); };
-  c.folded_locals = [this](u64 base) {
-    return int(reb.symbols.names(base).size());
-  };
-  c.symbol_start = [this](u64 t) { return reb.symbols.contains(t); };
   prebind_locals(votes_fn);
   return c;
+}
+
+bool Pairing::orig_named(u64 t) const {
+  return std::binary_search(named_.begin(), named_.end(), t) || orig.named_data(t);
 }
 
 void Pairing::release_code(u64 ostart, u64 oend, u64 rstart, u64 rend) {

@@ -74,6 +74,11 @@ void split_hashes(const Bytes& s, std::vector<Bytes>& pieces, std::vector<Bytes>
   pieces.push_back(s.substr(last));
 }
 
+ComparerContext& nothing_known() {
+  static ComparerContext none;
+  return none;
+}
+
 const std::map<u64, std::vector<u64>>& no_vtables() {
   static const std::map<u64, std::vector<u64>> none;
   return none;
@@ -89,11 +94,18 @@ void mask(Bytes& buf, i64 lo, i64 hi) {
 }  // namespace
 
 Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res, const std::map<u64, std::vector<u64>>* vt,
-                   NameOf nm)
+                   NameOf nm, ComparerContext* context)
     : O(o), R(r), resolve(std::move(res)), vtables(vt ? *vt : no_vtables()),
-      names(nm ? std::move(nm) : NameOf([](u64) { return std::string_view(); })) {
-  orig_code = [this](u64 s, u64 e) { return std::make_shared<const Code>(*O, s, e); };
-  rebuilt_code = [this](u64 s, u64 e) { return std::make_shared<const Code>(*R, s, e); };
+      names(nm ? std::move(nm) : NameOf([](u64) { return std::string_view(); })), ctx(context ? context : &nothing_known()) {}
+
+std::shared_ptr<const Code> Comparer::orig_code(u64 start, u64 end) {
+  auto c = ctx->orig_code(start, end);
+  return c ? c : std::make_shared<const Code>(*O, start, end);
+}
+
+std::shared_ptr<const Code> Comparer::rebuilt_code(u64 start, u64 end) {
+  auto c = ctx->rebuilt_code(start, end);
+  return c ? c : std::make_shared<const Code>(*R, start, end);
 }
 
 bool Comparer::same_names(const NamePairs& names) {
@@ -151,16 +163,16 @@ bool Comparer::same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b) {
 }
 
 std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
-  auto at = local_base(r_t);
+  auto at = ctx->local_base(r_t);
   if (!at || O->executable(o_t)) return std::nullopt;
   auto [base, off] = *at;
   u64 o_base = o_t - off;
   if (!bound.contains(base) && !bound_o.contains(o_base)) {
-    if (orig_padding(o_base) || !static_fits(o_base, base) || static_overlaps(o_base, o_t, base)) return std::nullopt;
-    auto homes = static_home(base);
+    if (ctx->orig_padding(o_base) || !static_fits(o_base, base) || static_overlaps(o_base, o_t, base)) return std::nullopt;
+    auto homes = ctx->static_home(base);
     if (homes) {
       bool any = false;
-      for (u64 f : *homes) if (refers_to(f, o_base, std::max<u64>(span(base), 1))) { any = true; break; }
+      for (u64 f : *homes) if (refers_to(f, o_base, std::max<u64>(ctx->span(base), 1))) { any = true; break; }
       if (!any) return std::nullopt;
     }
     bound.set(base, o_base);
@@ -168,8 +180,8 @@ std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
   } else if (bound.contains(base) && !bound_o.contains(o_base) && !O->writable(o_base) && !R->writable(base)) {
     int same = 0;
     for (auto& [ob, rb] : bound_o.items()) same += rb == base;
-    if (same < folded_locals(base)) {
-      Bytes rb = Bytes(R->bytes(base, i64(span(base))));
+    if (same < ctx->folded_locals(base)) {
+      Bytes rb = Bytes(R->bytes(base, i64(ctx->span(base))));
       i64 n = i64(rstrip_char(rb, '\0').size());
       if (!n) n = 1;
       if (O->bytes(o_base, n) == O->bytes(*bound.find(base), n) && O->bytes(*bound.find(base), n) == R->bytes(base, n))
@@ -183,7 +195,7 @@ std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
 
 bool Comparer::static_fits(u64 o_base, u64 base) {
   if (!O->flags(o_base)) return true;
-  i64 n = i64(rstrip_char(R->bytes(base, i64(span(base))), '\0').size());
+  i64 n = i64(rstrip_char(R->bytes(base, i64(ctx->span(base))), '\0').size());
   Bytes a(O->bytes(o_base, n)), b(R->bytes(base, n));
   size_t lo = R->reloc_lower_bound(base), hi = R->reloc_lower_bound(base + u64(n));
   for (size_t k = lo; k < hi; ++k) {
@@ -197,25 +209,25 @@ bool Comparer::static_fits(u64 o_base, u64 base) {
 }
 
 bool Comparer::static_overlaps(u64 o_base, u64 o_t, u64 base) {
-  if (annotated_between(o_base, o_t)) return true;
+  if (ctx->annotated_between(o_base, o_t)) return true;
   for (auto& [ob, rb] : bound_o.items()) if (rb != base && o_base < ob && ob <= o_t) return true;
   return false;
 }
 
 bool Comparer::refers_to(u64 f, u64 lo, u64 n) {
-  auto refs = orig_refs(f);
+  auto refs = ctx->orig_refs(f);
   auto it = std::lower_bound(refs.begin(), refs.end(), lo);
   return it != refs.end() && *it < lo + n;
 }
 
 bool Comparer::is_alternate(u64 o_t, u64 r_t) {
-  auto alts = alternates(r_t);
+  auto alts = ctx->alternates(r_t);
   return std::find(alts.begin(), alts.end(), o_t) != alts.end();
 }
 
 bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
   if (auto p = vt_r.find(r_vt); p && *p == o_vt) return true;
-  if (vt_r.contains(r_vt) || vt_o.contains(o_vt) || !vtables.count(o_vt) || !symbol_start(r_vt)) return false;
+  if (vt_r.contains(r_vt) || vt_o.contains(o_vt) || !vtables.count(o_vt) || !ctx->symbol_start(r_vt)) return false;
   return journal.speculate([&] {
     vt_r.set(r_vt, o_vt);
     vt_o.set(o_vt, r_vt);
@@ -235,21 +247,21 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
   }
   Key key = resolve(r_t);
   if (!key.is_va(o_t) && is_alternate(o_t, r_t)) key = Key::of_va(o_t);
-  if (key.kind == Key::UNRESOLVED || (!key.is_va(o_t) && local_base(r_t).has_value())) {
+  if (key.kind == Key::UNRESOLVED || (!key.is_va(o_t) && ctx->local_base(r_t).has_value())) {
     if (auto b = bind_local(o_t, r_t)) key = *b;
   }
-  if (key.kind == Key::UNRESOLVED && O->executable(o_t) && infer(o_t, r_t)) key = Key::of_va(o_t);
+  if (key.kind == Key::UNRESOLVED && O->executable(o_t) && ctx->infer(o_t, r_t)) key = Key::of_va(o_t);
   if (key.kind == Key::UNRESOLVED && vtables.count(o_t) && infer_vtable(o_t, r_t)) key = Key::of_va(o_t);
   u64 o_at = o_t, r_at = r_t;
   std::optional<std::pair<u64, Key>> lit;
-  if (key.kind == Key::UNRESOLVED) lit = literal_at(r_t);
+  if (key.kind == Key::UNRESOLVED) lit = ctx->literal_at(r_t);
   if (lit) {
     r_at = lit->first;
     key = lit->second;
     o_at = o_t - (r_t - r_at);
   }
   if (key.kind == Key::UNRESOLVED && !O->executable(o_t) && !O->writable(o_t)) {
-    auto base = containing(r_t);
+    auto base = ctx->containing(r_t);
     if (base && infer_data(o_t - (r_t - *base), *base)) key = Key::of_va(o_t);
   }
   if (key.kind == Key::CONST) {
@@ -273,15 +285,15 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
   }
   if (key.kind == Key::TI && o_at == o_t && r_at == r_t) return throw_info_cmp(o_t, r_t, key.name);
   if (key.kind == Key::VBT && o_at == o_t && r_at == r_t) {
-    u64 n = span(r_t);
+    u64 n = ctx->span(r_t);
     size_t i = R->reloc_lower_bound(r_t);
     if (i < R->reloc_sorted.size() && R->reloc_sorted[i] < r_t + n) n = R->reloc_sorted[i] - r_t;
     if (O->bytes(o_t, i64(n)) == R->bytes(r_t, i64(n))) return std::nullopt;
     return Problem{"data", "vbtable " + std::string(key.name.substr(0, 40)) + " differs from " + hex(o_t)};
   }
   if (!key.is_va(o_t)) {
-    if (!access && !O->executable(o_t) && !orig_named(o_t)) {
-      auto e = end_of_previous(r_t);
+    if (!access && !O->executable(o_t) && !ctx->orig_named(o_t)) {
+      auto e = ctx->end_of_previous(r_t);
       if (e && *e == o_t) return std::nullopt;   // one past the end of the data object before (a loop bound)
     }
     return Problem{"reference", hex(o_t) + " vs " + (key.kind == Key::UNRESOLVED ? std::string(key.name) : hex(key.va))};
@@ -329,13 +341,13 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
   auto k = std::make_pair(o_t, r_t);
   if (auto m = memo_ro.find(k)) return *m;
   memo_ro.set(k, std::nullopt);   // tables that point at each other count as consistent
-  u64 n = span(r_t);
+  u64 n = ctx->span(r_t);
   Bytes all(R->bytes(r_t, i64(n)));
   i64 want = i64(rstrip_char(all, '\0').size());
   size_t lo = R->reloc_lower_bound(r_t), hi = R->reloc_lower_bound(r_t + n);
   std::vector<i64> ptrs;
   for (size_t i = lo; i < hi; ++i) ptrs.push_back(i64(R->reloc_sorted[i] - r_t));
-  i64 size = std::max<i64>(want, std::min<i64>(i64(n), i64(orig_object_end(o_t)) - i64(o_t)));
+  i64 size = std::max<i64>(want, std::min<i64>(i64(n), i64(ctx->orig_object_end(o_t)) - i64(o_t)));
   for (i64 off : ptrs) if (off < want) size = std::max(size, off + 8);
   std::vector<i64> kept;
   for (i64 off : ptrs) if (off < size) kept.push_back(off);
@@ -369,9 +381,9 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
 bool Comparer::infer_data(u64 o_t, u64 r_t) {
   if (auto p = data_r.find(r_t); p && *p == o_t) return true;
   if (data_r.contains(r_t) || data_o.contains(o_t) || resolve(r_t).kind != Key::UNRESOLVED) return false;
-  if (!symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t)) return false;
+  if (!ctx->symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t)) return false;
   if (!O->flags(o_t)) return false;
-  auto rb = R->bytes(r_t, i64(span(r_t)));
+  auto rb = R->bytes(r_t, i64(ctx->span(r_t)));
   if (rb.find_first_not_of('\0') == std::string_view::npos) return false;   // zero-filled (strip(b"\0") is empty)
   return journal.speculate([&] {
     data_r.set(r_t, o_t);
@@ -405,7 +417,7 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
     u64 r_s = R->u64_at(r_vt + 8 * i);
     Key got = resolve(r_s);
     if (got.is_va(s) || is_alternate(s, r_s)) continue;
-    if (got.kind == Key::UNRESOLVED && O->executable(s) && infer(s, r_s)) continue;
+    if (got.kind == Key::UNRESOLVED && O->executable(s) && ctx->infer(s, r_s)) continue;
     res = Problem{"vtable", "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " +
                                 got.text()};
     break;
