@@ -12,6 +12,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -1329,6 +1330,43 @@ Problems sha256_paths() {
 
 // the stamp key: the same for the same metadata, another when a file's time or size or the configuration's contents
 // change, and none while an input is younger than two seconds
+Problems json_escaping() {
+  // put_quoted against the plain definition: each character as it is but control characters, '"' and '\\'
+  auto plain = [](std::string_view s) {
+    std::string o = "\"";
+    for (unsigned char c : s) {
+      if (c == '"')
+        o += "\\\"";
+      else if (c == '\\')
+        o += "\\\\";
+      else if (c == '\n')
+        o += "\\n";
+      else if (c == '\r')
+        o += "\\r";
+      else if (c == '\t')
+        o += "\\t";
+      else if (c < 0x20) {
+        char b[8];
+        std::snprintf(b, sizeof b, "\\u%04x", c);
+        o += b;
+      } else
+        o += char(c);
+    }
+    return o + "\"";
+  };
+  std::mt19937_64 g(5);
+  const char pool[] = {'a',    'Z',    ' ',    '~',    '"',    '\\',   '\n',   '\r',   '\t',
+                       '\x01', '\x1f', '\x20', '\x7f', '\x80', '\xc3', '\xa9', '\xff', '\0'};
+  for (int n = 0; n < 20000; ++n) {
+    std::string s(size_t(g() % 41), 'x');
+    for (auto& c : s) c = g() % 3 ? 'a' + char(g() % 26) : pool[g() % sizeof pool];
+    std::string got;
+    json::put_quoted(got, s);
+    if (got != plain(s)) return {{"json", "escaping " + hex_bytes(s)}};
+  }
+  return {};
+}
+
 Problems content_hashes() {
   Problems bad;
   // XXH64's published values (the 39-byte input runs through the 32-byte stripes)
@@ -1938,6 +1976,7 @@ int main(int argc, char** argv) {
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
       {"unit: content hash", nullptr, content_hashes},
+      {"unit: JSON string escaping", nullptr, json_escaping},
       {"unit: code store", nullptr, code_store_case},
       {"unit: diff store", nullptr, diff_store_case},
       {"unit: sources cache", nullptr, source_cache_case},

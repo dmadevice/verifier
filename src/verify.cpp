@@ -566,7 +566,14 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
   std::stable_sort(order.begin(), order.end(), [](auto* x, auto* y) { return x->va < y->va; });
   Evaluated ev;
   ev.results.reserve(order.size());
-  if (s.a.json) ev.report = "{\n  \"results\": ";
+  if (s.a.json) {
+    // room for the report at once (megabytes, else grown by doubling and copied each time): the last run's report is
+    // about its size
+    std::error_code ec;
+    u64 last = std::filesystem::file_size(*s.a.json, ec);
+    if (!ec) ev.report.reserve(last + last / 8);
+    ev.report = "{\n  \"results\": ";
+  }
   for (auto* ann : order) {
     ev.results.push_back(
         evaluate(*ann, orig, reb, pairing, cmp, s.p.root, show && *show == ann->va, out, true, &diffs));

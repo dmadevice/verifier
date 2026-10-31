@@ -1,5 +1,7 @@
 #include "json.hpp"
 
+#include <cstring>
+
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -244,10 +246,28 @@ inline void newline(std::string& out, int level) {  // a line break and `level`'
 }  // namespace
 
 // a JSON string literal: UTF-8 is written as is, control characters escaped
+namespace {
+
+// whether one of the 8 bytes at p is below 0x20, '"' or '\\' (exact for "none"; a word with one is looked at byte by
+// byte)
+bool needs_escape(const char* p) {
+  constexpr u64 ONES = 0x0101010101010101ull, HIGH = 0x8080808080808080ull;
+  u64 x;
+  std::memcpy(&x, p, 8);
+  auto zero_byte = [](u64 v) { return (v - ONES) & ~v & HIGH; };
+  u64 below_space = (x - 0x20 * ONES) & ~x & HIGH;  // a byte below 0x20 (bytes from 0x80 are never flagged)
+  return below_space | zero_byte(x ^ ('"' * ONES)) | zero_byte(x ^ ('\\' * ONES));
+}
+
+}  // namespace
+
 void put_quoted(std::string& out, std::string_view s) {
   out += '"';
   size_t run = 0;  // the start of the characters not yet written that need no escape
   for (size_t i = 0; i < s.size(); ++i) {
+    // eight bytes at a time while none is a control character, '"' or '\\' (most strings have none at all)
+    while (i + 8 <= s.size() && !needs_escape(s.data() + i)) i += 8;
+    if (i == s.size()) break;
     unsigned char c = static_cast<unsigned char>(s[i]);
     if (c >= 0x20 && c != '"' && c != '\\') continue;
     out.append(s.data() + run, i - run);
