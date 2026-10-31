@@ -232,7 +232,7 @@ void NameCache::save() {
     if (fresh) strs.push_back(s);
     return it->second;
   };
-  // the ids, in the order the text keeps them
+  // the strings numbered in the order the text keeps them: this build's, then its undecorated names, then the rest
   std::vector<NameIds> infos;
   infos.reserve(names.size());
   for (auto& n : names) infos.push_back(*find(n));

@@ -7,7 +7,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "pe.hpp"
@@ -113,7 +112,7 @@ inline bool is_address(FieldKind k) { return k == F_RIP || k == F_IMG || k == F_
 struct Field {
   i64 value;             // target VA (function-relative table offset for F_TBL)
   u16 access;            // the memory operand's size (0: not one)
-  u8 off : 4, size : 4;  // in the instruction (at most 15 bytes); at most 8 bytes
+  u8 off : 4, size : 4;  // where in the instruction (at most 15 bytes long), and how many bytes (at most 8)
   FieldKind kind;
   bool operator<(const Field& o) const;
 };

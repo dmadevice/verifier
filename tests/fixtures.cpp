@@ -1484,7 +1484,8 @@ Problems code_store_case() {
     Code fresh(img, si.f, si.f_end);
     if (fresh.field_list.size() < 4 || fresh.tables.empty())
       bad.push_back({"code store", "the test function lacks a field kind"});
-    if (fresh.field_list.size() % 2 == 0)  // its fields end off 8 bytes: the entries after it must still be read
+    if (fresh.field_list.size() % 2 ==
+        0)  // its fields end between 8-byte boundaries: the entries after it must still be read
       bad.push_back({"code store", "the test function has an even number of fields"});
   }
   {

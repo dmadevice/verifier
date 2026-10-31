@@ -162,16 +162,16 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 39 cases in code: pairing (inference taken back when it fails, local
+exact problems it must report, and 40 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key and
-record, hashing, the stamp key, file reading, line splitting, the name table, and the cache directory's code,
+record, hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache directory's code,
 diff and sources stores. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.21 seconds and 105 MB on one core with
-the cache directory warm (about 0.32 seconds when only the snapshot and the name cache are), and a replay of
-unchanged inputs about 10 ms.
+On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.21 seconds and 81 MB on one core with
+the cache directory warm (about 0.30 seconds and 91 MB when only the snapshot and the name cache are), and a
+replay of unchanged inputs about 10 ms.
 
 ## License
 
