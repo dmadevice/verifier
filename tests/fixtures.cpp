@@ -22,6 +22,7 @@
 #include "content_hash.hpp"
 #include "inputs.hpp"
 #include "json.hpp"
+#include "name_cache.hpp"
 #include "names.hpp"
 #include "pairing.hpp"
 #include "replay.hpp"

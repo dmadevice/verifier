@@ -21,7 +21,7 @@ FetchContent_MakeAvailable(fadec)
 
 set(CORE_SOURCES
   src/util.cpp src/json.cpp src/sha256.cpp src/pe.cpp src/x64.cpp src/names.cpp src/annotations.cpp
-  src/config.cpp src/inputs.cpp src/compare.cpp src/pairing.cpp src/report.cpp src/verify.cpp src/content_hash.cpp src/code_store.cpp src/diff_store.cpp src/cache_file.cpp src/source_cache.cpp src/args.cpp src/replay.cpp src/timing.cpp)
+  src/config.cpp src/inputs.cpp src/compare.cpp src/pairing.cpp src/report.cpp src/verify.cpp src/content_hash.cpp src/code_store.cpp src/diff_store.cpp src/cache_file.cpp src/source_cache.cpp src/args.cpp src/replay.cpp src/timing.cpp src/undname.cpp src/name_cache.cpp)
 add_library(verifier_core STATIC ${CORE_SOURCES})
 target_include_directories(verifier_core PUBLIC src)
 target_link_libraries(verifier_core PUBLIC fadec)

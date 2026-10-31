@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "config.hpp"
+#include "name_cache.hpp"
 #include "names.hpp"
 #include "pe.hpp"
 #include "sha256.hpp"
