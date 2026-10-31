@@ -116,7 +116,7 @@ DiffStore::Entry DiffStore::get(const std::vector<u32>& o_off, const std::vector
   std::pair<u64, u64> k = h.done();
   if (auto u = used_.find(k); u != used_.end()) {
     Entry e;
-    if (read_entry(u->second, e)) return e;
+    if (read_entry(u->second.blob(), e)) return e;
   }
   const Index* it = std::lower_bound(index_, index_ + nindex_, k, [](const Index& x, const std::pair<u64, u64>& y) {
     return std::make_pair(x.k0, x.k1) < y;
@@ -126,13 +126,13 @@ DiffStore::Entry DiffStore::get(const std::vector<u32>& o_off, const std::vector
     std::string_view b = blobs_.substr(it->offset, it->size);
     if (read_entry(b, e)) {
       ++stats_.hits;
-      used_.emplace(k, std::string(b));
+      used_.emplace(k, Used{std::string(), b});
       return e;
     }
   }
   ++stats_.misses;
   Entry e = make();
-  used_.emplace(k, entry_blob(e));
+  used_.emplace(k, Used{entry_blob(e), std::string_view()});
   return e;
 }
 
@@ -143,11 +143,11 @@ void DiffStore::save() {
   w.pad8();
   w.put(u64(used_.size()));
   u64 off = 0;
-  for (auto& [k, b] : used_) {
-    w.put(Index{k.first, k.second, off, b.size()});
-    off += b.size();
+  for (auto& [k, u] : used_) {
+    w.put(Index{k.first, k.second, off, u.blob().size()});
+    off += u.blob().size();
   }
-  for (auto& [k, b] : used_) w.out += b;
+  for (auto& [k, u] : used_) w.out += u.blob();  // the file's entries copied before its mapping is released
   index_ = nullptr;
   nindex_ = 0;
   file_.reset();  // the mapping released before the file is replaced

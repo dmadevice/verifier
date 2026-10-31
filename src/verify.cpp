@@ -580,7 +580,7 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
     if (!s.a.json) continue;
     ev.report += ev.results.size() == 1 ? "[\n    " : ",\n    ";
     write_result(ev.report, ev.results.back(), 2);
-    ev.results.back().diff = {};
+    std::vector<std::string>().swap(ev.results.back().diff);  // written: its lines and their array freed
   }
   if (s.a.json) ev.report += ev.results.empty() ? "[]" : "\n  ]";
   return ev;
@@ -638,14 +638,18 @@ int run(int argc, char** argv) {
   s.ph.mark("original");
 
   // each source file's annotations kept between runs (with a cache directory): unchanged files are not read again
+  // (the cache is freed once the annotations are read)
   std::vector<Ignored> ignored;
-  SourceCache sources(s.build_cache("sources-cache.bin"), "verifier " + s.self_hash() + " module " + p.module,
-                      s.start());
-  auto anns = parse_annotations(a.src, p.module, &ignored, nullptr, &sources, s.hashed());
-  sources.save();
-  if (std::getenv("VERIFIER_TIMING"))
-    std::fprintf(stderr, "source files from the sources cache: %zu (read %zu)\n", sources.stats().hits,
-                 sources.stats().misses);
+  std::vector<Annotation> anns;
+  {
+    SourceCache sources(s.build_cache("sources-cache.bin"), "verifier " + s.self_hash() + " module " + p.module,
+                        s.start());
+    anns = parse_annotations(a.src, p.module, &ignored, nullptr, &sources, s.hashed());
+    sources.save();
+    if (std::getenv("VERIFIER_TIMING"))
+      std::fprintf(stderr, "source files from the sources cache: %zu (read %zu)\n", sources.stats().hits,
+                   sources.stats().misses);
+  }
   check_duplicates(anns);
   s.ph.mark("annotations");
 

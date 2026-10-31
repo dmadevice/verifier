@@ -38,7 +38,14 @@ class DiffStore {
   const Index* index_ = nullptr;
   size_t nindex_ = 0;
   std::string_view blobs_;
-  std::map<std::pair<u64, u64>, std::string> used_;  // this run's entries, as written
+  // this run's entries: one made here, or a view of the file's (no copy: one is made only when the file is rewritten,
+  // before its mapping is released)
+  struct Used {
+    std::string made;
+    std::string_view in_file;
+    std::string_view blob() const { return made.empty() ? in_file : std::string_view(made); }
+  };
+  std::map<std::pair<u64, u64>, Used> used_;
   Stats stats_;
   void load();
 };
