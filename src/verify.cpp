@@ -710,6 +710,7 @@ int run(int argc, char** argv) {
   rc = (a.check || a.update) ? rc : 0;
   std::fflush(stdout);
   s.save_record(out, ev.report, rc);
+  s.ph.mark("replay record");
   // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
   std::fflush(nullptr);
   std::_Exit(rc);
