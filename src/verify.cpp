@@ -107,7 +107,7 @@ bool same_tokens(const Code& oc, const Code& rc, u64 ova, u64 oend, u64 rva, u64
 }  // namespace
 
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                const std::string& root, bool show, Out& out, bool want_diff) {
+                const std::string& root, bool show, Out& out, bool want_diff, DiffStore* diffs) {
   u64 ova = ann.va;
   Result rec;
   rec.va = ova;
@@ -162,7 +162,11 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     same = ot == rt;
   }
   rec.compared = true;
-  if (!probs.empty()) rec.category = same ? probs[0].first : classify(ot, rt);
+  auto offsets = [](const Code& c) { std::vector<u32> v; for (auto& l : c.insns) v.push_back(l.off); return v; };
+  // a DIFF's category and diff, kept between runs (a function of the tokens): read from the store when it has them
+  std::optional<DiffStore::Entry> kept;
+  if (diffs && !same && !probs.empty() && want_diff) kept = diffs->get(offsets(oc), offsets(rc), ot, rt, cmp.names);
+  if (!probs.empty()) rec.category = same ? probs[0].first : kept ? kept->category : classify(ot, rt);
   rec.osize = i64(oend - ova);
   rec.rsize = i64(rend - rva);
   rec.status = probs.empty() ? "MATCH" : "DIFF";
@@ -175,10 +179,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
       break;
     }
     rec.has_diff = true;
-    if (want_diff) {
-      auto offsets = [](const Code& c) { std::vector<u32> v; for (auto& l : c.insns) v.push_back(l.off); return v; };
-      rec.diff = insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
-    }
+    if (want_diff) rec.diff = kept ? std::move(kept->diff) : insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
   }
   if (show) {
     out.print("--- " + lk.qname + "  orig " + std::to_string(oend - ova) + "B | rebuilt " + std::to_string(rend - rva) + "B  " +
@@ -731,6 +732,9 @@ int run(int argc, char** argv) {
   CodeStore orig_store(p.cache_dir.empty() || decoder.empty() ? std::string() : path_join(p.cache_dir, "code-original.bin"),
                        orig.img, decoder, true);
   CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
+  // DIFFs' categories and diffs kept between runs: keyed by the verifier and the original's names (the snapshot's key)
+  DiffStore diff_store(p.cache_dir.empty() || decoder.empty() ? std::string() : path_join(p.cache_dir, "diff-cache.bin"),
+                       "verifier " + decoder + " names " + Original::snapshot_key(p));
   ph.mark("pairing");
   Comparer& cmp = pairing.comparer(orig_cache, rebuilt_cache);
   ph.mark("prebind votes");
@@ -746,7 +750,7 @@ int run(int argc, char** argv) {
   std::string report;
   if (a.json) report = "{\n  \"results\": ";
   for (auto* ann : order) {
-    results.push_back(evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out));
+    results.push_back(evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out, true, &diff_store));
     if (!a.json) continue;
     report += results.size() == 1 ? "[\n    " : ",\n    ";
     write_result(report, results.back(), 2);
@@ -763,8 +767,13 @@ int run(int argc, char** argv) {
     auto o = orig_store.stats();
     std::fprintf(stderr, "original functions from the code store: %zu (decoded %zu)\n", o.hits, o.misses);
   }
+  if (std::getenv("VERIFIER_TIMING")) {
+    auto d = diff_store.stats();
+    std::fprintf(stderr, "DIFF reports from the diff store: %zu (made %zu)\n", d.hits, d.misses);
+  }
   orig_store.save();
-  ph.mark("code store");
+  diff_store.save();
+  ph.mark("code and diff stores");
   for (auto& r : results) out.print(result_line(r, p.module));
   auto lookup = [&](const std::string& n) { return reb.lookup(n).vas; };
   for (auto& g : check_globals(anns, lookup, pairing.reb_to_orig, cmp))

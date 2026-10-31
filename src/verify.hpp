@@ -9,6 +9,7 @@
 
 #include "json.hpp"
 #include "pairing.hpp"
+#include "diff_store.hpp"
 #include "report.hpp"
 
 namespace verifier {
@@ -45,7 +46,7 @@ struct Result {
 void write_result(std::string& out, const Result& r, int level);   // as JSON, an object at `level`
 
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                const std::string& root, bool show, Out& out, bool want_diff = true);
+                const std::string& root, bool show, Out& out, bool want_diff = true, DiffStore* diffs = nullptr);
 std::string result_line(const Result& r, const std::string& module);
 
 // GLOBAL annotations on read-only data whose bytes are not the original's (warnings)
