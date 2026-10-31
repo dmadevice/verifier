@@ -101,7 +101,8 @@ With a `cache_dir`, runs keep there what the next run can use again:
 
 - `original-snapshot.bin`: the original laid out in memory, with the tables read from the disassembler exports
   and library attribution; used while every one of those files keeps its size and modification time (the
-  original is checked against `original_sha256` when the snapshot is made).
+  original is checked against `original_sha256` when the snapshot is made). While one of them changed within
+  two seconds of the run, they are read directly and the snapshot is left as it is.
 - `undname-cache.bin`: the undecorated names. A run that had to run undname saves them, this build's names
   first, then as many of other builds' names.
 - `code-original.bin`: the original's decoded functions, each used while its bytes and relocations are as kept.
@@ -126,9 +127,10 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs --json ou
 - `--matched FILE`: the regression list, functions that must keep matching. `--check` exits 1 when one no
   longer matches (or on `LIBCODE`); `--update` adds the new matches to it (and refuses while something
   regressed).
-- A run keeps its output, report and exit status beside the rebuilt binary (`verifier-last.txt`); the next
-  run with identical inputs (arguments, binaries, map, sources, configuration and every input file) replays
-  it instantly. `--update` and `--show` runs neither keep nor replay one. The inputs are compared by size and
+- A run keeps its output, exit status and its report's content hash beside the rebuilt binary
+  (`verifier-last.txt`); the next run with identical inputs (arguments, binaries, map, sources, configuration
+  and every input file) replays it instantly, as long as the `--json` file is still the report that run wrote
+  (otherwise it runs, and writes the report). `--update` and `--show` runs neither keep nor replay one. The inputs are compared by size and
   modification time first (the configuration by its contents), and by their contents when those differ or
   when an input changed within two seconds of the run.
 
@@ -165,9 +167,9 @@ diff and sources stores. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.23 seconds and 100 MB on one core with
-the cache directory warm (about 0.33 seconds when only the snapshot and the name cache are), and a replay of
-unchanged inputs about 15 ms.
+On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.21 seconds and 105 MB on one core with
+the cache directory warm (about 0.32 seconds when only the snapshot and the name cache are), and a replay of
+unchanged inputs about 10 ms.
 
 ## License
 
