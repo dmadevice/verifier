@@ -134,7 +134,16 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   const Code &oc = *ocp, &rc = *rcp;
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
-  bool same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
+  bool same;
+  if (probs.empty() && !show) {
+    // a match: the comparison accepted every address field, so no diff is shown; only the rebuilt side's names that
+    // resolve to nothing are reported (unaddressed instructions have none)
+    for (auto& b : rc.insns)
+      if (b.addressed) add_unresolved(symbolise_one(rc.insn(b), rva, rend, resolve, reb.img, true), unresolved);
+    same = true;
+  } else {
+    same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
+  }
   Toks ot, rt;   // only when the report shows instructions
   if (!same || show) {
     ot = symbolise(oc, by_va(), false);
