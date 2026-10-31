@@ -447,14 +447,15 @@ int run(int argc, char** argv) {
     };
     auto walk_key = [&] { return key = key_of(source_files(a)); };
     Last rec;
-    if (load_last(last, command, image_stamp, stamps_now, [&] { return hash_if_present(a.rebuilt); }, walk_key, rec)) {
+    // the record replays when its report is still the --json file (the record keeps the report's hash, not a copy)
+    if (load_last(last, command, image_stamp, stamps_now, [&] { return hash_if_present(a.rebuilt); }, walk_key, rec) &&
+        (a.json ? !rec.report_hash.empty() && content_hash_file_if_present(*a.json) == rec.report_hash : rec.report_hash.empty())) {
       std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
       std::fwrite(rec.out.data(), 1, rec.out.size(), stdout);
-      if (a.json) std::ofstream(*a.json, std::ios::binary) << rec.report;
       std::fflush(stdout);
       // the same contents under new stamps (a file rewritten as it was): the record takes them, for the next run
       if (!rec.by_stamps && !stamps_now().empty())
-        save_last(last, command, image_stamp, stamps, hash_if_present(a.rebuilt), key, rec.out, rec.report, rec.rc);
+        save_last(last, command, image_stamp, stamps, hash_if_present(a.rebuilt), key, rec.out, rec.report_hash, rec.rc);
       return rec.rc;
     }
   }
@@ -571,7 +572,7 @@ int run(int argc, char** argv) {
       key = key_of(sources);
     }
     save_last(last, command, image_stamp, stamp_key(a, p, exe, listing, start), hash_if_present(a.rebuilt), key,
-              out.text(), report, rc);
+              out.text(), a.json ? content_hash(report) : std::string(), rc);
   }
   // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
   std::fflush(nullptr);

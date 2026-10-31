@@ -1415,7 +1415,7 @@ Problems replay_record() {
   fs::path d = fs::temp_directory_path() / ("verifier-last-" + unique_suffix());
   fs::create_directories(d);
   std::string path = (d / "last.txt").string();
-  std::string stamps(300, 's'), out = "MATCH 0x1000\n", report = "{\n  \"results\": []\n}\n";
+  std::string stamps(300, 's'), out = "MATCH 0x1000\n", report = content_hash("{\n  \"results\": []\n}\n");
   auto never = [] { return std::string("not asked for"); };
   bool asked = false;
   auto is = [&](std::string v) { return [&asked, v] { asked = true; return v; }; };
@@ -1424,7 +1424,7 @@ Problems replay_record() {
   // the stamps as given: a run with the same ones replays by them, without hashing the image or the inputs
   if (!load_last(path, "command", "image stamp", [&] { return stamps; }, is("other"), is("other"), l) || !l.by_stamps || asked)
     bad.push_back({"replay", "the same stamps do not replay by themselves"});
-  if (l.out != out || l.report != report || l.rc != 1) bad.push_back({"replay", "the output, report or status differs"});
+  if (l.out != out || l.report_hash != report || l.rc != 1) bad.push_back({"replay", "the output, report hash or status differs"});
   // other stamps: the image's hash and the key decide
   asked = false;
   if (!load_last(path, "command", "image stamp", [] { return std::string("other stamps"); }, is("image hash"), is("key"), l) ||
@@ -1435,9 +1435,10 @@ Problems replay_record() {
   if (load_last(path, "another command", "image stamp", [&] { return stamps; }, never, never, l))
     bad.push_back({"replay", "another command replays"});
   // no stamps (an input changed within two seconds): only the contents decide
-  save_last(path, "command", "image stamp", "", "image hash", "key", out, report, 0);
+  save_last(path, "command", "image stamp", "", "image hash", "key", out, "", 0);
   if (!load_last(path, "command", "image stamp", [] { return std::string(); }, is("image hash"), is("key"), l) || l.by_stamps)
     bad.push_back({"replay", "a record without stamps does not replay by the contents"});
+  if (!l.report_hash.empty()) bad.push_back({"replay", "a run without a report recorded one"});
   fs::remove_all(d);
   return bad;
 }

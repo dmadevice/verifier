@@ -98,10 +98,10 @@ std::string command_key(const std::vector<std::string>& args, const Config& p) {
 }
 
 // the record: a version line, the command, the rebuilt image's stamp, all the inputs' stamps ("-" for none), the
-// rebuilt image's content hash, the key, the exit status, then stdout and the report, each after its length. Checked in
-// that order: another command does not replay; the stamps, from metadata alone (all of them only when the image's
-// agrees: after a link it does not); when they differ, the image's hash (a replay needs the same image), and only when
-// that agrees the key, which hashes every input.
+// rebuilt image's content hash, the key, the exit status, the report's content hash ("-" for none), then stdout after
+// its length. Checked in that order: another command does not replay; the stamps, from metadata alone (all of them
+// only when the image's agrees: after a link it does not); when they differ, the image's hash (a replay needs the same
+// image), and only when that agrees the key, which hashes every input.
 bool load_last(const std::string& path, const std::string& command, const std::string& image_stamp,
                const std::function<std::string()>& stamps, const std::function<std::string()>& image,
                const std::function<std::string()>& key, Last& last) {
@@ -118,7 +118,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
     return true;
   };
   std::string_view version, rec_command, rec_image_stamp, rec_stamps, rec_image, rec_key;
-  if (!line(version) || version != "verifier-last 7" || !line(rec_command) || rec_command != command ||
+  if (!line(version) || version != "verifier-last 8" || !line(rec_command) || rec_command != command ||
       !line(rec_image_stamp) || !line(rec_stamps) || !line(rec_image) || !line(rec_key))
     return false;
   last.by_stamps = rec_image_stamp == image_stamp && rec_stamps != "-" && rec_stamps == stamps();
@@ -129,29 +129,28 @@ bool load_last(const std::string& path, const std::string& command, const std::s
     v = std::strtoull(std::string(s).c_str(), nullptr, 10);
     return true;
   };
-  u64 r, no, nr;
-  if (!num(r) || !num(no) || p + no > d.size()) return false;
+  u64 r, no;
+  std::string_view report;
+  if (!num(r) || !line(report) || !num(no) || p + no != d.size()) return false;
   last.out = std::string(d.substr(p, no));
-  p += no;
-  if (!num(nr) || p + nr != d.size()) return false;
-  last.report = std::string(d.substr(p, nr));
+  last.report_hash = report == "-" ? std::string() : std::string(report);
   last.rc = int(r);
   return true;
 }
 
 void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
-               const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc) {
-  std::string rec;   // built in place: the output and the report are megabytes
-  rec.reserve(256 + command.size() + stamps.size() + out.size() + report.size());
-  for (std::string_view part : {std::string_view("verifier-last 7\n"), std::string_view(command), std::string_view("\n"),
+               const std::string& image, const std::string& key, const std::string& out, const std::string& report_hash,
+               int rc) {
+  std::string rec;   // built in place: the output is megabytes
+  rec.reserve(256 + command.size() + stamps.size() + out.size());
+  for (std::string_view part : {std::string_view("verifier-last 8\n"), std::string_view(command), std::string_view("\n"),
                                 std::string_view(image_stamp), std::string_view("\n"),
                                 stamps.empty() ? std::string_view("-") : std::string_view(stamps), std::string_view("\n"), std::string_view(image),
                                 std::string_view("\n"), std::string_view(key), std::string_view("\n")})
     rec += part;
-  rec += std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n";
+  rec += std::to_string(rc) + "\n" + (report_hash.empty() ? std::string("-") : report_hash) + "\n";
+  rec += std::to_string(out.size()) + "\n";
   rec += out;
-  rec += std::to_string(report.size()) + "\n";
-  rec += report;
   write_file_atomic(path, rec);
 }
 

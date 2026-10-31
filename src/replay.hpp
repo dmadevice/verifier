@@ -34,9 +34,10 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe);
 std::string stamp_key(const Args& a, const Config& p, const std::string& exe, const std::vector<ListedFile>& sources,
                       i64 recent);
 
-// The replay record beside the rebuilt image: what a run printed, its report and exit status, under the inputs it read.
+// The replay record beside the rebuilt image: what a run printed, its exit status and its report's content hash (the
+// report itself is the --json file it wrote), under the inputs it read.
 struct Last {
-  std::string out, report;
+  std::string out, report_hash;   // report_hash "" when the run wrote no report
   int rc = 0;
   bool by_stamps = false;   // replayed by the stamps (else by the contents: the record's stamps are stale)
 };
@@ -46,6 +47,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
                const std::function<std::string()>& stamps, const std::function<std::string()>& image,
                const std::function<std::string()>& key, Last& last);
 void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
-               const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc);
+               const std::string& image, const std::string& key, const std::string& out, const std::string& report_hash,
+               int rc);
 
 }  // namespace verifier
