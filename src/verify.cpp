@@ -708,13 +708,20 @@ int run(int argc, char** argv) {
   ph.mark("original");
   std::vector<Ignored> ignored;
   std::vector<ListedFile> listing;
-  std::function<void(const ListedFile&, std::string_view)> seen;
+  // each source file's annotations kept between runs (with a cache directory): unchanged files are not read again
+  std::string parser = exe.empty() ? "" : hash(exe);
+  SourceCache sources(p.cache_dir.empty() || parser.empty() ? std::string() : path_join(p.cache_dir, "sources-cache.bin"),
+                      "verifier " + parser + " module " + p.module, start);
+  std::function<void(const ListedFile&, const std::string&)> hashed;
   if (!last.empty())
-    seen = [&](const ListedFile& f, std::string_view data) {
+    hashed = [&](const ListedFile& f, const std::string& h) {
       listing.push_back(f);
-      if (key.empty()) hashes.emplace(f.path, content_hash(data));
+      if (key.empty()) hashes.emplace(f.path, h);
     };
-  auto anns = parse_annotations(a.src, p.module, &ignored, seen);
+  auto anns = parse_annotations(a.src, p.module, &ignored, nullptr, &sources, hashed);
+  sources.save();
+  if (std::getenv("VERIFIER_TIMING"))
+    std::fprintf(stderr, "source files from the sources cache: %zu (read %zu)\n", sources.stats().hits, sources.stats().misses);
   check_duplicates(anns);
   ph.mark("annotations");
   NameCache name_cache(p.names_cache(), "verifier names 1 " + sha256_of(p.undname), p.undname);
