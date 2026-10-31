@@ -60,6 +60,8 @@ std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
 }
 
 std::string norm_name(const std::string& in) {
+  // every rule below needs whitespace or `__ptr64` to apply: most names have neither, and are as they are
+  if (in.find_first_of(" \t\n\r\v\f") == std::string::npos && in.find("__ptr64") == std::string::npos) return in;
   // drop `__ptr64` (and the whitespace before it)
   std::string s;
   for (size_t i = 0; i < in.size();) {
