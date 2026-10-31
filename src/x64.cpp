@@ -44,12 +44,18 @@ u32 op_gpr(const FdInstr& fi, int k) {  // the GPR a register operand is part of
   }
 }
 
-// The GPRs an instruction writes, explicitly or implicitly. When unsure this says "written": a register wrongly
-// thought to still hold __ImageBase would turn an ordinary displacement into an address field.
-u32 written_gprs(const FdInstr& fi) {
-  u32 w = 0;
-  bool rep = FD_HAS_REP(&fi) || FD_HAS_REPNZ(&fi);
-  switch (FD_TYPE(&fi)) {
+// What an instruction's type says, worked out once per type: the GPRs it writes (a fixed set, its first or second
+// operand, rcx under a rep prefix, and imul's one-operand form's rax and rdx) and its branch group bits
+struct TypeInfo {
+  u32 fixed = 0;
+  bool op0 = false, op1 = false, rep_rcx = false, imul = false;
+  u8 group = 0;
+};
+
+TypeInfo type_info(int type) {
+  TypeInfo t;
+  u32& w = t.fixed;
+  switch (type) {
     // the first operand is only read
     case FDI_CMP:
     case FDI_TEST:
@@ -66,13 +72,13 @@ u32 written_gprs(const FdInstr& fi) {
     case FDI_CLFLUSHOPT:
       break;
     default:
-      w |= op_gpr(fi, 0);
+      t.op0 = true;
   }
-  switch (FD_TYPE(&fi)) {
+  switch (type) {
     case FDI_XCHG:
     case FDI_XADD:
     case FDI_MULX:
-      w |= op_gpr(fi, 1);
+      t.op1 = true;
       break;
     case FDI_CMPXCHG:
       w |= RAX;
@@ -86,7 +92,7 @@ u32 written_gprs(const FdInstr& fi) {
       w |= RAX | RDX;
       break;
     case FDI_IMUL:
-      if (FD_OP_TYPE(&fi, 1) == FD_OT_NONE) w |= RAX | RDX;
+      t.imul = true;
       break;
     case FDI_C_EX:
       w |= RAX;
@@ -127,18 +133,22 @@ u32 written_gprs(const FdInstr& fi) {
       break;
     case FDI_MOVS:
     case FDI_CMPS:
-      w |= RSI | RDI | (rep ? RCX : 0);
+      w |= RSI | RDI;
+      t.rep_rcx = true;
       break;
     case FDI_STOS:
     case FDI_SCAS:
     case FDI_INS:
-      w |= RDI | (rep ? RCX : 0);
+      w |= RDI;
+      t.rep_rcx = true;
       break;
     case FDI_LODS:
-      w |= RAX | RSI | (rep ? RCX : 0);
+      w |= RAX | RSI;
+      t.rep_rcx = true;
       break;
     case FDI_OUTS:
-      w |= RSI | (rep ? RCX : 0);
+      w |= RSI;
+      t.rep_rcx = true;
       break;
     case FDI_PUSH:
     case FDI_POP:
@@ -161,12 +171,9 @@ u32 written_gprs(const FdInstr& fi) {
     default:
       break;
   }
-  return w;
-}
 
-u8 branch_bits(const FdInstr& fi) {  // the Group bits
-  u8 g = 0;
-  switch (FD_TYPE(&fi)) {
+  u8& g = t.group;
+  switch (type) {
     case FDI_CALL:
     case FDI_CALLF:
       g |= GRP_CALL;
@@ -198,8 +205,39 @@ u8 branch_bits(const FdInstr& fi) {  // the Group bits
     default:
       break;
   }
-  if (FD_OP_TYPE(&fi, 0) == FD_OT_OFF) g |= GRP_BRANCH_RELATIVE;
-  return g;
+  return t;
+}
+
+constexpr int TYPE_LIMIT = [] {  // above every instruction type fadec has
+  int m = 0;
+#define FD_MNEMONIC(name, value) m = value > m ? value : m;
+#include <fadec-decode-public.inc>
+#undef FD_MNEMONIC
+  return m + 1;
+}();
+
+const TypeInfo& type_info(const FdInstr& fi) {
+  static const std::array<TypeInfo, TYPE_LIMIT> table = [] {
+    std::array<TypeInfo, TYPE_LIMIT> a;
+    for (int k = 0; k < TYPE_LIMIT; ++k) a[size_t(k)] = type_info(k);
+    return a;
+  }();
+  return table[FD_TYPE(&fi)];
+}
+
+// The GPRs an instruction writes, explicitly or implicitly. When unsure this says "written": a register wrongly
+// thought to still hold __ImageBase would turn an ordinary displacement into an address field.
+u32 written_gprs(const FdInstr& fi, const TypeInfo& t) {
+  u32 w = t.fixed;
+  if (t.op0) w |= op_gpr(fi, 0);
+  if (t.op1) w |= op_gpr(fi, 1);
+  if (t.rep_rcx && (FD_HAS_REP(&fi) || FD_HAS_REPNZ(&fi))) w |= RCX;
+  if (t.imul && FD_OP_TYPE(&fi, 1) == FD_OT_NONE) w |= RAX | RDX;
+  return w;
+}
+
+u8 branch_bits(const FdInstr& fi, const TypeInfo& t) {  // the Group bits
+  return u8(t.group | (FD_OP_TYPE(&fi, 0) == FD_OT_OFF ? GRP_BRANCH_RELATIVE : 0));
 }
 
 // Where an instruction's displacement and branch offset sit in its bytes: after the prefixes (legacy, REX,
@@ -384,8 +422,9 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
     nops = k + 1;
   }
   r.ops.truncate(nops);
-  r.gmask = branch_bits(fi);
-  r.wmask = u16(written_gprs(fi));
+  const TypeInfo& ti = type_info(fi);
+  r.gmask = branch_bits(fi, ti);
+  r.wmask = u16(written_gprs(fi, ti));
   Layout l = layout(p, size_t(len), has_mem, 1u << addrlg);
   r.disp_offset = l.disp_offset;
   r.disp_size = l.disp_size;
