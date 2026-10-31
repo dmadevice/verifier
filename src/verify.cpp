@@ -725,7 +725,12 @@ int run(int argc, char** argv) {
   for (auto& ann : anns)
     if (ann.flags.dtor) ann.name = pick_destructor(ann.name, slots.count(ann.va) != 0, has_code);
   Pairing pairing(orig, reb, anns);
-  CodeCache orig_cache(&orig.img), rebuilt_cache(&reb.img);
+  // the original's decoded functions kept between runs (with a cache directory): the original does not change, so they
+  // are all used again (the decoder, the verifier itself, is part of the key)
+  std::string decoder = exe.empty() ? "" : hash(exe);
+  CodeStore orig_store(p.cache_dir.empty() || decoder.empty() ? std::string() : path_join(p.cache_dir, "code-original.bin"),
+                       orig.img, decoder, true);
+  CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
   ph.mark("pairing");
   Comparer& cmp = pairing.comparer(orig_cache, rebuilt_cache);
   ph.mark("prebind votes");
@@ -754,6 +759,12 @@ int run(int argc, char** argv) {
     std::fprintf(stderr, "decoded: orig %zu functions %zu insns, rebuilt %zu functions %zu insns; sizeof(Insn) %zu\n",
                  o.functions, o.insns, r.functions, r.insns, sizeof(Insn));
   }
+  if (std::getenv("VERIFIER_TIMING")) {
+    auto o = orig_store.stats();
+    std::fprintf(stderr, "original functions from the code store: %zu (decoded %zu)\n", o.hits, o.misses);
+  }
+  orig_store.save();
+  ph.mark("code store");
   for (auto& r : results) out.print(result_line(r, p.module));
   auto lookup = [&](const std::string& n) { return reb.lookup(n).vas; };
   for (auto& g : check_globals(anns, lookup, pairing.reb_to_orig, cmp))

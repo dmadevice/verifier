@@ -56,6 +56,7 @@ class Mnem {
   explicit Mnem(std::string_view s) : e_(&intern(s)) {}
   Mnem(const char* s) : e_(&intern(s)) {}
   static Mnem from_id(u16 id);
+  static size_t count();   // the mnemonics interned so far (their ids are below it)
   u16 id() const { return e_->id; }
   const std::string& str() const { return e_->s; }
   operator const std::string&() const { return e_->s; }
@@ -144,6 +145,7 @@ bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::s
 // the same bytes outside the fields `f` (of the first)
 bool same_outside_fields(std::string_view a, std::string_view b, std::span<const Field> f);
 
+class CodeStore;
 class Code {
  public:
   Code(const Image& img, u64 start, u64 end);
@@ -167,6 +169,8 @@ class Code {
   std::vector<OutsideTable> outside_tables() const;
 
  private:
+  friend class CodeStore;             // makes a Code from what it kept of one
+  Code() = default;
   std::string_view decoded_from_;     // the bytes the instructions were decoded from (`code` before trimming)
   size_t reloc_at_ = 0;               // add_fields: the first relocation not before the instruction
   void add_fields(const Insn& ins, u32 image_base);

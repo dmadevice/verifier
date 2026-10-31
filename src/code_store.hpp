@@ -1,0 +1,45 @@
+// Decoded functions kept on disk between runs (the cache directory), one file per image: a function's decoded form
+// (Code) is a function of its bytes, the relocations in it, where it is, the image's sections and the decoder, so it
+// is used again when all of those are as they were. The file is keyed by the decoder (the verifier's own hash) and
+// the image's base and headers; each function by its range, checked against its bytes and relocations.
+#pragma once
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "x64.hpp"
+
+namespace verifier {
+
+class CodeStore {
+ public:
+  // `path` empty: nothing kept. `decoder`: what decodes (the verifier's hash). keep_unused: entries this run did not
+  // ask for are written back too (an image that does not change); otherwise only this run's are.
+  CodeStore(std::string path, const Image& img, const std::string& decoder, bool keep_unused);
+  std::shared_ptr<const Code> code(u64 start, u64 end);   // from the file when it holds this function as it is, else decoded
+  void save();   // when something was decoded: the file rewritten
+  struct Stats { size_t hits = 0, misses = 0; };
+  Stats stats() const { return stats_; }
+
+ private:
+  std::string path_, key_;
+  const Image& img_;
+  bool keep_unused_;
+  std::unique_ptr<const MappedFile> file_;
+  struct Index { u64 start, end, check, offset, size; };
+  const Index* index_ = nullptr;
+  size_t nindex_ = 0;
+  std::string_view blobs_;
+  std::vector<u16> mnem_;   // the file's mnemonic ids -> this run's
+  std::map<std::pair<u64, u64>, std::string> out_;   // this run's functions, as written: (start, end) -> blob
+  std::map<std::pair<u64, u64>, u64> checks_;
+  Stats stats_;
+  bool dirty_ = false;
+  u64 check(u64 start, u64 end) const;
+  std::string blob(const Code& c) const;   // in this run's mnemonic ids; save() writes the table that names them
+  void load();
+};
+
+}  // namespace verifier

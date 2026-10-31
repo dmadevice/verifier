@@ -293,6 +293,7 @@ std::vector<std::unique_ptr<Mnem::Entry>>& Mnem::entries() {
   return all;
 }
 Mnem Mnem::from_id(u16 id) { return Mnem(entries()[id].get()); }
+size_t Mnem::count() { return entries().size(); }
 
 static_assert(std::is_trivially_copyable_v<Insn> && sizeof(Insn) <= 96, "instructions are decoded in bulk: keep them flat");
 

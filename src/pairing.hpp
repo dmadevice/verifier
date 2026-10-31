@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "annotations.hpp"
+#include "code_store.hpp"
 #include "compare.hpp"
 #include "inputs.hpp"
 
@@ -17,7 +18,7 @@ namespace verifier {
 // Decoded function regions, by (start, end), kept for the run
 class CodeCache {
  public:
-  explicit CodeCache(const Image* img) : img_(img) {}
+  explicit CodeCache(const Image* img, CodeStore* store = nullptr) : img_(img), store_(store) {}
   std::shared_ptr<const Code> code(u64 start, u64 end);
   void release(u64 start, u64 end) { live_.erase({start, end}); }
   struct Stats { size_t functions = 0, insns = 0, code_bytes = 0; };
@@ -29,6 +30,7 @@ class CodeCache {
 
  private:
   const Image* img_;
+  CodeStore* store_;   // decoded functions kept between runs (none: decoded here)
   std::map<std::pair<u64, u64>, std::shared_ptr<const Code>> live_;
 };
 
