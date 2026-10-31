@@ -413,7 +413,7 @@ const Mnem::Entry& Mnem::intern(std::string_view s) {
   auto it = table.find(s);
   if (it == table.end()) {
     auto& all = entries();
-    if (all.size() > 0xffff) throw std::runtime_error("more than 65536 distinct mnemonics");
+    if (all.size() > Lean::MAX_MNEM) throw std::runtime_error("more than 2048 distinct mnemonics");
     all.push_back(std::make_unique<Entry>(Entry{std::string(s), u16(all.size())}));
     it = table.emplace(std::string(s), all.back().get()).first;
   }
@@ -603,7 +603,9 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   reloc_at_ = relocated ? im.reloc_lower_bound(s) : 0;
   for (size_t k = 0; k < all.size(); ++k) {
     const Insn& ins = all[k];
-    Lean l{u32(ins.address - s), u32(field_list.size()), ins.mnemonic.id(), ins.size, 0, ins.branches()};
+    if (ins.address - s > Lean::MAX_OFF || field_list.size() > Lean::MAX_FIELD)
+      throw std::runtime_error("function at " + hex(s) + " too large to decode (8 MB at most)");
+    Lean l{ins.address - s, field_list.size(), ins.mnemonic.id(), ins.size, 0, ins.branches()};
     add_fields(ins, k < image_base.size() ? image_base[k] : 0);
     l.nfields = u8(field_list.size() - l.field);
     l.addressed = l.addressed || l.nfields;
@@ -712,7 +714,7 @@ std::vector<OutsideTable> Code::outside_tables() const {
 void Code::add_fields(const Insn& ins, u32 image_base) {
   size_t first = field_list.size();
   auto add = [&](int off, int size, FieldKind kind, i64 value, int access) {
-    field_list.push_back(Field{value, access, u8(off), u8(size), kind});
+    field_list.push_back(Field{value, u16(access), u8(off), u8(size), kind});
   };
   i64 frva = i64(start - img->base);
   if (ins.branches()) {

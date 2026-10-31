@@ -109,15 +109,16 @@ u16 reg_rip();
 // An address field of an instruction: (offset in instruction, size, kind, value, access size)
 enum FieldKind : u8 { F_ABS = 0, F_EXT = 1, F_IMG = 2, F_RIP = 3, F_TBL = 4 };          // ordered as the names sort
 inline bool is_address(FieldKind k) { return k == F_RIP || k == F_IMG || k == F_ABS; }  // a field holding a VA
+#pragma pack(push, 4)
 struct Field {
-  i64 value;  // target VA (function-relative table offset for F_TBL)
-  int access;
-  u8 off, size;
+  i64 value;             // target VA (function-relative table offset for F_TBL)
+  u16 access;            // the memory operand's size (0: not one)
+  u8 off : 4, size : 4;  // in the instruction (at most 15 bytes); at most 8 bytes
   FieldKind kind;
-  u8 pad = 0;  // the record's last byte, set (a decoded function is kept on disk as its bytes)
   bool operator<(const Field& o) const;
 };
-static_assert(sizeof(Field) == 16, "kept on disk as 16 bytes");
+#pragma pack(pop)
+static_assert(sizeof(Field) == 12, "a function's code keeps one per field");
 
 struct TableItem {  // table_region(): ('e', target offset) or ('raw', bytes)
   bool entry;
@@ -139,15 +140,16 @@ std::vector<Insn> decode_linear(std::string_view code, u64 start);
 // An instruction as a function's code keeps it: where it is, its size and mnemonic, and its address fields. The
 // operands are decoded again (Code::insn) when a report needs them.
 struct Lean {
-  u32 off;    // from the function's start
-  u32 field;  // its first field in Code::field_list
-  u16 mnem;   // Mnem::id()
-  u8 size;
-  u8 nfields : 7;  // at most 4: a branch target, a memory operand, two relocations
+  static constexpr u64 MAX_OFF = (u64(1) << 23) - 1, MAX_FIELD = (u64(1) << 22) - 1, MAX_MNEM = (u64(1) << 11) - 1;
+  u64 off : 23;    // from the function's start
+  u64 field : 22;  // its first field in Code::field_list
+  u64 mnem : 11;   // Mnem::id()
+  u64 size : 4;
+  u64 nfields : 3;  // at most 4: a branch target, a memory operand, two relocations
   // its operands depend on where it is: a branch, a RIP-relative or indexed memory operand, or a field
-  u8 addressed : 1;
+  u64 addressed : 1;
 };
-static_assert(sizeof(Lean) == 12, "a function's code keeps one per instruction");
+static_assert(sizeof(Lean) == 8, "a function's code keeps one per instruction");
 
 // same size, and fields at the same places with the same kinds
 bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::span<const Field> fb);

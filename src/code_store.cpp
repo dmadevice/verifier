@@ -14,8 +14,9 @@ namespace {
 
 // the file: header, padding to 8; the mnemonics (u64 count, then each as u16 length and text), padding to 8; the
 // index (u64 count, then Index records sorted by range); the entries, each 8-byte aligned: BlobHead, Lean[ninsns],
-// padding to 8, Field[nfields], (i64 offset, i64 entry size)[ntables]. The arrays are copied out as they are.
-constexpr std::string_view MAGIC = "verifier-code 2\n";
+// padding to 8, Field[nfields], padding to 8, (i64 offset, i64 entry size)[ntables]. The arrays are copied out as
+// they are.
+constexpr std::string_view MAGIC = "verifier-code 3\n";
 
 struct BlobHead {
   u8 relocated, complete, has_resume, pad[5];
@@ -98,6 +99,7 @@ std::string CodeStore::blob(const Code& c) const {
   w.array(c.insns.data(), c.insns.size());
   w.pad8();
   w.array(c.field_list.data(), c.field_list.size());
+  w.pad8();
   for (auto& [off, size] : c.tables) {
     w.put(off);
     w.put(i64(size));
@@ -122,6 +124,7 @@ std::shared_ptr<const Code> CodeStore::from_blob(u64 start, u64 end, std::string
   std::string_view insns = r.take(h.ninsns * sizeof(Lean));
   r.pad8();
   std::string_view fields = r.take(h.nfields * sizeof(Field));
+  r.pad8();
   if (!r.ok() || reinterpret_cast<uintptr_t>(b.data()) % 8) return nullptr;  // entries are 8-byte aligned in the file
   auto lean = reinterpret_cast<const Lean*>(insns.data());
   auto field = reinterpret_cast<const Field*>(fields.data());

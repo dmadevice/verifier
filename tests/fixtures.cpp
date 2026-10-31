@@ -1418,7 +1418,7 @@ struct StoreImage {
     u64 g = s.put(DATA, le32b(7));
     u64 callee = s.put(TEXT, unhex("c3"));
     f = BASE + ((s.cur[TEXT] + 15) & ~u64(15));
-    Bytes code = call(f, callee) + mov_eax_g(f + 5, g);
+    Bytes code = call(f, callee) + mov_eax_g(f + 5, g) + mov_eax_g(f + 11, g);  // an odd number of fields
     u64 imm_at = f + code.size() + 2;
     code += unhex("48b8") + le64b(g);            // mov rax, g (relocated)
     u64 table_rva = f - BASE + code.size() + 8;  // after the mov eax, [rcx*4 + table] and the ret
@@ -1480,6 +1480,8 @@ Problems code_store_case() {
     Code fresh(img, si.f, si.f_end);
     if (fresh.field_list.size() < 4 || fresh.tables.empty())
       bad.push_back({"code store", "the test function lacks a field kind"});
+    if (fresh.field_list.size() % 2 == 0)  // its fields end off 8 bytes: the entries after it must still be read
+      bad.push_back({"code store", "the test function has an even number of fields"});
   }
   {
     // written by another process, whose mnemonic ids differ from this one's
