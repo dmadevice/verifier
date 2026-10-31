@@ -60,7 +60,7 @@ struct GlobalDiff {
 };
 std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
                                       const std::function<std::vector<u64>(const std::string&)>& lookup,
-                                      const std::unordered_map<u64, u64>& reb_to_orig, Comparer& cmp);
+                                      const std::function<std::optional<u64>(u64)>& orig_of, Comparer& cmp);
 
 // the command line: exits the process when it has run (without freeing what it built); returns early only for a replay
 int run(int argc, char** argv);

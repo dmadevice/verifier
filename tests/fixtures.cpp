@@ -678,7 +678,7 @@ Problems stub_pairing() {
   std::map<std::string, u64> m{{"sub_1000", 0x100}, {"A", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb, {{"STUB", 0x1000, "sub_1000", {}, "s.cpp", 1}, {"FUNCTION", 0x2000, "A", {}, "a.cpp", 1}});
-  bool ok = !p.paired_o.count(0x1000) && p.paired_o.count(0x2000);
+  bool ok = p.paired_o == std::vector<u64>{0x2000};
   return bad_if(!ok, "paired", "stub/function paired wrongly");
 }
 
@@ -711,7 +711,11 @@ Problems global_bytes() {
     return it == names.end() ? std::vector<u64>() : std::vector<u64>{it->second};
   };
   std::vector<std::string> got;
-  for (auto& g : check_globals(anns, lookup, reb_to_orig, c)) got.push_back(g.ann->name);
+  auto orig_of = [&](u64 rva) -> std::optional<u64> {
+    auto it = reb_to_orig.find(rva);
+    return it == reb_to_orig.end() ? std::nullopt : std::optional<u64>(it->second);
+  };
+  for (auto& g : check_globals(anns, lookup, orig_of, c)) got.push_back(g.ann->name);
   return bad_if(got != std::vector<std::string>{"g_exp"}, "globals", "reported " + join(got, ","));
 }
 

@@ -23,11 +23,9 @@ class Pairing : public ComparerContext {
   std::unique_ptr<Comparer> cmp;
   std::optional<u64> named(
       std::string_view n) const;  // the original address the name has (the original's names, then vftables')
-  std::unordered_map<u64, u64> reb_to_orig;
-  std::unordered_map<u64, std::set<u64>> reb_to_origs;
-  std::vector<u64> annotated_o;  // sorted
-
-  std::set<u64> paired_o;  // originals a non-STUB annotation pairs
+  std::optional<u64> orig_of(u64 rva) const;  // the original the last annotation naming `rva` gives
+  std::vector<u64> annotated_o;               // sorted
+  std::vector<u64> paired_o;                  // originals a non-STUB annotation pairs (sorted, distinct)
 
   // a compared annotation's rebuilt symbols and the overloads of its name, as pairing looked them up (nullptr for an
   // annotation pairing was not given)
@@ -79,7 +77,9 @@ class Pairing : public ComparerContext {
                                                     // several bases, not among the original's names
   void prebind_locals();
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
-  std::vector<u64> named_;  // original addresses with a name (sorted, distinct)
+  std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
+  std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
+  std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
   JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
   JMap<u64, u64> inferred_r_;
   Key resolve_symbol_uncached(u64 t) const;

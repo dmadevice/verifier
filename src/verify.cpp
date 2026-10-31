@@ -287,7 +287,7 @@ std::string result_line(const Result& r, const std::string& module) {
 
 std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
                                       const std::function<std::vector<u64>(const std::string&)>& lookup,
-                                      const std::unordered_map<u64, u64>& reb_to_orig, Comparer& cmp) {
+                                      const std::function<std::optional<u64>(u64)>& orig_of, Comparer& cmp) {
   const Image &O = *cmp.O, &R = *cmp.R;
   std::vector<const Annotation*> sorted;
   for (auto& a : anns) sorted.push_back(&a);
@@ -297,8 +297,7 @@ std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
     u64 va = a->va;
     if (a->kind != "GLOBAL" || !O.flags(va) || O.writable(va) || O.executable(va)) continue;
     for (u64 rva : lookup(a->name)) {
-      auto it = reb_to_orig.find(rva);
-      if (it == reb_to_orig.end() || it->second != va || R.writable(rva) || R.executable(rva)) continue;
+      if (orig_of(rva) != va || R.writable(rva) || R.executable(rva)) continue;
       auto p = cmp.rodata(va, rva);
       if (p) out.push_back({a, p->second});
     }
@@ -618,7 +617,7 @@ void print_cache_stats(const CodeCache& orig_cache, const CodeCache& rebuilt_cac
 void print_warnings(const std::vector<Annotation>& anns, const std::vector<Ignored>& ignored, const Rebuilt& reb,
                     const Pairing& pairing, Comparer& cmp, const std::string& root, Out& out) {
   auto lookup = [&](const std::string& n) { return reb.lookup(n).vas; };
-  for (auto& g : check_globals(anns, lookup, pairing.reb_to_orig, cmp))
+  for (auto& g : check_globals(anns, lookup, [&](u64 rva) { return pairing.orig_of(rva); }, cmp))
     out.print("GLOBAL DIFFERS " + hex(g.ann->va) + " " + g.ann->name + " (" + where_of(g.ann->path, root) + ":" +
               std::to_string(g.ann->line) + "): " + g.problem + "; is the address right?");
   for (auto& ig : ignored)

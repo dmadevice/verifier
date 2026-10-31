@@ -56,18 +56,32 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
     std::string key = a.kind == "VTABLE" ? a.name + "::`vftable'" : a.name;
     Lookup lk = reb.lookup(key, sig_flag(a.flags), is_paired(a.kind));
     for (u64 rva : lk.vas) {
-      reb_to_orig[rva] = a.va;
-      reb_to_origs[rva].insert(a.va);
-      if (a.kind != "STUB") paired_o.insert(a.va);
+      reb_to_origs_.push_back({rva, a.va});  // in annotation order: the last of each rebuilt address wins
+      if (a.kind != "STUB") paired_o.push_back(a.va);
     }
     if (is_paired(a.kind)) {
       std::string pk = paired_key(a);
       if (!paired_.count(pk)) paired_.emplace(std::move(pk), Paired{std::move(lk), reb.overloads_of(a.name)});
     }
   }
-  std::set<u64> ao;
-  for (auto& [rva, va] : reb_to_orig) ao.insert(va);
-  annotated_o.assign(ao.begin(), ao.end());
+  auto distinct = [](auto& v) {
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+  };
+  std::stable_sort(reb_to_origs_.begin(), reb_to_origs_.end(), [](auto& x, auto& y) { return x.first < y.first; });
+  for (size_t i = 0; i < reb_to_origs_.size(); ++i)
+    if (i + 1 == reb_to_origs_.size() || reb_to_origs_[i + 1].first != reb_to_origs_[i].first)
+      reb_to_orig_.push_back(reb_to_origs_[i]);
+  distinct(reb_to_origs_);
+  distinct(paired_o);
+  for (auto& [rva, va] : reb_to_orig_) annotated_o.push_back(va);
+  distinct(annotated_o);
+}
+
+std::optional<u64> Pairing::orig_of(u64 rva) const {
+  auto it = std::lower_bound(reb_to_orig_.begin(), reb_to_orig_.end(), std::pair<u64, u64>{rva, 0});
+  if (it == reb_to_orig_.end() || it->first != rva) return std::nullopt;
+  return it->second;
 }
 
 const Pairing::Paired* Pairing::paired(const Annotation& a) const {
@@ -120,7 +134,7 @@ Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc) {
   rebuilt_cache_ = &rc;
   for (auto& [n, ea] : orig.by_name) named_.push_back(ea);
   for (auto& [n, ea] : vftables_) named_.push_back(ea);
-  for (auto& [r, o] : reb_to_orig) named_.push_back(o);
+  for (auto& [r, o] : reb_to_orig_) named_.push_back(o);
   for (auto& [v, s] : orig.vtables) named_.push_back(v);
   std::sort(named_.begin(), named_.end());
   named_.erase(std::unique(named_.begin(), named_.end()), named_.end());
@@ -151,7 +165,7 @@ void Pairing::prebind_locals() {
 
 std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
   std::map<u64, u64> pairs;
-  for (auto& [rva, ova] : reb_to_orig)
+  for (auto& [rva, ova] : reb_to_orig_)
     if (reb.img.executable(rva) && orig.functions.contains(ova)) pairs.emplace(rva, ova);
   // owners of local statics that resolve by their own names (an annotation's pairing comes first)
   for (auto& [base, owners] : reb.static_owner) {
@@ -272,7 +286,7 @@ Key Pairing::resolve_symbol(u64 t) const {
 }
 
 Key Pairing::resolve_symbol_uncached(u64 t) const {
-  if (auto it = reb_to_orig.find(t); it != reb_to_orig.end()) return Key::of_va(it->second);
+  if (auto o = orig_of(t)) return Key::of_va(*o);
   auto names = reb.symbols.names(t);
   for (auto& n : names)
     if (is_const_name(n)) return Key::named_view(Key::CONST, n);
@@ -334,7 +348,9 @@ std::vector<u64> Pairing::alternates(u64 t) const {
     if (auto va = named(n)) vas.insert(*va);
   for (auto& n : names)
     if (auto va = named(reb.qualified(n))) vas.insert(*va);
-  if (auto it = reb_to_origs.find(t); it != reb_to_origs.end()) vas.insert(it->second.begin(), it->second.end());
+  for (auto it = std::lower_bound(reb_to_origs_.begin(), reb_to_origs_.end(), std::pair<u64, u64>{t, 0});
+       it != reb_to_origs_.end() && it->first == t; ++it)
+    vas.insert(it->second);
   return std::vector<u64>(vas.begin(), vas.end());
 }
 
@@ -349,7 +365,7 @@ std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
 
 bool Pairing::infer(u64 o_t, u64 r_t) {
   if (inferred_.contains({o_t, r_t})) return true;
-  if (inferred_r_.contains(r_t) || reb_to_orig.count(r_t)) return false;
+  if (inferred_r_.contains(r_t) || orig_of(r_t)) return false;
   if (!orig.functions.contains(o_t) || !reb.symbols.contains(r_t) || infer_depth_ >= 4) return false;
   u64 oend = orig.extent(o_t), rend = reb.extent(r_t);
   return cmp->journal.speculate([&] {
