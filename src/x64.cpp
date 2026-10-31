@@ -205,8 +205,9 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
   FdInstr fi;
   int len = fd_decode(p, n, 64, 0, &fi);
   if (len <= 0) return false;
-  r = Insn();
+  // every field is set below (the unused operand slots marked empty), not the whole record cleared first
   r.address = addr;
+  r.imm_offset = r.imm_size = 0;
   r.size = u8(len);
   r.type = u16(FD_TYPE(&fi));
   const MnemInfo& mi = mnemonic(fi);
@@ -215,6 +216,7 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
   std::optional<Vsib> vsib;
   if (mi.vsib) vsib = vsib_of(p, size_t(len), mi.half);
   bool has_mem = false;
+  int nops = 0;
   for (int k = 0; k < 4; ++k) {
     int t = FD_OP_TYPE(&fi, k);
     if (t == FD_OT_NONE) break;
@@ -247,8 +249,10 @@ bool decode_one(const u8* p, size_t n, u64 addr, Insn& r) {
         op.segment = FD_SEGMENT(&fi) == FD_REG_NONE ? 0 : u8(FD_SEGMENT(&fi) + 1);
       }
     }
-    r.ops.push_back(op);
+    r.ops.set(k, op);
+    nops = k + 1;
   }
+  r.ops.truncate(nops);
   r.gmask = branch_bits(fi);
   r.wmask = u16(written_gprs(fi));
   Layout l = layout(p, size_t(len), has_mem, 1u << addrlg);
@@ -451,6 +455,7 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   complete = decoded == cut + (resume ? n - *resume : 0);
   std::vector<u32> image_base = image_base_regs(all, im.base);
   insns.reserve(all.size());
+  reloc_at_ = relocated ? im.reloc_lower_bound(s) : 0;
   for (size_t k = 0; k < all.size(); ++k) {
     const Insn& ins = all[k];
     Lean l{u32(ins.address - s), u32(field_list.size()), ins.mnemonic.id(), ins.size, 0, ins.branches()};
@@ -578,7 +583,9 @@ void Code::add_fields(const Insn& ins, u32 image_base) {
     }
   }
   if (relocated) {
-    size_t i = img->reloc_lower_bound(ins.address);
+    // instructions come in address order: the relocations are walked once, not searched for each instruction
+    size_t& i = reloc_at_;
+    while (i < img->reloc_sorted.size() && img->reloc_sorted[i] < ins.address) ++i;
     while (i < img->reloc_sorted.size() && img->reloc_sorted[i] < ins.address + ins.size) {
       u64 site = img->reloc_sorted[i];
       add(int(site - ins.address), 8, F_ABS, i64(img->u64_at(site)), 0);
@@ -591,6 +598,13 @@ void Code::add_fields(const Insn& ins, u32 image_base) {
 std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
   // must-analysis over the instructions' control flow: which GPRs hold __ImageBase on entry to each one
   size_t n = insns.size();
+  auto loads_base = [&](const Insn& ins) {
+    if (ins.type != FDI_LEA || ins.ops.size() != 2 || ins.ops[1].type != OP_MEM) return false;
+    const Operand& m = ins.ops[1];
+    return m.base() == reg_rip() && !m.index && u64(i64(ins.address + ins.size) + m.disp()) == base;
+  };
+  // nothing loads __ImageBase: no register holds it anywhere (an empty vector says so for every instruction)
+  if (std::none_of(insns.begin(), insns.end(), loads_base)) return {};
   std::vector<u32> kill(n), gen(n);
   bool any_gen = false;
   for (size_t k = 0; k < n; ++k) {

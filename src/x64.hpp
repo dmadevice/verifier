@@ -40,6 +40,8 @@ class OpVec {
   bool empty() const { return ops_[0].type == OP_INVALID; }
   const Operand& operator[](size_t i) const { return ops_[i]; }
   void push_back(const Operand& o) { size_t n = size(); if (n < kMax) ops_[n] = o; }
+  void set(size_t i, const Operand& o) { ops_[i] = o; }
+  void truncate(size_t n) { for (size_t i = n; i < kMax; ++i) ops_[i].type = OP_INVALID; }   // slots from n on empty
 
  private:
   static constexpr size_t kMax = 4;
@@ -166,6 +168,7 @@ class Code {
 
  private:
   std::string_view decoded_from_;     // the bytes the instructions were decoded from (`code` before trimming)
+  size_t reloc_at_ = 0;               // add_fields: the first relocation not before the instruction
   void add_fields(const Insn& ins, u32 image_base);
   void trim_padding();
 };
