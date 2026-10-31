@@ -169,8 +169,8 @@ diff and sources stores. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.21 seconds and 81 MB on one core with
-the cache directory warm (about 0.30 seconds and 91 MB when only the snapshot and the name cache are), and a
+On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.20 seconds and 81 MB on one core with
+the cache directory warm (about 0.30 seconds and 89 MB when only the snapshot and the name cache are), and a
 replay of unchanged inputs about 10 ms.
 
 ## License
