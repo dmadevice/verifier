@@ -1,5 +1,7 @@
 #include "verify.hpp"
 
+#include "source_cache.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>

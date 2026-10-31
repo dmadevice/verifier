@@ -1,8 +1,7 @@
 #include "annotations.hpp"
 
-#include <cstring>
-
 #include "content_hash.hpp"
+#include "source_cache.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -243,116 +242,6 @@ void check_duplicates(const std::vector<Annotation>& anns) {
     }
     seen[a.va] = {std::string(a.path) + ":" + std::to_string(a.line), folded};
   }
-}
-
-}  // namespace verifier
-
-namespace verifier {
-
-namespace {
-constexpr std::string_view SOURCES_MAGIC = "verifier-sources 1\n";
-template <class T>
-void put(std::string& out, const T& v) { out.append(reinterpret_cast<const char*>(&v), sizeof v); }
-void put_str(std::string& out, std::string_view s) { put(out, u32(s.size())); out += s; }
-}  // namespace
-
-SourceCache::SourceCache(std::string path, std::string key, i64 recent) : path_(std::move(path)), key_(std::move(key)), recent_(recent) {
-  if (path_.empty() || !file_exists(path_)) return;
-  std::string d;
-  try { d = read_file(path_); } catch (...) { return; }
-  std::string head = std::string(SOURCES_MAGIC) + key_ + "\n";
-  if (d.compare(0, head.size(), head) != 0) return;
-  size_t p = head.size();
-  bool ok = true;
-  auto get = [&](void* dst, size_t n) {
-    if (!ok || p + n > d.size()) { ok = false; return; }
-    std::memcpy(dst, d.data() + p, n);
-    p += n;
-  };
-  auto str = [&](std::string& s) {
-    u32 n = 0;
-    get(&n, 4);
-    if (!ok || p + n > d.size()) { ok = false; return; }
-    s.assign(d, p, n);
-    p += n;
-  };
-  std::unordered_map<std::string, Stored> m;
-  while (ok && p < d.size()) {
-    std::string file;
-    Stored st{};
-    str(file);
-    get(&st.size, 8);
-    get(&st.time, 8);
-    str(st.e.hash);
-    u32 na = 0, ni = 0;
-    get(&na, 4);
-    for (u32 i = 0; ok && i < na; ++i) {
-      Ann a;
-      u8 folded = 0, dtor = 0;
-      str(a.kind);
-      get(&a.va, 8);
-      str(a.name);
-      get(&folded, 1);
-      get(&dtor, 1);
-      str(a.flags.sig);
-      get(&a.line, 4);
-      a.flags.folded = folded;
-      a.flags.dtor = dtor;
-      st.e.anns.push_back(std::move(a));
-    }
-    get(&ni, 4);
-    for (u32 i = 0; ok && i < ni; ++i) {
-      Ign g;
-      get(&g.line, 4);
-      str(g.text);
-      st.e.ignored.push_back(std::move(g));
-    }
-    if (ok) m.emplace(std::move(file), std::move(st));
-  }
-  if (ok) old_ = std::move(m);
-}
-
-const SourceCache::Entry* SourceCache::find(const ListedFile& f) const {
-  auto it = old_.find(f.path);
-  if (it == old_.end() || it->second.size != f.size || it->second.time != f.time || f.time >= recent_) {
-    ++stats_.misses;
-    return nullptr;
-  }
-  ++stats_.hits;
-  return &it->second.e;
-}
-
-void SourceCache::keep(const ListedFile& f, const Entry& e) {
-  auto it = old_.find(f.path);
-  if (it == old_.end() || it->second.size != f.size || it->second.time != f.time || it->second.e.hash != e.hash) changed_ = true;
-  new_.emplace_back(f, e);
-}
-
-void SourceCache::save() {
-  if (path_.empty() || (!changed_ && new_.size() == old_.size())) return;
-  std::string out = std::string(SOURCES_MAGIC) + key_ + "\n";
-  for (auto& [f, e] : new_) {
-    put_str(out, f.path);
-    put(out, f.size);
-    put(out, f.time);
-    put_str(out, e.hash);
-    put(out, u32(e.anns.size()));
-    for (auto& a : e.anns) {
-      put_str(out, a.kind);
-      put(out, a.va);
-      put_str(out, a.name);
-      put(out, u8(a.flags.folded));
-      put(out, u8(a.flags.dtor));
-      put_str(out, a.flags.sig);
-      put(out, i32(a.line));
-    }
-    put(out, u32(e.ignored.size()));
-    for (auto& g : e.ignored) {
-      put(out, i32(g.line));
-      put_str(out, g.text);
-    }
-  }
-  write_file_atomic(path_, out);
 }
 
 }  // namespace verifier

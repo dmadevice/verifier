@@ -4,6 +4,7 @@
 // the image's base and headers; each function by its range, checked against its bytes and relocations.
 #pragma once
 #include <map>
+#include <string_view>
 #include <memory>
 #include <string>
 #include <utility>
@@ -38,7 +39,29 @@ class CodeStore {
   bool dirty_ = false;
   u64 check(u64 start, u64 end) const;
   std::string blob(const Code& c) const;   // in this run's mnemonic ids; save() writes the table that names them
+  std::shared_ptr<const Code> from_blob(u64 start, u64 end, std::string_view b) const;   // nullptr: damaged
   void load();
+  void fail();   // the file not used (and released)
+};
+
+// The decoded functions a run holds, by (start, end): from the store when there is one, else decoded; released when a
+// comparison no longer needs them
+class CodeCache {
+ public:
+  explicit CodeCache(const Image* img, CodeStore* store = nullptr) : img_(img), store_(store) {}
+  std::shared_ptr<const Code> code(u64 start, u64 end);
+  void release(u64 start, u64 end) { live_.erase({start, end}); }
+  struct Stats { size_t functions = 0, insns = 0, code_bytes = 0; };
+  Stats stats() const {
+    Stats s;
+    for (auto& [k, c] : live_) { ++s.functions; s.insns += c->insns.size(); s.code_bytes += c->code.size(); }
+    return s;
+  }
+
+ private:
+  const Image* img_;
+  CodeStore* store_;   // decoded functions kept between runs (none: decoded here)
+  std::map<std::pair<u64, u64>, std::shared_ptr<const Code>> live_;
 };
 
 }  // namespace verifier

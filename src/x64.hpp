@@ -105,8 +105,10 @@ struct Field {
   int access;
   u8 off, size;
   FieldKind kind;
+  u8 pad = 0;    // the record's last byte, set (a decoded function is kept on disk as its bytes)
   bool operator<(const Field& o) const;
 };
+static_assert(sizeof(Field) == 16, "kept on disk as 16 bytes");
 
 struct TableItem {   // table_region(): ('e', target offset) or ('raw', bytes)
   bool entry;

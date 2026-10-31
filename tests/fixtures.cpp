@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "annotations.hpp"
+#include "source_cache.hpp"
 #include "code_store.hpp"
 #include "compare.hpp"
 #include "inputs.hpp"

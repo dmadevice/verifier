@@ -5,13 +5,6 @@
 
 namespace verifier {
 
-std::shared_ptr<const Code> CodeCache::code(u64 start, u64 end) {
-  auto it = live_.find({start, end});
-  if (it != live_.end()) return it->second;
-  auto c = store_ ? store_->code(start, end) : std::make_shared<const Code>(*img_, start, end);
-  return live_.emplace(std::make_pair(start, end), std::move(c)).first->second;
-}
-
 namespace {
 
 bool any_prefix(std::string_view n, std::initializer_list<const char*> ps) {
