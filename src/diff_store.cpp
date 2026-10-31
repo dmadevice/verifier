@@ -13,22 +13,49 @@ namespace {
 // category and the diff's line count and lines (strings as u32 length and bytes)
 constexpr std::string_view MAGIC = "verifier-diffs 1\n";
 
-// everything of a token the diff and the category read (as text where they show it)
-void put_tok(BinWriter& w, const Tok& t) {
-  w.str(t.mnemonic.str());
-  w.put(u8(t.ops.size()));
+// The key: two 64-bit hashes run over everything of the tokens the diff and the category read (the instructions'
+// offsets; per token its mnemonic's text and per operand its fields and its key's text, the import's name for an
+// import), without writing it out first (a function's tokens are tens of kilobytes).
+class KeyHash {
+ public:
+  void add(u64 x) {
+    a_ = rotl(a_ ^ (x * P2), 31) * P1;
+    b_ = rotl(b_ + x * P3, 27) * P4 + (b_ >> 29);
+  }
+  void add(std::string_view s) {
+    add(u64(s.size()));
+    add(xxh64(s, 0x5bd1e995));
+  }
+  std::pair<u64, u64> done() const { return {avalanche(a_), avalanche(b_ ^ 0x9e3779b97f4a7c15ull)}; }
+
+ private:
+  static constexpr u64 P1 = 0x9E3779B185EBCA87ull, P2 = 0xC2B2AE3D27D4EB4Full, P3 = 0x165667B19E3779F9ull,
+                       P4 = 0x85EBCA77C2B2AE63ull;
+  static u64 rotl(u64 x, int r) { return (x << r) | (x >> (64 - r)); }
+  static u64 avalanche(u64 h) {
+    h ^= h >> 33;
+    h *= P2;
+    h ^= h >> 29;
+    h *= P3;
+    return h ^ (h >> 32);
+  }
+  u64 a_ = 0x243f6a8885a308d3ull, b_ = 0x13198a2e03707344ull;
+};
+
+void add_tok(KeyHash& h, const Tok& t) {
+  h.add(std::string_view(t.mnemonic.str()));
+  h.add(u64(t.ops.size()));
   for (const Op& o : t.ops) {
-    w.put(u8(o.k));
-    w.put(o.v);
-    w.put(o.base);
-    w.put(o.index);
-    w.put(o.seg);
-    w.put(o.size);
-    w.put(o.scale);
-    w.put(u8(o.key.kind));
-    w.put(o.key.va);
-    if (o.key.kind == Key::IMP) w.str(imp_str(o.key.imp));
-    else w.str(o.key.name);
+    h.add(u64(o.k) | u64(o.scale) << 8 | u64(o.key.kind) << 16 | u64(o.size) << 32 | u64(o.seg) << 48);
+    h.add(u64(o.base) | u64(o.index) << 16);
+    h.add(u64(o.v));
+    h.add(o.key.va);
+    if (o.key.kind == Key::IMP) {
+      std::string name = imp_str(o.key.imp);
+      h.add(std::string_view(name));
+    } else {
+      h.add(o.key.name);
+    }
   }
 }
 
@@ -74,17 +101,16 @@ DiffStore::Entry DiffStore::get(const std::vector<u32>& o_off, const std::vector
                                 const NameOf& names) {
   auto make = [&] { return Entry{classify(ot, rt), insn_diff(o_off, r_off, ot, rt, names)}; };
   if (path_.empty()) return make();
-  BinWriter w;   // what the key is a hash of
-  w.out.reserve(64 * (ot.size() + rt.size()));
-  w.put(u64(o_off.size()));
-  w.array(o_off.data(), o_off.size());
-  w.put(u64(r_off.size()));
-  w.array(r_off.data(), r_off.size());
-  w.put(u64(ot.size()));
-  for (auto& t : ot) put_tok(w, t);
-  w.put(u64(rt.size()));
-  for (auto& t : rt) put_tok(w, t);
-  std::pair<u64, u64> k{xxh64(w.out, 0), xxh64(w.out, 0x9E3779B185EBCA87ull)};
+  KeyHash h;
+  h.add(u64(o_off.size()));
+  for (u32 x : o_off) h.add(u64(x));
+  h.add(u64(r_off.size()));
+  for (u32 x : r_off) h.add(u64(x));
+  h.add(u64(ot.size()));
+  for (auto& t : ot) add_tok(h, t);
+  h.add(u64(rt.size()));
+  for (auto& t : rt) add_tok(h, t);
+  std::pair<u64, u64> k = h.done();
   if (auto u = used_.find(k); u != used_.end()) {
     Entry e;
     if (read_entry(u->second, e)) return e;

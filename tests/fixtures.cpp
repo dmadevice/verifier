@@ -1159,7 +1159,7 @@ bool same_code(const Code& a, const Code& b, std::string& why) {
 // in-function switch table (mov eax, [rcx*4 + table]) that ends its code; then `n` small functions after it
 struct StoreImage {
   Side s{0};
-  u64 f = 0, f_end = 0;
+  u64 f = 0, f_end = 0, imm = 0;   // imm: where the relocated 64-bit immediate is
   std::vector<std::pair<u64, u64>> small;
   explicit StoreImage(int n) {
     u64 g = s.put(DATA, le32b(7));
@@ -1173,6 +1173,7 @@ struct StoreImage {
     code += le32b(1) + le32b(2) + le32b(3);                           // the table
     s.put(TEXT, code);
     s.relocs.push_back(imm_at);
+    imm = imm_at;
     f_end = f + code.size();
     for (int i = 0; i < n; ++i) {
       u64 at = s.put(TEXT, unhex("b8") + le32b(u32(i)) + unhex("c3"));
@@ -1308,9 +1309,9 @@ Problems diff_store_case() {
   std::string path = (d / "diffs.bin").string();
   StoreImage o(0);
   Side changed = o.s;
-  changed.write(o.f + 12, le64b(0x180009999));   // the 64-bit immediate: another target
+  changed.write(o.imm, le64b(0x180009999));   // the 64-bit immediate: another value
   Side retargeted = o.s;
-  retargeted.write(o.f + 12, le64b(0x18000aaaa));   // the same instructions and offsets, another target
+  retargeted.write(o.f + 1, le32b(u32(i32(0x40))));   // the call: the same instructions and offsets, another callee
   Side reordered = o.s;
   reordered.write(o.f + 5, unhex("90909090909090909090909090909090"));
   Image io = o.s.image(), ir = changed.image(), ir2 = reordered.image(), ir3 = retargeted.image();
@@ -1333,8 +1334,17 @@ Problems diff_store_case() {
     if (st.stats().hits != 1) bad.push_back({"diff store", "a stored diff was made again"});
     if (!same(st.get(offs(io), offs(ir2), ot, rt2, names), want(rt2, ir2))) bad.push_back({"diff store", "other tokens"});
     if (st.stats().misses != 1) bad.push_back({"diff store", "other tokens taken from the store"});
-    if (offs(ir3) != offs(ir) || !same(st.get(offs(io), offs(ir3), ot, rt3, names), want(rt3, ir3)))
+    if (offs(ir3) != offs(io) || !same(st.get(offs(io), offs(ir3), ot, rt3, names), want(rt3, ir3)))
       bad.push_back({"diff store", "other targets at the same offsets"});
+    // the unchanged function against itself differs from each stored case in one field only: the immediate's value
+    // (changed) or the call's target (retargeted); a key leaving either out would find that case's diff
+    if (!same(st.get(offs(io), offs(io), ot, ot, names), want(ot, io))) bad.push_back({"diff store", "one field apart"});
+    // the same tokens but for the name the call's target resolves to
+    auto named = [&](const char* n) { Toks t = ot; t[0].ops[0].key = Key::named(Key::UNRESOLVED, n); return t; };
+    Toks na = named("alpha"), nb = named("beta");
+    st.get(offs(io), offs(io), ot, na, names);
+    if (!same(st.get(offs(io), offs(io), ot, nb, names), DiffStore::Entry{classify(ot, nb), insn_diff(offs(io), offs(io), ot, nb, names)}))
+      bad.push_back({"diff store", "another name"});
     st.save();
   }
   {
