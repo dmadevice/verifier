@@ -177,7 +177,12 @@ inline void newline(std::string& out, int level) {   // a line break and `level`
 // a JSON string literal: UTF-8 is written as is, control characters escaped
 void put_quoted(std::string& out, std::string_view s) {
   out += '"';
-  for (unsigned char c : s) {
+  size_t run = 0;   // the start of the characters not yet written that need no escape
+  for (size_t i = 0; i < s.size(); ++i) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    if (c >= 0x20 && c != '"' && c != '\\') continue;
+    out.append(s.data() + run, i - run);
+    run = i + 1;
     switch (c) {
       case '"': out += "\\\""; break;
       case '\\': out += "\\\\"; break;
@@ -185,10 +190,12 @@ void put_quoted(std::string& out, std::string_view s) {
       case '\r': out += "\\r"; break;
       case '\t': out += "\\t"; break;
       default:
-        if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); out += b; }
-        else out += static_cast<char>(c);
+        char b[8];
+        std::snprintf(b, sizeof b, "\\u%04x", c);
+        out += b;
     }
   }
+  out.append(s.data() + run, s.size() - run);
   out += '"';
 }
 

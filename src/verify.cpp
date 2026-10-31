@@ -627,10 +627,18 @@ bool load_last(const std::string& path, const std::string& command, const std::s
 
 void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
                const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc) {
-  write_file_atomic(path, "verifier-last 7\n" + command + "\n" + image_stamp + "\n" + (stamps.empty() ? "-" : stamps) + "\n" +
-                              image + "\n" + key + "\n" +
-                              std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
-                              std::to_string(report.size()) + "\n" + report);
+  std::string rec;   // built in place: the output and the report are megabytes
+  rec.reserve(256 + command.size() + stamps.size() + out.size() + report.size());
+  for (std::string_view part : {std::string_view("verifier-last 7\n"), std::string_view(command), std::string_view("\n"),
+                                std::string_view(image_stamp), std::string_view("\n"),
+                                std::string_view(stamps.empty() ? "-" : stamps), std::string_view("\n"), std::string_view(image),
+                                std::string_view("\n"), std::string_view(key), std::string_view("\n")})
+    rec += part;
+  rec += std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n";
+  rec += out;
+  rec += std::to_string(report.size()) + "\n";
+  rec += report;
+  write_file_atomic(path, rec);
 }
 
 }  // namespace
