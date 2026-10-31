@@ -81,6 +81,20 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe, co
                       i64 recent);
 i64 two_seconds_ago();   // in the file clock's ticks
 
+// The replay record beside the rebuilt image: what a run printed, its report and exit status, under the inputs it read.
+struct Last {
+  std::string out, report;
+  int rc = 0;
+  bool by_stamps = false;   // replayed by the stamps (else by the contents: the record's stamps are stale)
+};
+// the record at `path`, when it is this command's and its inputs are as they were (the callbacks give this run's stamps,
+// image hash and key, computed only when needed)
+bool load_last(const std::string& path, const std::string& command, const std::string& image_stamp,
+               const std::function<std::string()>& stamps, const std::function<std::string()>& image,
+               const std::function<std::string()>& key, Last& last);
+void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
+               const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc);
+
 // the command line: exits the process when it has run (without freeing what it built); returns early only for a replay
 int run(int argc, char** argv);
 

@@ -577,18 +577,11 @@ std::string command_key(const std::vector<std::string>& args, const Config& p) {
   return h.hexdigest();
 }
 
-namespace {
-
 // the record: a version line, the command, the rebuilt image's stamp, all the inputs' stamps ("-" for none), the
-// rebuilt image's SHA-256, the key, the exit status, then stdout and the report, each after its length. Checked in
+// rebuilt image's content hash, the key, the exit status, then stdout and the report, each after its length. Checked in
 // that order: another command does not replay; the stamps, from metadata alone (all of them only when the image's
 // agrees: after a link it does not); when they differ, the image's hash (a replay needs the same image), and only when
 // that agrees the key, which hashes every input.
-struct Last {
-  std::string out, report;
-  int rc = 0;
-  bool by_stamps = false;   // replayed by the stamps (else by the contents: the record's stamps are stale)
-};
 bool load_last(const std::string& path, const std::string& command, const std::string& image_stamp,
                const std::function<std::string()>& stamps, const std::function<std::string()>& image,
                const std::function<std::string()>& key, Last& last) {
@@ -632,7 +625,7 @@ void save_last(const std::string& path, const std::string& command, const std::s
   rec.reserve(256 + command.size() + stamps.size() + out.size() + report.size());
   for (std::string_view part : {std::string_view("verifier-last 7\n"), std::string_view(command), std::string_view("\n"),
                                 std::string_view(image_stamp), std::string_view("\n"),
-                                std::string_view(stamps.empty() ? "-" : stamps), std::string_view("\n"), std::string_view(image),
+                                stamps.empty() ? std::string_view("-") : std::string_view(stamps), std::string_view("\n"), std::string_view(image),
                                 std::string_view("\n"), std::string_view(key), std::string_view("\n")})
     rec += part;
   rec += std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n";
@@ -642,7 +635,6 @@ void save_last(const std::string& path, const std::string& command, const std::s
   write_file_atomic(path, rec);
 }
 
-}  // namespace
 
 int run(int argc, char** argv) {
   Args a = parse_args(argc, argv);
