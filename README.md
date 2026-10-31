@@ -95,11 +95,22 @@ class Player { ... };
 
 All of it goes in a configuration file (`verifier.conf` in the working directory by default); relative
 paths are relative to it, and it marks the project root that source paths in the report are given from. See
-[`verifier.conf.example`](verifier.conf.example). With a `cache_dir`, the tables read from the
-disassembler exports and library attribution, and the original laid out in memory, are kept there as a
-binary snapshot, used while every one of those files keeps its size and modification time (the original is
-checked against `original_sha256` when the snapshot is made). The undecorated names are kept there too: a run
-that had to run undname saves them, this build's names first, then as many of other builds' names.
+[`verifier.conf.example`](verifier.conf.example).
+
+With a `cache_dir`, runs keep there what the next run can use again:
+
+- `original-snapshot.bin`: the original laid out in memory, with the tables read from the disassembler exports
+  and library attribution; used while every one of those files keeps its size and modification time (the
+  original is checked against `original_sha256` when the snapshot is made).
+- `undname-cache.bin`: the undecorated names. A run that had to run undname saves them, this build's names
+  first, then as many of other builds' names.
+- `code-original.bin`: the original's decoded functions, each used while its bytes and relocations are as kept.
+- `sources-cache.bin`: each source file's annotations and content hash, used while the file keeps its size and
+  modification time (a file changed within two seconds of the run is read again).
+- `diff-cache.bin`: each DIFF's category and instruction diff, keyed by the two instruction streams as compared.
+
+The last three belong to the verifier build that wrote them: another build starts them afresh. The directory can
+be deleted at any time; the next run rebuilds what it needs.
 
 ## Usage
 
@@ -109,7 +120,8 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs --json ou
 
 - `--config FILE`: the configuration (default `verifier.conf`).
 - `--src DIR...`: source trees to read annotations from.
-- `--json FILE`: write the full report (every result with its problems, category, diff; and the totals).
+- `--json FILE`: write the full report (every result with its problems and category, a DIFF's instruction diff,
+  and the totals).
 - `--show 0x<va>`: print that function's two instruction streams side by side.
 - `--matched FILE`: the regression list, functions that must keep matching. `--check` exits 1 when one no
   longer matches (or on `LIBCODE`); `--update` adds the new matches to it (and refuses while something
@@ -125,7 +137,7 @@ the first differing instruction or problem), warnings for read-only `GLOBAL`s wh
 original's, then the totals: matches, categories, coverage of the original's functions and bytes (library
 code, thunks and EH funclets excluded) and the linked-library line.
 
-Set `VERIFIER_TIMING=1` to print each phase's time and memory on stderr.
+Set `VERIFIER_TIMING=1` to print each phase's time and memory, and what the cache directory supplied, on stderr.
 
 ## Building
 
@@ -146,14 +158,16 @@ ctest --test-dir build -C Release
 ```
 
 The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 34 cases in code: pairing (inference taken back when it fails, local
-statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key,
-hashing, the stamp key, file reading, line splitting and the name table. `ctest` also runs fadec's own decoder tests.
+exact problems it must report, and 39 cases in code: pairing (inference taken back when it fails, local
+statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key and
+record, hashing, the stamp key, file reading, line splitting, the name table, and the cache directory's code,
+diff and sources stores. `ctest` also runs fadec's own decoder tests.
 
 ## Performance
 
-On a 12 MB binary with 5,800 annotated functions, a run takes about 0.5 seconds and 80 MB on one core
-(with the name cache and the snapshot warm), and a replay of unchanged inputs about 15 ms.
+On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.23 seconds and 100 MB on one core with
+the cache directory warm (about 0.33 seconds when only the snapshot and the name cache are), and a replay of
+unchanged inputs about 15 ms.
 
 ## License
 
