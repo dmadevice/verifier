@@ -308,6 +308,15 @@ std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
 
 namespace {
 
+// what the summary and the regression gate read of a result once its line and report entry are made
+struct Outcome {
+  u64 va;
+  std::string_view kind;  // the annotation's
+  std::string status;
+  std::optional<std::string> category;
+  std::string name;
+};
+
 struct Totals {
   std::set<u64> matched;
   Value fields = Value::object();
@@ -327,7 +336,9 @@ std::string count_list(const std::vector<std::pair<std::string, i64>>& v) {  // 
   return join(parts, ", ");
 }
 
-Totals summarize(const std::vector<Result>& results, const Original& orig, Out& out, const std::string& module) {
+// `libcode`: the LIBCODE results (in full: their errors name where they are)
+Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>& libcode, const Original& orig,
+                 Out& out, const std::string& module) {
   Totals t;
   for (auto& r : results)
     if (r.status == "MATCH" && is_counted(r.kind)) t.matched.insert(r.va);
@@ -360,8 +371,8 @@ Totals summarize(const std::vector<Result>& results, const Original& orig, Out& 
       ++lib_checked;
       lib_match += r.status == "MATCH";
     }
-    if (r.status == "LIBCODE") t.libcode.push_back(&r);
   }
+  for (auto& r : libcode) t.libcode.push_back(&r);
   for (auto* r : t.libcode) {
     std::string sym = r->symbol.value_or("");
     out.print("ERROR " + r->orig + " (" + r->src + ") is linked library code from " + r->lib +
@@ -392,7 +403,7 @@ Totals summarize(const std::vector<Result>& results, const Original& orig, Out& 
   return t;
 }
 
-bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Result>& results,
+bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Outcome>& results,
                      bool update, Out& out) {
   std::map<u64, std::string> prev;
   if (file_exists(path)) {
@@ -550,11 +561,13 @@ void pick_destructors(std::vector<Annotation>& anns, const Original& orig, const
     if (ann.flags.dtor) ann.name = pick_destructor(ann.name, slots.count(ann.va) != 0, has_code);
 }
 
-// every compared annotation's result, in address order, and the report's results array as they are made (a result
-// keeps only what stdout and the summary need)
+// every compared annotation's result, in address order: its stdout line and report entry made as it is evaluated,
+// and what the summary reads kept
 struct Evaluated {
-  std::vector<Result> results;
-  std::string report;  // "{ "results": [...]" when there is a report; the totals are added after
+  std::vector<Outcome> results;
+  std::vector<Result> libcode;  // the LIBCODE results
+  std::string lines;            // the results' stdout lines
+  std::string report;           // "{ "results": [...]" when there is a report; the totals are added after
 };
 Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb, Pairing& pairing,
                        Comparer& cmp, DiffStore& diffs, const RunState& s, Out& out) {
@@ -575,12 +588,15 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
     ev.report = "{\n  \"results\": ";
   }
   for (auto* ann : order) {
-    ev.results.push_back(
-        evaluate(*ann, orig, reb, pairing, cmp, s.p.root, show && *show == ann->va, out, true, &diffs));
-    if (!s.a.json) continue;
-    ev.report += ev.results.size() == 1 ? "[\n    " : ",\n    ";
-    write_result(ev.report, ev.results.back(), 2);
-    std::vector<std::string>().swap(ev.results.back().diff);  // written: its lines and their array freed
+    Result r = evaluate(*ann, orig, reb, pairing, cmp, s.p.root, show && *show == ann->va, out, true, &diffs);
+    ev.lines += result_line(r, s.p.module);
+    ev.lines += '\n';
+    if (s.a.json) {
+      ev.report += ev.results.empty() ? "[\n    " : ",\n    ";
+      write_result(ev.report, r, 2);
+    }
+    ev.results.push_back({r.va, ann->kind, r.status, r.category, r.name});
+    if (r.status == "LIBCODE") ev.libcode.push_back(std::move(r));
   }
   if (s.a.json) ev.report += ev.results.empty() ? "[]" : "\n  ]";
   return ev;
@@ -677,9 +693,10 @@ int run(int argc, char** argv) {
   diff_store.save();
   s.ph.mark("code and diff stores");
 
-  for (auto& r : ev.results) out.print(result_line(r, p.module));
+  out.write(ev.lines);
+  std::string().swap(ev.lines);
   print_warnings(anns, ignored, reb, pairing, cmp, p.root, out);
-  Totals totals = summarize(ev.results, orig, out, p.module);
+  Totals totals = summarize(ev.results, ev.libcode, orig, out, p.module);
   s.ph.mark("globals+summary");
 
   // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run

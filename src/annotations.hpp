@@ -32,7 +32,7 @@ struct Ignored {
   std::string text;
 };
 
-bool is_counted(const std::string& kind);                           // FUNCTION SYNTHETIC TEMPLATE
+bool is_counted(std::string_view kind);                             // FUNCTION SYNTHETIC TEMPLATE
 bool is_paired(const std::string& kind);                            // counted + LIBRARY
 std::optional<std::string> sig_flag(const AnnotationFlags& flags);  // the parameter list, if any
 

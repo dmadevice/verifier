@@ -22,7 +22,7 @@
 
 namespace verifier {
 
-bool is_counted(const std::string& k) { return k == "FUNCTION" || k == "SYNTHETIC" || k == "TEMPLATE"; }
+bool is_counted(std::string_view k) { return k == "FUNCTION" || k == "SYNTHETIC" || k == "TEMPLATE"; }
 bool is_paired(const std::string& k) { return is_counted(k) || k == "LIBRARY"; }
 
 std::optional<std::string> sig_flag(const AnnotationFlags& flags) {
