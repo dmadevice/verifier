@@ -442,27 +442,46 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
     for (size_t i = 0; i < syms.size(); ++i) syms[i].second = nc.text(infos[i].decorated);
   }
   symbols = Symbols(syms);
-  // the symbols by qualified name (counting sort by id: map order within each)
+  // this build's qualified names, numbered in map order; the symbols by that number (counting sort: map order within
+  // each)
   u32 nids = nc.string_count();
-  qual_first_.assign(size_t(nids) + 1, 0);
-  for (auto& ni : infos) ++qual_first_[ni.qualified + 1];
-  for (u32 q = 0; q < nids; ++q) qual_first_[q + 1] += qual_first_[q];
+  std::vector<u32> local(nids, 0);  // NameCache id -> number + 1
+  std::vector<u32> first_sym;       // by number: its first symbol
+  for (u32 i = 0; i < infos.size(); ++i)
+    if (!local[infos[i].qualified]) {
+      qual_ids_.push_back(infos[i].qualified);
+      first_sym.push_back(i);
+      local[infos[i].qualified] = u32(qual_ids_.size());
+    }
+  u32 nq = u32(qual_ids_.size());
+  qual_first_.assign(size_t(nq) + 1, 0);
+  for (auto& ni : infos) ++qual_first_[local[ni.qualified]];
+  for (u32 q = 0; q < nq; ++q) qual_first_[q + 1] += qual_first_[q];
   qual_syms_.resize(syms.size());
   {
     std::vector<u32> fill(qual_first_.begin(), qual_first_.end() - 1);
     for (size_t i = 0; i < syms.size(); ++i)
-      qual_syms_[fill[infos[i].qualified]++] = {syms[i].first, nc.text(infos[i].signature)};
+      qual_syms_[fill[local[infos[i].qualified] - 1]++] = {syms[i].first, nc.text(infos[i].signature)};
   }
-  // the qualified names by last one and two components, in map order
-  std::vector<char> seen(nids), code_q(nids);
-  for (auto& c : by_last_) c.first = c.last = c.next = std::vector<u32>(nids, 0);
-  for (auto& ni : infos) {
-    u32 q = ni.qualified;
-    if (seen[q]) continue;
-    seen[q] = 1;
-    by_last_[0].add(ni.last1, q);
-    by_last_[1].add(ni.last2, q);
+  // the numbers by the ids of their last one and two components (counting sort by id: map order within each)
+  {
+    std::vector<u32> firsts[2];  // by_last_[n] index of the first with each id
+    for (auto& f : firsts) f.assign(size_t(nids) + 1, 0);
+    for (u32 q = 0; q < nq; ++q) {  // a qualified name's components are those of its first symbol's
+      const NameIds& ni = infos[first_sym[q]];
+      ++firsts[0][ni.last1 + 1];
+      ++firsts[1][ni.last2 + 1];
+    }
+    for (auto& f : firsts)
+      for (u32 k = 0; k < nids; ++k) f[k + 1] += f[k];
+    for (auto& b : by_last_) b.resize(nq);
+    for (u32 q = 0; q < nq; ++q) {
+      const NameIds& ni = infos[first_sym[q]];
+      by_last_[0][firsts[0][ni.last1]++] = {ni.last1, q};
+      by_last_[1][firsts[1][ni.last2]++] = {ni.last2, q};
+    }
   }
+  std::vector<char> code_q(nids);
   std::unordered_map<std::string_view, u64, SvHash> code_by_dec;
   for (size_t i = 0; i < syms.size(); ++i) {
     auto& [va, d] = syms[i];
@@ -495,30 +514,23 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
   }
 }
 
-void Rebuilt::Chain::add(u32 k, u32 q) {
-  if (last[k])
-    next[last[k] - 1] = q + 1;
-  else
-    first[k] = q + 1;
-  last[k] = q + 1;
-}
-
 std::vector<u32> Rebuilt::matching(const std::string& key) const {
   // `key` names q when it is q or the part of q after one of its "::" (found left to right): then its last one
   // and two components are q's
   std::vector<u32> out;
   if (!names_) return out;
   int n = last_components(key, 1).size() == key.size() ? 1 : 2;
-  const Chain& c = by_last_[n - 1];
+  const auto& b = by_last_[n - 1];
   auto k = names_->id_of(last_components(key, n));
-  if (!k || *k >= c.first.size()) return out;
-  for (u32 q1 = c.first[*k]; q1; q1 = c.next[q1 - 1]) {
-    std::string_view q = names_->text(q1 - 1);
+  if (!k) return out;
+  for (auto it = std::lower_bound(b.begin(), b.end(), std::pair<u32, u32>{*k, 0}); it != b.end() && it->first == *k;
+       ++it) {
+    std::string_view q = names_->text(qual_ids_[it->second]);
     bool hit = q == key;
     if (!hit && q.size() > key.size() + 1 && q.ends_with(key))
       for (size_t p = q.find("::"); !hit && p != std::string_view::npos; p = q.find("::", p + 2))
         hit = q.substr(p + 2) == key;
-    if (hit) out.push_back(q1 - 1);
+    if (hit) out.push_back(it->second);
   }
   return out;
 }
@@ -537,8 +549,8 @@ Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>
       vas.insert(s.va);
     }
   }
-  return {std::vector<u64>(vas.begin(), vas.end()), hits.size() == 1 ? std::string(names_->text(hits[0])) : key,
-          hits.size()};
+  return {std::vector<u64>(vas.begin(), vas.end()),
+          hits.size() == 1 ? std::string(names_->text(qual_ids_[hits[0]])) : key, hits.size()};
 }
 
 std::vector<std::string> Rebuilt::overloads_of(const std::string& key) const {

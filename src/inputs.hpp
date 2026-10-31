@@ -154,20 +154,18 @@ class Rebuilt {
 
  private:
   NameCache* names_ = nullptr;
-  // what lookup() reads: by qualified name (its NameCache id), the address and parameter list of each symbol with
-  // that name, in map order (CSR); and the qualified names by their last one and two components, in map order
+  // what lookup() reads: this build's qualified names (NameCache ids), numbered in map order; by that number, the
+  // address and parameter list of each symbol with that name, in map order (CSR); and the numbers by the ids of
+  // their last one and two components (sorted: map order within each)
   struct QualSym {
     u64 va;
     std::string_view sig;
   };
-  std::vector<u32> qual_first_;
+  std::vector<u32> qual_ids_, qual_first_;
   std::vector<QualSym> qual_syms_;
-  struct Chain {  // by the id of the last components: the qualified names with them, a list through `next` (id + 1)
-    std::vector<u32> first, last, next;
-    void add(u32 k, u32 q);
-  };
-  Chain by_last_[2];
-  std::vector<u32> matching(const std::string& key) const;  // the qualified names `key` names, in map order
+  std::vector<std::pair<u32, u32>> by_last_[2];
+  std::vector<u32> matching(
+      const std::string& key) const;  // the numbers of the qualified names `key` names, in map order
   struct {
     std::string name;
     std::vector<u32> hits;
