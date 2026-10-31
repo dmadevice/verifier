@@ -114,8 +114,15 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.name = ann.name;
   rec.kind = ann.kind;
   rec.src = where_of(ann.path, root) + ":" + std::to_string(ann.line);
-  auto lk = reb.lookup(ann.name, sig_flag(ann.flags), true);
-  rec.overloads = reb.overloads_of(ann.name);
+  // pairing has looked the name up already (the same key: a compared annotation's name, its parameter list, code)
+  Lookup lk;
+  if (const Pairing::Paired* pd = pairing.paired(ann)) {
+    lk = pd->lookup;
+    rec.overloads = pd->overloads;
+  } else {
+    lk = reb.lookup(ann.name, sig_flag(ann.flags), true);
+    rec.overloads = reb.overloads_of(ann.name);
+  }
   if (!orig.functions.contains(ova)) { rec.status = "BADADDR"; return rec; }
   if (is_counted(ann.kind) && orig.linked.count(ova)) {
     rec.status = "LIBCODE";

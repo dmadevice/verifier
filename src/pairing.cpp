@@ -18,6 +18,12 @@ bool any_prefix(std::string_view n, std::initializer_list<const char*> ps) {
   return false;
 }
 
+// what a compared annotation is looked up by: its name and parameter list
+std::string paired_key(const Annotation& a) {
+  auto sig = sig_flag(a.flags);
+  return a.name + '\0' + (sig ? "1" + *sig : "0");
+}
+
 bool is_const_name(std::string_view n) { return any_prefix(n, {"__real@", "__xmm@", "__mask@"}); }
 
 // an original vftable name of a class with several bases, `??_7<class>@@6B@` or `??_7<class>@@6B@_<n>`: the part up to
@@ -53,10 +59,15 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
   pair_vftables();
   for (auto& a : anns) {
     std::string key = a.kind == "VTABLE" ? a.name + "::`vftable'" : a.name;
-    for (u64 rva : reb.lookup(key, sig_flag(a.flags), is_paired(a.kind)).vas) {
+    Lookup lk = reb.lookup(key, sig_flag(a.flags), is_paired(a.kind));
+    for (u64 rva : lk.vas) {
       reb_to_orig[rva] = a.va;
       reb_to_origs[rva].insert(a.va);
       if (a.kind != "STUB") paired_o.insert(a.va);
+    }
+    if (is_paired(a.kind)) {
+      std::string pk = paired_key(a);
+      if (!paired_.count(pk)) paired_.emplace(std::move(pk), Paired{std::move(lk), reb.overloads_of(a.name)});
     }
   }
   std::set<u64> ao;
@@ -66,7 +77,12 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
 
 Pairing::Pairing(const Pairing& b)
     : orig(b.orig), reb(b.reb), reb_to_orig(b.reb_to_orig), reb_to_origs(b.reb_to_origs),
-      annotated_o(b.annotated_o), paired_o(b.paired_o), vftables_(b.vftables_) {}
+      annotated_o(b.annotated_o), paired_o(b.paired_o), vftables_(b.vftables_), paired_(b.paired_) {}
+
+const Pairing::Paired* Pairing::paired(const Annotation& a) const {
+  auto it = paired_.find(paired_key(a));
+  return it == paired_.end() ? nullptr : &it->second;
+}
 
 std::optional<u64> Pairing::named(std::string_view n) const {
   if (const u64* va = orig.by_name.find(n)) return *va;

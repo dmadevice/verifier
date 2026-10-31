@@ -47,6 +47,11 @@ class Pairing {
 
   std::set<u64> paired_o;   // originals a non-STUB annotation pairs
 
+  // a compared annotation's rebuilt symbols and the overloads of its name, as pairing looked them up (nullptr for an
+  // annotation pairing was not given)
+  struct Paired { Lookup lookup; std::vector<std::string> overloads; };
+  const Paired* paired(const Annotation& a) const;
+
   using Votes = std::map<u64, std::map<std::optional<u64>, u64>>;
   // votes_fn: the local static votes to decide from instead of computing every voter's (mutation probes)
   Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache,
@@ -71,7 +76,8 @@ class Pairing {
 
  private:
   void pair_vftables();
-  SvViewMap<u64> vftables_;   // rebuilt vftable names of classes with several bases, not among the original's names
+  SvViewMap<u64> vftables_;
+  std::unordered_map<std::string, Paired> paired_;   // by paired_key()   // rebuilt vftable names of classes with several bases, not among the original's names
   void prebind_locals(const std::function<std::map<u64, Votes>(Pairing&)>& votes_fn);
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   std::vector<u64> named_;   // original addresses with a name (sorted, distinct)
