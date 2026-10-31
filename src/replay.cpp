@@ -8,20 +8,25 @@
 
 #include "content_hash.hpp"
 #include "inputs.hpp"
-#include "sha256.hpp"
 
 namespace verifier {
 
 namespace {
 
-// a key's field: its length, then its bytes (no two lists of fields hash alike)
-void add_field(Sha256& h, std::string_view data) {
-  u64 n = data.size();
-  char len[8];
-  std::memcpy(len, &n, 8);
-  h.update(std::string_view(len, 8));
-  h.update(data);
-}
+// A key: its fields (each its length, then its bytes, so no two lists of fields hash alike), content-hashed
+class KeyFields {
+ public:
+  void add(std::string_view data) {
+    u64 n = data.size();
+    char len[8];
+    std::memcpy(len, &n, 8);
+    text_.append(len, 8).append(data);
+  }
+  std::string hexdigest() const { return content_hash(text_); }
+
+ private:
+  std::string text_;
+};
 
 }  // namespace
 
@@ -35,9 +40,9 @@ std::vector<std::string> source_files(const Args& a) {
 std::string run_key(const Args& a, const Config& p, const std::string& verifier,
                     const std::vector<std::string>& sources,
                     const std::function<std::string(const std::string&)>& hash) {
-  Sha256 h;
-  auto add = [&](std::string_view data) { add_field(h, data); };
-  add("verifier 5");
+  KeyFields h;
+  auto add = [&](std::string_view data) { h.add(data); };
+  add("verifier 6");
   add(verifier);
   std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.undname};
   // the original and the exports: a run that reads them only through the snapshot (a cache, and none of them changed
@@ -69,15 +74,15 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe) {
 
 std::string stamp_key(const Args& a, const Config& p, const std::string& exe, const std::vector<ListedFile>& sources,
                       i64 recent) {
-  Sha256 h;
-  auto add = [&](std::string_view data) { add_field(h, data); };
+  KeyFields h;
+  auto add = [&](std::string_view data) { h.add(data); };
   bool racy = false;
   auto stamp = [&](const std::string& f) {
     i64 t = std::numeric_limits<i64>::min();  // none for an absent file (the clock's epoch may make times negative)
     add(f.empty() ? "" : file_stamp(f, &t));
     racy |= t >= recent;
   };
-  add("verifier stamps 2");
+  add("verifier stamps 3");
   stamp(exe);
   for (auto* f : {&a.rebuilt, &a.map, &p.undname}) stamp(*f);
   stamp(a.matched.value_or(""));
@@ -94,10 +99,10 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe, co
 }
 
 std::string command_key(const std::vector<std::string>& args, const Config& p) {
-  Sha256 h;
-  for (auto& s : args) add_field(h, s);
-  add_field(h, p.root);
-  add_field(h, sha256_file_if_present(p.file));
+  KeyFields h;
+  for (auto& s : args) h.add(s);
+  h.add(p.root);
+  h.add(content_hash_file_if_present(p.file));
   return h.hexdigest();
 }
 
@@ -124,7 +129,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
     return true;
   };
   std::string_view version, rec_command, rec_image_stamp, rec_stamps, rec_image, rec_key;
-  if (!line(version) || version != "verifier-last 8" || !line(rec_command) || rec_command != command ||
+  if (!line(version) || version != "verifier-last 9" || !line(rec_command) || rec_command != command ||
       !line(rec_image_stamp) || !line(rec_stamps) || !line(rec_image) || !line(rec_key))
     return false;
   last.by_stamps = rec_image_stamp == image_stamp && rec_stamps != "-" && rec_stamps == stamps();
@@ -150,7 +155,7 @@ void save_last(const std::string& path, const std::string& command, const std::s
   std::string rec;  // built in place: the output is megabytes
   rec.reserve(256 + command.size() + stamps.size() + out.size());
   for (std::string_view part :
-       {std::string_view("verifier-last 8\n"), std::string_view(command), std::string_view("\n"),
+       {std::string_view("verifier-last 9\n"), std::string_view(command), std::string_view("\n"),
         std::string_view(image_stamp), std::string_view("\n"),
         stamps.empty() ? std::string_view("-") : std::string_view(stamps), std::string_view("\n"),
         std::string_view(image), std::string_view("\n"), std::string_view(key), std::string_view("\n")})
