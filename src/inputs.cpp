@@ -26,68 +26,20 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
   return line.substr(0, head.size()) == head && member_int(line, head.size(), ea, end);
 }
 
-// The snapshot: the key and the string table (each length-prefixed), then the fields: little-endian u64s, and
-// strings as (offset, length) in the table, which holds each distinct string once. Only the table is kept once read.
-struct Writer {
-  std::string out, strings;
-  std::unordered_map<std::string, u64> at;  // string -> offset in `strings`
-  void u(u64 v) { out.append(reinterpret_cast<const char*>(&v), 8); }
-  void bytes(std::string_view x) {
-    u(x.size());
-    out += x;
-  }  // a length-prefixed part (Reader::raw)
-  void s(std::string_view x) {
-    auto [it, fresh] = at.try_emplace(std::string(x), strings.size());
-    if (fresh) strings += x;
-    u(it->second);
-    u(x.size());
-  }
-  std::string file(std::string_view key) const {
-    std::string f;
-    for (std::string_view part : {key, std::string_view(strings)}) {
-      u64 n = part.size();
-      f.append(reinterpret_cast<const char*>(&n), 8);
-      f += part;
-    }
-    return f + out;
-  }
-};
-struct Reader {
-  std::string_view in, strings;
-  size_t p = 0;
-  bool ok = true;
-  u64 u() {
-    if (!ok || in.size() - p < 8) {
-      ok = false;
-      return 0;
-    }
-    u64 v = le64(in.data() + p);
-    p += 8;
-    return v;
-  }
-  std::string_view raw() {  // a length-prefixed part
-    u64 n = u();
-    if (!ok || in.size() - p < n) {
-      ok = false;
-      return {};
-    }
-    std::string_view r = in.substr(p, n);
-    p += n;
-    return r;
-  }
-  std::string_view s() {  // a string in the table
-    u64 off = u(), n = u();
-    if (!ok || off > strings.size() || strings.size() - off < n) {
-      ok = false;
-      return {};
-    }
-    return strings.substr(off, n);
-  }
-  // a count of items each at least `min_bytes` long (guards the reservations against a damaged file)
-  u64 count(size_t min_bytes) {
-    u64 n = u();
-    if (ok && n > (in.size() - p) / min_bytes) ok = false;
-    return ok ? n : 0;
+// The snapshot: its header (format and key), the string table (u64 length, then the text), then the fields as u64s,
+// a string as (offset, length) in the table, which holds each distinct string once; then the image's headers
+// (u64 length, then the bytes), where the laid-out image starts (page-aligned) and its size, and the image. Only the
+// table and the image are used in place once read.
+constexpr std::string_view SNAPSHOT_MAGIC = "verifier-snapshot 5\n";
+
+struct StringTable {
+  std::string text;
+  std::unordered_map<std::string, u64> at;  // string -> offset in `text`
+  void put(BinWriter& w, std::string_view s) {
+    auto [it, fresh] = at.try_emplace(std::string(s), text.size());
+    if (fresh) text += s;
+    w.put(it->second);
+    w.put(u64(s.size()));
   }
 };
 
@@ -272,117 +224,141 @@ std::string Original::snapshot_key(const Config& p) {
 }
 
 void Original::save_snapshot(const std::string& path, const std::string& key) const {
-  Writer w;
-  w.u(functions.size());
+  BinWriter w;
+  StringTable st;
+  auto u = [&](u64 v) { w.put(v); };
+  u(functions.size());
   for (const IdaFunction& f : functions) {
-    w.u(f.ea);
-    w.u(f.size);
-    w.s(f.name);
-    w.u(u64(f.lib) | u64(f.thunk) << 1);
+    u(f.ea);
+    u(f.size);
+    st.put(w, f.name);
+    u(u64(f.lib) | u64(f.thunk) << 1);
   }
-  w.u(vtables.size());
+  u(vtables.size());
   for (auto& [ea, slots] : vtables) {
-    w.u(ea);
-    w.u(slots.size());
-    for (u64 s : slots) w.u(s);
+    u(ea);
+    u(slots.size());
+    for (u64 s : slots) u(s);
   }
-  w.u(by_name.size());
+  u(by_name.size());
   for (auto& [name, va] : by_name) {
-    w.s(name);
-    w.u(va);
+    st.put(w, name);
+    u(va);
   }
   const std::vector<u32>& index = by_name.index();  // restored as it is, not made again from the names
-  w.bytes(std::string_view(reinterpret_cast<const char*>(index.data()), index.size() * 4));
-  w.u(linked.size());
+  u(index.size());
+  w.array(index.data(), index.size());
+  u(linked.size());
   for (auto& [ea, l] : linked) {
-    w.u(ea);
-    w.s(l.lib);
-    w.s(l.symbol);
-    w.u(l.has_symbol);
+    u(ea);
+    st.put(w, l.lib);
+    st.put(w, l.symbol);
+    u(l.has_symbol);
   }
   for (auto* v : {&boundaries_, &align_starts_, &align_ends_}) {
-    w.u(v->size());
-    for (u64 x : *v) w.u(x);
+    u(v->size());
+    for (u64 x : *v) u(x);
   }
-  w.u(data_names_.size());
-  for (u64 x : data_names_) w.u(x);
-  w.s("end");
-  // then the image: its headers, and where the laid-out image starts (page-aligned) and its size
-  std::string f = w.file(key);
-  auto put = [&](u64 v) { f.append(reinterpret_cast<const char*>(&v), 8); };
-  put(img.headers.size());
-  f += img.headers;
-  u64 at = (f.size() + 16 + 4095) / 4096 * 4096;
-  put(at);
-  put(img.img.size());
-  f.resize(at, '\0');
-  f += img.img;
-  write_cache_file(path, f);
+  u(data_names_.size());
+  for (u64 x : data_names_) u(x);
+  st.put(w, "end");
+  BinWriter f;
+  f.out = cache_header(SNAPSHOT_MAGIC, key);
+  f.put(u64(st.text.size()));
+  f.out += st.text;
+  f.out += w.out;
+  f.put(u64(img.headers.size()));
+  f.out += img.headers;
+  u64 at = (f.out.size() + 16 + 4095) / 4096 * 4096;
+  f.put(at);
+  f.put(u64(img.img.size()));
+  f.out.resize(at, '\0');
+  f.out += img.img;
+  write_cache_file(path, f.out);
 }
 
 bool Original::load_snapshot(const std::string& path, const std::string& key) {
-  if (!file_exists(path)) return false;
+  std::string head = cache_header(SNAPSHOT_MAGIC, key);
+  std::shared_ptr<const MappedFile> file = open_cache_file(path, head);
+  if (!file) return false;
   Original o;  // filled, then taken only when the whole file reads
-  try {
-    o.snapshot_ = std::make_shared<MappedFile>(path);
-  } catch (...) { return false; }
-  std::string_view data = o.snapshot_->view();
-  Reader r{data, {}};
-  if (r.raw() != key) return false;
-  r.strings = r.raw();  // the names are views of it
+  o.snapshot_ = file;
+  std::string_view data = file->view();
+  BinReader r(data, head.size());
+  bool bad = false;
+  auto u = [&] {
+    u64 v = 0;
+    r.get(v);
+    return v;
+  };
+  // a count of items each at least `min_bytes` long (guards the reservations against a damaged file)
+  auto count = [&](size_t min_bytes) {
+    u64 n = u();
+    if (n > r.left() / min_bytes) bad = true;
+    return bad ? 0 : n;
+  };
+  std::string_view strings = r.take(u());  // the names are views of it
+  auto s = [&]() -> std::string_view {     // a string in the table
+    u64 off = u(), n = u();
+    if (off > strings.size() || strings.size() - off < n) {
+      bad = true;
+      return {};
+    }
+    return strings.substr(off, n);
+  };
   std::vector<IdaFunction> fs;
-  u64 nfs = r.count(32);
+  u64 nfs = count(32);
   fs.reserve(nfs);
   for (u64 n = nfs; n--;) {
     IdaFunction f;
-    f.ea = r.u();
-    f.size = r.u();
-    f.name = r.s();
-    u64 flags = r.u();
+    f.ea = u();
+    f.size = u();
+    f.name = s();
+    u64 flags = u();
     f.lib = flags & 1;
     f.thunk = flags & 2;
     fs.push_back(f);
   }
   o.functions.assign(std::move(fs));
-  for (u64 n = r.count(16); n--;) {
-    u64 ea = r.u();
+  for (u64 n = count(16); n--;) {
+    u64 ea = u();
     auto& slots = o.vtables[ea];
-    for (u64 k = r.count(8); k--;) slots.push_back(r.u());
+    for (u64 k = count(8); k--;) slots.push_back(u());
   }
-  u64 names = r.count(16);
+  u64 names = count(16);
   std::vector<NameTable::Entry> entries;
   entries.reserve(names);
   while (names--) {
-    std::string_view name = r.s();
-    entries.emplace_back(name, r.u());
+    std::string_view name = s();
+    entries.emplace_back(name, u());
   }
-  std::string_view index = r.raw();
-  if (!r.ok || index.size() % 4) return false;
-  std::vector<u32> slots(index.size() / 4);
+  std::vector<u32> slots(count(4));
+  std::string_view index = r.take(slots.size() * 4);
+  if (!r.ok() || bad) return false;
   std::memcpy(slots.data(), index.data(), index.size());
   if (!o.by_name.restore(std::move(entries), std::move(slots))) return false;
-  for (u64 n = r.count(32); n--;) {
-    u64 ea = r.u();
+  for (u64 n = count(32); n--;) {
+    u64 ea = u();
     Linked l;
-    l.lib = r.s();
-    l.symbol = r.s();
-    l.has_symbol = r.u() != 0;
+    l.lib = s();
+    l.symbol = s();
+    l.has_symbol = u() != 0;
     o.linked[ea] = std::move(l);
   }
   for (auto* v : {&o.boundaries_, &o.align_starts_, &o.align_ends_}) {
-    u64 n = r.count(8);
+    u64 n = count(8);
     v->reserve(n);
-    while (n--) v->push_back(r.u());
+    while (n--) v->push_back(u());
   }
-  u64 n = r.count(8);
+  u64 n = count(8);
   o.data_names_.reserve(n);
-  while (n--) o.data_names_.push_back(r.u());
+  while (n--) o.data_names_.push_back(u());
   if (std::adjacent_find(o.data_names_.begin(), o.data_names_.end(), std::greater_equal<u64>()) != o.data_names_.end())
     return false;  // not sorted and distinct
-  if (r.s() != "end" || !r.ok) return false;
-  std::string_view headers = r.raw();
-  u64 at = r.u(), size = r.u();
-  if (!r.ok || at % 4096 || at < r.p || at > data.size() || data.size() - at != size) return false;
+  if (s() != "end" || !r.ok() || bad) return false;
+  std::string_view headers = r.take(u());
+  u64 at = u(), size = u();
+  if (!r.ok() || at % 4096 || at < r.at() || at > data.size() || data.size() - at != size) return false;
   try {
     o.img = Image::laid_out(headers, data.substr(at), o.snapshot_);
   } catch (...) { return false; }

@@ -66,6 +66,8 @@ class BinReader {
   void pad8() { take((8 - p_ % 8) % 8); }
   bool ok() const { return ok_; }
   bool done() const { return p_ == in_.size(); }
+  size_t at() const { return p_; }                 // the position in the file
+  size_t left() const { return in_.size() - p_; }  // the bytes after it
 
  private:
   std::string_view in_;
