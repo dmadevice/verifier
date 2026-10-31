@@ -83,6 +83,8 @@ class Pairing {
   std::vector<u64> named_;   // original addresses with a name (sorted, distinct)
   JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
   JMap<u64, u64> inferred_r_;
+  Key resolve_symbol_uncached(u64 t) const;
+  mutable std::unordered_map<u64, Key> resolved_;   // resolve_symbol's answers
   int infer_depth_ = 0;
   std::unordered_map<u64, std::vector<u64>> refs_of_;
 };

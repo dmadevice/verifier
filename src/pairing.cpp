@@ -289,6 +289,13 @@ std::vector<u64> Pairing::orig_refs(u64 f) {
 }
 
 Key Pairing::resolve_symbol(u64 t) const {
+  // a function of the address alone once the pairing is made (its tables are not changed after): each address is
+  // worked out once for the run (a few thousand addresses take most of the calls: shared callees, RTTI)
+  if (auto it = resolved_.find(t); it != resolved_.end()) return it->second;
+  return resolved_.emplace(t, resolve_symbol_uncached(t)).first->second;
+}
+
+Key Pairing::resolve_symbol_uncached(u64 t) const {
   if (auto it = reb_to_orig.find(t); it != reb_to_orig.end()) return Key::of_va(it->second);
   auto names = reb.symbols.names(t);
   for (auto& n : names) if (is_const_name(n)) return Key::named_view(Key::CONST, n);
