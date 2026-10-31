@@ -57,14 +57,13 @@ class CodeCache {
   std::shared_ptr<const Code> code(u64 start, u64 end);
   void release(u64 start, u64 end) { live_.erase({start, end}); }
   struct Stats {
-    size_t functions = 0, insns = 0, code_bytes = 0;
+    size_t functions = 0, insns = 0;
   };
   Stats stats() const {
     Stats s;
     for (auto& [k, c] : live_) {
       ++s.functions;
       s.insns += c->insns.size();
-      s.code_bytes += c->code.size();
     }
     return s;
   }
