@@ -33,8 +33,8 @@ class CodeStore {
   size_t nindex_ = 0;
   std::string_view blobs_;
   std::vector<u16> mnem_;   // the file's mnemonic ids -> this run's
-  std::map<std::pair<u64, u64>, std::string> out_;   // this run's functions, as written: (start, end) -> blob
-  std::map<std::pair<u64, u64>, u64> checks_;
+  // the functions decoded here (not in the file as they are): (start, end) -> (check, entry as written)
+  std::map<std::pair<u64, u64>, std::pair<u64, std::string>> decoded_;
   Stats stats_;
   bool dirty_ = false;
   u64 check(u64 start, u64 end) const;

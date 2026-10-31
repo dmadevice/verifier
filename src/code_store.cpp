@@ -13,9 +13,9 @@ namespace verifier {
 namespace {
 
 // the file: header, padding to 8; the mnemonics (u64 count, then each as u16 length and text), padding to 8; the
-// index (u64 count, then Index records sorted by range); the entries, each: BlobHead, Lean[ninsns], Field[nfields],
-// (i64 offset, i64 entry size)[ntables]
-constexpr std::string_view MAGIC = "verifier-code 1\n";
+// index (u64 count, then Index records sorted by range); the entries, each 8-byte aligned: BlobHead, Lean[ninsns],
+// padding to 8, Field[nfields], (i64 offset, i64 entry size)[ntables]. The arrays are copied out as they are.
+constexpr std::string_view MAGIC = "verifier-code 2\n";
 
 struct BlobHead {
   u8 relocated, complete, has_resume, pad[5];
@@ -95,6 +95,7 @@ std::string CodeStore::blob(const Code& c) const {
   w.out.reserve(sizeof h + c.insns.size() * sizeof(Lean) + c.field_list.size() * sizeof(Field) + c.tables.size() * 16);
   w.put(h);
   w.array(c.insns.data(), c.insns.size());
+  w.pad8();
   w.array(c.field_list.data(), c.field_list.size());
   for (auto& [off, size] : c.tables) {
     w.put(off);
@@ -117,16 +118,18 @@ std::shared_ptr<const Code> CodeStore::from_blob(u64 start, u64 end, std::string
   c->complete = h.complete;
   c->cut = h.cut;
   if (h.has_resume) c->resume = h.resume;
-  std::string_view insns = r.take(h.ninsns * sizeof(Lean)), fields = r.take(h.nfields * sizeof(Field));
-  if (!r.ok()) return nullptr;
-  c->insns.resize(h.ninsns);
-  std::memcpy(c->insns.data(), insns.data(), insns.size());
+  std::string_view insns = r.take(h.ninsns * sizeof(Lean));
+  r.pad8();
+  std::string_view fields = r.take(h.nfields * sizeof(Field));
+  if (!r.ok() || reinterpret_cast<uintptr_t>(b.data()) % 8) return nullptr;   // entries are 8-byte aligned in the file
+  auto lean = reinterpret_cast<const Lean*>(insns.data());
+  auto field = reinterpret_cast<const Field*>(fields.data());
+  c->insns.assign(lean, lean + h.ninsns);
   for (auto& l : c->insns) {
     if (l.mnem >= mnem_.size()) return nullptr;
     l.mnem = mnem_[l.mnem];   // the file's numbering to this run's
   }
-  c->field_list.resize(h.nfields);
-  std::memcpy(c->field_list.data(), fields.data(), fields.size());
+  c->field_list.assign(field, field + h.nfields);
   for (u32 i = 0; i < h.ntables; ++i) {
     i64 off = 0, size = 0;
     r.get(off);
@@ -150,14 +153,12 @@ std::shared_ptr<const Code> CodeStore::code(u64 start, u64 end) {
   if (it != index_ + nindex_ && it->start == start && it->end == end && it->check == ck && it->offset + it->size <= blobs_.size()) {
     if (auto c = from_blob(start, end, blobs_.substr(it->offset, it->size))) {
       ++stats_.hits;
-      if (!out_.count(k)) { out_.emplace(k, std::string()); checks_[k] = ck; }   // written from the Code at save
       return c;
     }
   }
   auto c = std::make_shared<const Code>(img_, start, end);
   ++stats_.misses;
-  out_[k] = blob(*c);
-  checks_[k] = ck;
+  decoded_[k] = {ck, blob(*c)};
   dirty_ = true;
   return c;
 }
@@ -167,18 +168,14 @@ void CodeStore::save() {
   // lacks are decoded each run (microseconds) until there are enough to be worth writing the file again (milliseconds)
   if (path_.empty() || !dirty_ || (nindex_ && stats_.misses * 20 <= stats_.hits + stats_.misses)) return;
   auto t0 = std::chrono::steady_clock::now();
-  // every function written in this run's mnemonic ids: the ones read from the file are made again from it first
-  // (before it is replaced, and its mapping released), with the file's other entries that still hold
-  std::map<std::pair<u64, u64>, std::pair<u64, std::string>> all;
-  auto from_file = [&](u64 s, u64 e) { return blob(*code(s, e)); };
-  for (auto& [k, b] : out_) all[k] = {checks_[k], b};
-  for (auto& [k, v] : all)
-    if (v.second.empty()) v.second = from_file(k.first, k.second);
+  // the functions decoded here, and the file's entries that still hold (made again from it in this run's mnemonic ids,
+  // before it is replaced and its mapping released)
+  std::map<std::pair<u64, u64>, std::pair<u64, std::string>> all = std::move(decoded_);
   for (size_t i = 0; i < nindex_; ++i) {
     const Index& x = index_[i];
     auto k = std::make_pair(x.start, x.end);
-    if (all.count(k) || x.check != check(x.start, x.end)) continue;
-    all[k] = {x.check, from_file(x.start, x.end)};
+    if (all.count(k) || x.check != check(x.start, x.end) || x.offset + x.size > blobs_.size()) continue;
+    if (auto c = from_blob(x.start, x.end, blobs_.substr(x.offset, x.size))) all[k] = {x.check, blob(*c)};
   }
   BinWriter w;
   w.out = cache_header(MAGIC, key_);
