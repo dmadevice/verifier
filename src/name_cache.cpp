@@ -12,7 +12,7 @@ namespace verifier {
 
 // --- the name cache -----------------------------------------------------------------------------------------
 // A binary file, used in place (little-endian u32s):
-//   "verifier-names 2\n" key "\n", zero-padded to a multiple of 8
+//   "verifier-names 3\n" key "\n", zero-padded to a multiple of 8
 //   nstrings, nentries, entry_slots, string_slots     (slots: powers of two)
 //   string_end[nstrings]       string i is text[string_end[i-1], string_end[i])
 //   entries[nentries][8]       decorated, has_und, und, qualified, signature, owner, and the qualified name's last
@@ -22,10 +22,12 @@ namespace verifier {
 //   text
 // Every string is stored once, so equal strings have equal ids: the name tables compare ids. The entries are in
 // the order the build's map had them, so the next build's names are found by reading on (the index for the rest).
+// The text has the strings a run reads together: the newest build's first, its undecorated names (shown only on
+// request) after them, and the other builds' last.
 
 namespace {
 
-constexpr const char* NAMES_MAGIC = "verifier-names 2\n";
+constexpr const char* NAMES_MAGIC = "verifier-names 3\n";
 
 constexpr size_t ROW = 8;  // u32s per entry
 
@@ -230,14 +232,21 @@ void NameCache::save() {
     if (fresh) strs.push_back(s);
     return it->second;
   };
+  // the ids, in the order the text keeps them
+  std::vector<NameIds> infos;
+  infos.reserve(names.size());
+  for (auto& n : names) infos.push_back(*find(n));
+  for (size_t k = 0; k < current; ++k)
+    for (u32 v :
+         {infos[k].decorated, infos[k].qualified, infos[k].signature, infos[k].owner, infos[k].last1, infos[k].last2})
+      id(text(v));
+  for (size_t k = 0; k < current; ++k) id(text(infos[k].und));
   std::vector<u32> ent;
   ent.reserve(ROW * names.size());
-  for (auto& n : names) {
-    NameIds ni = *find(n);
+  for (auto& ni : infos)
     for (u32 v : {id(text(ni.decorated)), u32(ni.has_und), id(text(ni.und)), id(text(ni.qualified)),
                   id(text(ni.signature)), id(text(ni.owner)), id(text(ni.last1)), id(text(ni.last2))})
       ent.push_back(v);
-  }
   u32 es = slots_for(names.size()), ss = slots_for(strs.size());
   std::vector<u32> ends;
   u64 total = 0;
