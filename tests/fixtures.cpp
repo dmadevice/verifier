@@ -22,6 +22,7 @@
 #include "names.hpp"
 #include "pairing.hpp"
 #include "report.hpp"
+#include "content_hash.hpp"
 #include "sha256.hpp"
 #include "verify.hpp"
 
@@ -641,11 +642,11 @@ Problems replay_key() {
   parse_annotations(a.src, "EXAMPLE", nullptr, [&](const ListedFile& f, std::string_view data) {
     seen.push_back(f.path);
     listed.push_back(f);
-    hashes[f.path] = sha256_hex(data);
+    hashes[f.path] = content_hash(data);
   });
   auto hash = [&](const std::string& f) {
     auto it = hashes.find(f);
-    return it != hashes.end() ? it->second : fs::exists(f) ? sha256_file(f) : std::string();
+    return it != hashes.end() ? it->second : fs::exists(f) ? content_hash_file_if_present(f) : std::string();
   };
   if (seen.size() != 3 || run_key(a, p, "verifier", seen, hash) != run_key(a, p, "verifier"))
     bad.push_back({"replay", "the key from parsing the sources differs from the walked one"});
@@ -1111,6 +1112,18 @@ Problems sha256_paths() {
 
 // the stamp key: the same for the same metadata, another when a file's time or size or the configuration's contents
 // change, and none while an input is younger than two seconds
+Problems content_hashes() {
+  Problems bad;
+  // XXH64's published values (the 39-byte input runs through the 32-byte stripes)
+  const std::pair<const char*, u64> known[] = {{"", 0xEF46DB3751D8E999ull}, {"a", 0xD24EC4F1A98C6E5Bull},
+                                               {"abc", 0x44BC2CF5AD770999ull},
+                                               {"Nobody inspects the spammish repetition", 0xFBCEA83C8A378BF1ull}};
+  for (auto& [text, h] : known)
+    if (xxh64(text, 0) != h) bad.push_back({"content hash", std::string("xxh64 of \"") + text + "\""});
+  if (content_hash("abc").size() != 32 || content_hash("abc") == content_hash("abd")) bad.push_back({"content hash", "abc"});
+  return bad;
+}
+
 Problems stamp_keys() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-stamps-" + unique_suffix());
@@ -1287,6 +1300,7 @@ int main(int argc, char** argv) {
       {"ignored annotations reported", nullptr, ignored_annotations},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
+      {"unit: content hash", nullptr, content_hashes},
       {"unit: file contents", nullptr, file_contents},
       {"unit: stamp key", nullptr, stamp_keys},
       {"unit: line splitting", nullptr, line_splitting},

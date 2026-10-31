@@ -10,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "content_hash.hpp"
 #include "sha256.hpp"
 
 #include <chrono>
@@ -510,7 +511,7 @@ std::string run_key(const Args& a, const Config& p, const std::string& verifier,
                     const std::function<std::string(const std::string&)>& hash) {
   Sha256 h;
   auto add = [&](std::string_view data) { add_field(h, data); };
-  add("verifier 4");
+  add("verifier 5");
   add(verifier);
   std::vector<std::string> files{a.rebuilt, a.map, a.matched.value_or(""), p.undname};
   // the original and the exports: with a cache a run reads them only through the snapshot, so its key stands for them
@@ -526,7 +527,7 @@ std::string run_key(const Args& a, const Config& p, const std::string& verifier,
 }
 
 std::string run_key(const Args& a, const Config& p, const std::string& verifier) {
-  return run_key(a, p, verifier, source_files(a), sha256_file_if_present);
+  return run_key(a, p, verifier, source_files(a), content_hash_file_if_present);
 }
 
 i64 two_seconds_ago() {
@@ -603,7 +604,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
     return true;
   };
   std::string_view version, rec_command, rec_image_stamp, rec_stamps, rec_image, rec_key;
-  if (!line(version) || version != "verifier-last 6" || !line(rec_command) || rec_command != command ||
+  if (!line(version) || version != "verifier-last 7" || !line(rec_command) || rec_command != command ||
       !line(rec_image_stamp) || !line(rec_stamps) || !line(rec_image) || !line(rec_key))
     return false;
   last.by_stamps = rec_image_stamp == image_stamp && rec_stamps != "-" && rec_stamps == stamps();
@@ -626,7 +627,7 @@ bool load_last(const std::string& path, const std::string& command, const std::s
 
 void save_last(const std::string& path, const std::string& command, const std::string& image_stamp, const std::string& stamps,
                const std::string& image, const std::string& key, const std::string& out, const std::string& report, int rc) {
-  write_file_atomic(path, "verifier-last 6\n" + command + "\n" + image_stamp + "\n" + (stamps.empty() ? "-" : stamps) + "\n" +
+  write_file_atomic(path, "verifier-last 7\n" + command + "\n" + image_stamp + "\n" + (stamps.empty() ? "-" : stamps) + "\n" +
                               image + "\n" + key + "\n" +
                               std::to_string(rc) + "\n" + std::to_string(out.size()) + "\n" + out +
                               std::to_string(report.size()) + "\n" + report);
@@ -642,15 +643,21 @@ int run(int argc, char** argv) {
   // keeps a record; its key holds the arguments, so a record is only replayed for the same command
   if (!(a.update || a.show)) last = path_join(dirname(abspath(a.rebuilt)), LAST_RUN);
   Phases ph;
-  // each file is hashed once: the replay key, the original's check and the name cache's key share them
-  std::unordered_map<std::string, std::string> hashes;   // "" for an absent file
+  // each file is hashed once: the replay record's inputs by content hash; the original's check and the name cache's
+  // key by SHA-256 (as configured, and as the cache file is keyed)
+  std::unordered_map<std::string, std::string> hashes;   // content hashes, "" for an absent file
   auto hash_if_present = [&](const std::string& f) {
     auto it = hashes.find(f);
-    if (it == hashes.end()) it = hashes.emplace(f, sha256_file_if_present(f)).first;
+    if (it == hashes.end()) it = hashes.emplace(f, content_hash_file_if_present(f)).first;
     return it->second;
   };
   auto hash = [&](const std::string& f) {
     std::string h = hash_if_present(f);
+    if (h.empty()) throw std::runtime_error("cannot read " + f);
+    return h;
+  };
+  auto sha256_of = [](const std::string& f) {
+    std::string h = sha256_file_if_present(f);
     if (h.empty()) throw std::runtime_error("cannot read " + f);
     return h;
   };
@@ -688,7 +695,7 @@ int run(int argc, char** argv) {
   }
   if (!last.empty()) ph.mark("replay key");
   Out out;
-  Original orig(p, hash);
+  Original orig(p, sha256_of);
   ph.mark("original");
   std::vector<Ignored> ignored;
   std::vector<ListedFile> listing;
@@ -696,12 +703,12 @@ int run(int argc, char** argv) {
   if (!last.empty())
     seen = [&](const ListedFile& f, std::string_view data) {
       listing.push_back(f);
-      if (key.empty()) hashes.emplace(f.path, sha256_hex(data));
+      if (key.empty()) hashes.emplace(f.path, content_hash(data));
     };
   auto anns = parse_annotations(a.src, p.module, &ignored, seen);
   check_duplicates(anns);
   ph.mark("annotations");
-  NameCache name_cache(p.names_cache(), "verifier names 1 " + hash(p.undname), p.undname);
+  NameCache name_cache(p.names_cache(), "verifier names 1 " + sha256_of(p.undname), p.undname);
   Rebuilt reb(a.rebuilt, a.map, name_cache);
   ph.mark("rebuilt+names");
   std::unordered_set<u64> slots;
