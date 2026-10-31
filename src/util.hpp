@@ -83,10 +83,10 @@ u64 parse_hex(std::string_view s);          // "0x..." or digits
 
 bool starts_with(std::string_view s, std::string_view p);
 bool ends_with(std::string_view s, std::string_view p);
-std::string strip(std::string_view s);   // without leading and trailing whitespace
-std::string rstrip(std::string_view s);  // without trailing whitespace
-std::string rstrip_char(std::string_view s, char c);
-std::vector<std::string> split_ws(std::string_view s);  // whitespace-separated fields
+std::string strip(std::string_view s);                     // without leading and trailing whitespace
+std::string rstrip(std::string_view s);                    // without trailing whitespace
+std::string_view rstrip_char(std::string_view s, char c);  // without the trailing c bytes
+std::vector<std::string> split_ws(std::string_view s);     // whitespace-separated fields
 inline bool is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 inline bool is_digit(char c) { return c >= '0' && c <= '9'; }
 inline int hex_digit(char c) {  // 0..15, -1 for a non-hex character

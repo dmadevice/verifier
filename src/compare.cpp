@@ -194,8 +194,7 @@ std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
     int same = 0;
     for (auto& [ob, rb] : bound_o.items()) same += rb == base;
     if (same < ctx->folded_locals(base)) {
-      Bytes rb = Bytes(R->bytes(base, i64(ctx->span(base))));
-      i64 n = i64(rstrip_char(rb, '\0').size());
+      i64 n = i64(rstrip_char(R->bytes(base, i64(ctx->span(base))), '\0').size());
       if (!n) n = 1;
       if (O->bytes(o_base, n) == O->bytes(*bound.find(base), n) && O->bytes(*bound.find(base), n) == R->bytes(base, n))
         bound_o.set(o_base, base);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <new>
@@ -266,10 +267,12 @@ std::string rstrip(std::string_view s) {
   return std::string(s.substr(0, b));
 }
 
-std::string rstrip_char(std::string_view s, char c) {
+std::string_view rstrip_char(std::string_view s, char c) {
   size_t b = s.size();
+  u64 all = 0x0101010101010101ull * static_cast<unsigned char>(c), w;
+  while (b >= 8 && (std::memcpy(&w, s.data() + b - 8, 8), w == all)) b -= 8;  // eight bytes at a time
   while (b > 0 && s[b - 1] == c) --b;
-  return std::string(s.substr(0, b));
+  return s.substr(0, b);
 }
 
 std::vector<std::string> split_ws(std::string_view s) {
