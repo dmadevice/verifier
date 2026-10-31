@@ -430,4 +430,16 @@ std::string relpath(const std::string& path, const std::string& root) {
   return r.empty() ? "." : r;
 }
 
+// this program's path ("" when unknown)
+std::string self_exe() {
+#ifdef _WIN32
+  wchar_t buf[32768];
+  DWORD n = GetModuleFileNameW(nullptr, buf, 32768);
+  return std::filesystem::path(std::wstring(buf, n)).string();
+#else
+  std::error_code ec;
+  return std::filesystem::read_symlink("/proc/self/exe", ec).string();
+#endif
+}
+
 }  // namespace verifier

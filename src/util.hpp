@@ -163,6 +163,7 @@ std::string percent(u64 part, u64 whole);     // "12.34%"
 // path relative to root ('/' or '\\' as the platform separator)
 std::string relpath(const std::string& path, const std::string& root);
 std::string path_join(const std::string& a, const std::string& b);
+std::string self_exe();   // this program's path ("" when unknown)
 std::string abspath(const std::string& p);
 std::string normpath(const std::string& p);
 std::string dirname(const std::string& p);

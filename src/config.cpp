@@ -18,7 +18,7 @@ namespace {
 
 }  // namespace
 
-std::string Config::names_cache() const { return cache_dir.empty() ? "" : path_join(cache_dir, "undname-cache.bin"); }
+std::string Config::cache_file(const std::string& name) const { return cache_dir.empty() ? "" : path_join(cache_dir, name); }
 
 Config Config::load(const std::string& path) {
   if (!file_exists(path)) fail("no configuration file " + path + " (see --config)");

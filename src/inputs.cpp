@@ -1,9 +1,10 @@
 #include "inputs.hpp"
 
+#include "cache_file.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 
 #include "json.hpp"
 #include "sha256.hpp"
@@ -159,7 +160,7 @@ Original::Original(const Config& p, const std::function<std::string(const std::s
   // run from the snapshot does not read the original, so the original is checked when the snapshot is made (its key
   // holds the configured hash)
   std::string key = snapshot_key(p);
-  std::string snapshot = p.cache_dir.empty() ? "" : path_join(p.cache_dir, "original-snapshot.bin");
+  std::string snapshot = p.cache_file("original-snapshot.bin");
   if (!snapshot.empty() && load_snapshot(snapshot, key)) return;
   if (!digest.empty() && hash_file(p.original) != digest) {
     std::fprintf(stderr, "original image hash mismatch: %s is not %s\n", p.original.c_str(), digest.c_str());
@@ -282,9 +283,7 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
   put(img.img.size());
   f.resize(at, '\0');
   f += img.img;
-  std::error_code ec;
-  std::filesystem::create_directories(config_->cache_dir, ec);
-  write_file_atomic(path, f);
+  write_cache_file(path, f);
 }
 
 bool Original::load_snapshot(const std::string& path, const std::string& key) {

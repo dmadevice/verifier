@@ -1,5 +1,7 @@
 #include "names.hpp"
 
+#include "cache_file.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -823,7 +825,7 @@ void NameCache::save() {
   put(build_index(names, es));
   put(build_index(strs, ss));
   for (auto& s : strs) out += s;
-  write_file_atomic(path_, out);   // replaces the file whole: runs that have the old one mapped keep reading it
+  write_cache_file(path_, out);   // replaces the file whole: runs that have the old one mapped keep reading it
 }
 
 }  // namespace verifier

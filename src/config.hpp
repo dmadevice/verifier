@@ -20,7 +20,8 @@ struct Config {
   std::string undname;               // MSVC undname.exe, or a program printing its output
   std::string cache_dir;             // where the name cache and the exports snapshot are kept (optional)
 
-  std::string names_cache() const;   // the cache file ("" when there is no cache_dir)
+  std::string cache_file(const std::string& name) const;   // a file in cache_dir ("" when there is none)
+  std::string names_cache() const { return cache_file("undname-cache.bin"); }
   // the original and the exports: what the snapshot is made from
   std::array<const std::string*, 8> snapshot_inputs() const {
     return {&original, &functions, &vtables, &data_items, &data_names, &library_matches, &library_functions, &symbols};

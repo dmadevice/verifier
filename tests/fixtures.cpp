@@ -24,6 +24,7 @@
 #include "json.hpp"
 #include "names.hpp"
 #include "pairing.hpp"
+#include "replay.hpp"
 #include "report.hpp"
 #include "content_hash.hpp"
 #include "sha256.hpp"
