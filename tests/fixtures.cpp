@@ -661,6 +661,11 @@ Problems local_static_names() {
       {"?table@?BA@??read_record@@YAHPEAUrecord@@PEAX@Z@4QBU<unnamed-type-table>"
        "@?BA@??1@YAH01@Z@B",
        true},
+      {"??_B?1??Get@Widget@@SAAEAV1@XZ@51", true},
+      {"??_B?BA@??Get@Widget@@SAAEAV1@XZ@51", true},
+      {"??_7Widget@@6B@", false},
+      {"??_B?1?Get@Widget@@SAAEAV1@XZ@51", false},
+      {"??_Bx?1??Get@Widget@@SAAEAV1@XZ@51", false},
       {"?g_foo@@3HA", false},
       {"?x@Cls@@2HA", false},
       {"?x@?A0x12345678@ns@@3HA", false},
@@ -668,6 +673,19 @@ Problems local_static_names() {
   Problems bad;
   for (auto& [n, want] : cases)
     if ((local_static_match(n) != 0) != want) bad.push_back({"local static", n});
+  return bad;
+}
+
+Problems containing_reach() {
+  // a large table with one symbol: every offset into it stays that symbol's, up to the next symbol
+  FakeRebuilt reb;
+  reb.symbols = symbols_at({BASE, BASE + 0x40000});
+  Problems bad;
+  if (reb.containing(BASE + 0x1c000) != BASE) bad.push_back({"containing", "inside a table past 64 KB"});
+  if (reb.containing(BASE + 0x3ffff) != BASE) bad.push_back({"containing", "last byte before the next symbol"});
+  if (reb.containing(BASE + 0x40000) != BASE + 0x40000) bad.push_back({"containing", "at the next symbol"});
+  if (reb.containing(BASE + 0x40000 + MAX_SYM_OFFSET)) bad.push_back({"containing", "past the limit"});
+  if (reb.containing(BASE - 1)) bad.push_back({"containing", "before the first symbol"});
   return bad;
 }
 
@@ -1971,6 +1989,7 @@ int main(int argc, char** argv) {
       {"leaf extent", nullptr, leaf_extent_case},
       {"decode at two addresses", nullptr, decode_case},
       {"local static names", nullptr, local_static_names},
+      {"containing symbol reach", nullptr, containing_reach},
       {"stub leaves its original open", nullptr, stub_pairing},
       {"GLOBAL bytes checked", nullptr, global_bytes},
       {"replay key", nullptr, replay_key},

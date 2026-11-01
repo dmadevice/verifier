@@ -521,24 +521,30 @@ std::string qualified(const std::string& und) {
 }
 
 size_t local_static_match(std::string_view d) {
-  // a local static or its guard: `?<name>@?<scope>??<owner>` or `?$S<n>@?<scope>??<owner>`, scope a digit or [A-P]+@
+  // a local static or its guard: `?<name>@?<scope>??<owner>`, `?$S<n>@?<scope>??<owner>`, or in an inline function
+  // `??_B?<scope>??<owner>`; scope a digit or [A-P]+@
   size_t n = d.size(), i = 0;
   if (i >= n || d[i] != '?') return 0;
   ++i;
-  size_t j = std::string::npos;
-  if (d.compare(i, 2, "$S") == 0) {
-    size_t k = skip_digits(d, i + 2);
-    if (k > i + 2 && k < n && d[k] == '@') j = k;
-  }
-  if (j == std::string::npos) {
-    if (i < n && d[i] != '@' && d[i] != '?' && d[i] != '$') {
-      size_t k = i + 1;
-      while (k < n && d[k] != '@') ++k;
-      if (k < n) j = k;
+  size_t k = std::string::npos;
+  if (d.compare(i, 4, "?_B?") == 0) {
+    k = i + 4;
+  } else {
+    size_t j = std::string::npos;
+    if (d.compare(i, 2, "$S") == 0) {
+      size_t e = skip_digits(d, i + 2);
+      if (e > i + 2 && e < n && d[e] == '@') j = e;
     }
+    if (j == std::string::npos) {
+      if (i < n && d[i] != '@' && d[i] != '?' && d[i] != '$') {
+        size_t e = i + 1;
+        while (e < n && d[e] != '@') ++e;
+        if (e < n) j = e;
+      }
+    }
+    if (j == std::string::npos || d.compare(j, 2, "@?") != 0) return 0;
+    k = j + 2;
   }
-  if (j == std::string::npos || d.compare(j, 2, "@?") != 0) return 0;
-  size_t k = j + 2;
   if (k < n && is_digit(d[k]) && d.compare(k + 1, 2, "??") == 0) return k + 3;
   size_t m = k;
   while (m < n && d[m] >= 'A' && d[m] <= 'P') ++m;

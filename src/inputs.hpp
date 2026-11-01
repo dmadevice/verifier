@@ -22,7 +22,7 @@
 
 namespace verifier {
 
-constexpr u64 MAX_SYM_OFFSET = 0x10000;  // containing-symbol resolution: largest addend accepted
+constexpr u64 MAX_SYM_OFFSET = 0x100000;  // containing-symbol resolution: largest addend accepted (one symbol can cover a large table)
 
 struct IdaFunction {
   u64 ea = 0, size = 0;
