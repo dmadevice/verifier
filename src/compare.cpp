@@ -41,6 +41,7 @@ i64 const_size(std::string_view name) {
 }
 
 i64 literal_size(const Image& img, u64 start, const Key& key) {
+  if (key.kind == Key::TD) return 16 + i64(type_name(img, start).size()) + 1;  // through the name's terminator
   if (key.kind == Key::STR) return i64(img.cstring(start, starts_with(key.name, "??_C@_1")).size());
   i64 n = const_size(key.name);
   return n ? n : 1;

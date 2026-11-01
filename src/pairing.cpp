@@ -359,7 +359,9 @@ std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
   auto base = reb.containing(t);
   if (!base) return std::nullopt;
   Key k = resolve_symbol(*base);
-  if ((k.kind == Key::CONST || k.kind == Key::STR) && i64(t - *base) < literal_size(reb.img, *base, k))
+  // typeid(x) == y compares the name inside the descriptor, so its address is an offset into one
+  bool literal = k.kind == Key::CONST || k.kind == Key::STR || k.kind == Key::TD;
+  if (literal && i64(t - *base) < literal_size(reb.img, *base, k))
     return std::make_pair(*base, k);
   return std::nullopt;
 }
