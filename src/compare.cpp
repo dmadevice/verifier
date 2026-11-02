@@ -239,6 +239,11 @@ bool Comparer::is_alternate(u64 o_t, u64 r_t) {
   return std::find(alts.begin(), alts.end(), o_t) != alts.end();
 }
 
+bool Comparer::is_vtable_slot(u64 o_vt, u64 off) const {
+  auto it = vtables.find(o_vt);
+  return it != vtables.end() && off && off % 8 == 0 && off < 8 * it->second.size();
+}
+
 bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
   if (auto p = vt_r.find(r_vt); p && *p == o_vt) return true;
   if (vt_r.contains(r_vt) || vt_o.contains(o_vt) || !vtables.count(o_vt) || !ctx->symbol_start(r_vt)) return false;
@@ -260,7 +265,9 @@ bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
 //   5. an unresolved function is inferred to be o_t when its code compares equal (ctx->infer, speculative);
 //   6. an unresolved vtable is inferred to be o_t when its slots and RTTI compare equal (infer_vtable);
 //   7. inside a compiler constant or string literal: the literal, with o_t moved back by the same offset;
-//   8. inside unresolved read-only data: its containing object is inferred to be o_t's object (infer_data).
+//   8. a slot past the first of an unresolved vtable: the vtable, inferred as in 6 and compared by its own slots (its
+//      symbol's span can run on over whatever the link put next);
+//   9. inside unresolved read-only data: its containing object is inferred to be o_t's object (infer_data).
 // Then the key decides what is compared: a constant or string by its bytes (and the bytes the instruction reads from
 // it), a type descriptor by name, ThrowInfo by its catchable types, a vbtable by its offsets; a key that is not o_t is
 // a reference problem, unless it is one past the end of the data object before (a loop bound). A key that is o_t
@@ -292,8 +299,11 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
     o_at = o_t - (r_t - r_at);
   }
   if (key.kind == Key::UNRESOLVED && !O->executable(o_t) && !O->writable(o_t)) {
-    auto base = ctx->containing(r_t);
-    if (base && infer_data(o_t - (r_t - *base), *base)) key = Key::of_va(o_t);
+    if (auto base = ctx->containing(r_t)) {
+      u64 off = r_t - *base, o_base = o_t - off;
+      if (is_vtable_slot(o_base, off) && infer_vtable(o_base, *base)) return vtable(o_base, *base);
+      if (infer_data(o_base, *base)) key = Key::of_va(o_t);
+    }
   }
   if (key.kind == Key::CONST) {
     i64 n = const_size(key.name);

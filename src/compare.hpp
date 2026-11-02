@@ -171,6 +171,7 @@ class Comparer {
   bool same_rtti(const Rtti& a, const Rtti& b);  // offsets, hierarchy, then the names
   bool same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b);
   bool infer_data(u64 o_t, u64 r_t);
+  bool is_vtable_slot(u64 o_vt, u64 off) const;  // off: a slot of the original's vtable other than the first
   bool infer_vtable(u64 o_vt, u64 r_vt);
   std::optional<Key> bind_local(u64 o_t, u64 r_t);
   bool static_fits(u64 o_base, u64 base);

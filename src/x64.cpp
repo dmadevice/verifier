@@ -743,7 +743,14 @@ std::vector<OutsideTable> Code::outside_tables() const {
         o.entries.push_back(e);
       }
     } else {
+      // a byte table holds indices into the offsets before it, and ends at the first byte that cannot be one: past it
+      // lies padding or the next function
       o.raw = Bytes(img->bytes(start + u64(t), std::min<i64>(nxt - t, 256)));
+      if (!out.empty() && !out.back().entries.empty()) {
+        size_t e = 0;
+        while (e < o.raw.size() && static_cast<unsigned char>(o.raw[e]) < out.back().entries.size()) ++e;
+        o.raw.resize(e);
+      }
     }
     out.push_back(std::move(o));
   }

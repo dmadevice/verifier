@@ -24,10 +24,13 @@ A function **MATCHes** when:
   target (its own references included) stands for it. Compiler constants (`__real@`, `__xmm@`, `__mask@`)
   and string literals (`??_C@`) compare by value, also when read at an offset. Read-only data compares by
   content (pointers inside it by what they point at), accessed writable data by its initial bytes, vtables by
-  their slots and RTTI (type name, offsets, base classes), ThrowInfo by its catchable types, vbtables by their
+  their slots and RTTI (type name, offsets, base classes; a direct call through a later slot compares the same
+  way, whatever the link put after the vtable), ThrowInfo by its catchable types, vbtables by their
   offsets. A function's local statics have no name to pair by: they are paired before any comparison by the
   evidence of every function that references them.
-- **Tables:** switch-table entries compare function-relative; other in-function table bytes compare raw.
+- **Tables:** switch-table entries compare function-relative; other in-function table bytes compare raw. A byte
+  table after a function's end stops at the first byte that cannot index the offsets before it, so what follows
+  it (padding, the next function) is not compared.
 - **Unwind and EH:** every `.pdata` range of the function sits at the same offsets with identical
   `UNWIND_INFO` (chained entries included), the language handler is the same function, and its data compares
   structurally: C++ EH `FuncInfo` (unwind map, try blocks, catch types, IP-to-state map; catch and unwind
@@ -161,8 +164,8 @@ ctest --test-dir build -C Release
 
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
-The tests (`verifier-tests`) are 92 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 40 cases in code: pairing (inference taken back when it fails, local
+The tests (`verifier-tests`) are 108 comparison cases on pairs of small synthetic PE images, each with the
+exact problems it must report, and 42 cases in code: pairing (inference taken back when it fails, local
 statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key and
 record, hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache directory's code,
 diff and sources stores. `ctest` also runs fadec's own decoder tests.

@@ -184,8 +184,8 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   std::optional<DiffStore::Entry> kept;
   if (diffs && !same && !probs.empty() && want_diff) kept = diffs->get(offsets(oc), offsets(rc), ot, rt, cmp.names);
   if (!probs.empty()) rec.category = same ? probs[0].first : kept ? kept->category : classify(ot, rt);
-  rec.osize = i64(oend - ova);
-  rec.rsize = i64(rend - rva);
+  rec.osize = i64(oc.code.size());  // padding after the last ret is not code, whichever side's extent reaches over it
+  rec.rsize = i64(rc.code.size());
   rec.status = probs.empty() ? "MATCH" : "DIFF";
   rec.unresolved.assign(unresolved.begin(), unresolved.end());
   for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].first + ": " + probs[i].second);
@@ -199,7 +199,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     if (want_diff) rec.diff = kept ? std::move(kept->diff) : insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
   }
   if (show) {
-    out.print("--- " + lk.qname + "  orig " + std::to_string(oend - ova) + "B | rebuilt " + std::to_string(rend - rva) +
+    out.print("--- " + lk.qname + "  orig " + std::to_string(rec.osize) + "B | rebuilt " + std::to_string(rec.rsize) +
               "B  " + (probs.empty() ? "MATCH" : "DIFF"));
     for (auto& [c, d] : probs) out.print("  problem " + c + ": " + d);
     for (size_t k = 0; k < std::max(oc.insns.size(), rc.insns.size()); ++k) {

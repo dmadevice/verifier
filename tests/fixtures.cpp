@@ -901,6 +901,31 @@ struct FakeRun {
   }
 };
 
+// a leaf with no .pdata: the rebuild's extent reaches the next symbol, over the nop before a table, and the original's
+// stops at the last ret. The report gives both the same size
+Problems padded_leaf_sizes() {
+  Side o(0), r(0x240);
+  Bytes code = unhex("b801000000c3");
+  u64 of = o.put(TEXT, code + unhex("6690"));
+  u64 rf = r.put(TEXT, code + unhex("6690"));
+  FakeRun run;
+  run.O = o.image();
+  run.R = r.image();
+  run.orig.functions.set(IdaFunction{of, code.size(), "", false, false});
+  run.reb.symbols = symbols_at({rf, rf + code.size() + 2});
+  std::map<std::string, u64> m{{"F", rf}};
+  run.reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  Annotation ann{"FUNCTION", of, "F", {}, "f.cpp", 1};
+  run.start({ann});
+  Out out;
+  Result res = evaluate(ann, run.orig, run.reb, *run.p, *run.c, ".", false, out);
+  Problems bad;
+  if (res.status != "MATCH") bad.push_back({"status", res.status});
+  if (res.osize != i64(code.size()) || res.rsize != res.osize)
+    bad.push_back({"sizes", std::to_string(res.osize) + "/" + std::to_string(res.rsize)});
+  return bad;
+}
+
 Problems prebound_static(bool owner_first) {
   Side o(0), r(0x240);
   struct S {
@@ -1987,6 +2012,7 @@ int main(int argc, char** argv) {
       {"instruction diff", nullptr, instruction_diff},
       {"linear matcher", nullptr, [&] { return linear_matcher(doc); }},
       {"leaf extent", nullptr, leaf_extent_case},
+      {"padded leaf, same size reported", nullptr, padded_leaf_sizes},
       {"decode at two addresses", nullptr, decode_case},
       {"local static names", nullptr, local_static_names},
       {"containing symbol reach", nullptr, containing_reach},
