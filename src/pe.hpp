@@ -71,6 +71,7 @@ class Image {
   std::optional<u32> flags(u64 va) const;
   bool executable(u64 va) const;
   bool writable(u64 va) const;
+  bool same_section(u64 a, u64 b) const;  // both in one section, or both in none
   Bytes cstring(u64 va, bool wide = false) const;
   std::optional<u64> extent(u64 va) const;  // .pdata range plus chained ranges
   Unwind unwind(u32 unwind_rva) const;

@@ -1053,6 +1053,30 @@ Problems addend_across_annotation(u64 off) {
   return bad_if(!got.is_va(og + off), "reference", "g+" + hex(off) + " resolves to " + got.text());
 }
 
+// a symbol does not run on into the next section: past its section's end, an address is no addend to it
+Problems addend_across_sections() {
+  Side o(0), r(0x240);
+  u64 og = o.put(RDATA, Bytes(0x20, '\0'), 16);
+  u64 rg = r.put(RDATA, Bytes(0x20, '\0'), 16);
+  Original orig;
+  FakeRebuilt reb;
+  reb.img = r.image();
+  reb.symbols = Symbols({{rg, "?g@@3HA"}});
+  reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
+  std::map<std::string, u64> m{{"g", rg}};
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
+  Pairing p(orig, reb, {{"GLOBAL", og, "g", {}, "g.cpp", 1}});
+  p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
+  Problems bad;
+  if (!p.resolve(rg + 0x10).is_va(og + 0x10)) bad.push_back({"reference", "inside the symbol"});
+  u64 last = BASE + DATA - 1, past = BASE + DATA + 8;
+  if (!p.resolve(last).is_va(og + (last - rg))) bad.push_back({"reference", "the section's last byte"});
+  if (p.resolve(past).kind != Key::UNRESOLVED) bad.push_back({"reference", "resolves in another section"});
+  if (reb.containing(past)) bad.push_back({"containing", "a symbol of another section"});
+  return bad;
+}
+
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
 // ids equal exactly when the strings are), and a damaged file is ignored. Names without a leading '?' need no
 // undname.
@@ -2024,6 +2048,7 @@ int main(int argc, char** argv) {
       {"other static, owner compared first", "reference", [] { return prebound_static(true); }},
       {"addend inside an annotated object", nullptr, [] { return addend_across_annotation(0x10); }},
       {"addend reaching another annotation", "reference", [] { return addend_across_annotation(0x20); }},
+      {"addend stays in its section", nullptr, addend_across_sections},
       {"ignored annotations reported", nullptr, ignored_annotations},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},

@@ -41,7 +41,7 @@ i64 const_size(std::string_view name) {
 }
 
 i64 literal_size(const Image& img, u64 start, const Key& key) {
-  if (key.kind == Key::TD) return 16 + i64(type_name(img, start).size()) + 1;  // through the name's terminator
+  if (key.kind == Key::TD) return 16 + i64(type_name(img, start).size());  // the name counts its terminator
   if (key.kind == Key::STR) return i64(img.cstring(start, starts_with(key.name, "??_C@_1")).size());
   i64 n = const_size(key.name);
   return n ? n : 1;
@@ -424,6 +424,7 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
 }
 
 bool Comparer::infer_data(u64 o_t, u64 r_t) {
+  if (vtables.count(o_t)) return false;  // by its slots and RTTI (infer_vtable): its bytes do not hold the RTTI
   if (auto p = data_r.find(r_t); p && *p == o_t) return true;
   if (data_r.contains(r_t) || data_o.contains(o_t) || resolve(r_t).kind != Key::UNRESOLVED) return false;
   if (!ctx->symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t))

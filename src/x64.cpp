@@ -725,6 +725,26 @@ std::vector<TableItem> Code::table_region() const {
   return out;
 }
 
+i64 Code::table_entries(i64 t) const {
+  i64 va = i64(start - img->base) + t, entries = 0, checked = 0;
+  for (auto& l : insns) {
+    Insn ins = insn(l);
+    for (auto& op : ins.ops)
+      if (op.type == OP_MEM && op.index && op.disp() == va) return entries;
+    i64 limit = checked;
+    checked = 0;
+    if (ins.type == FDI_CMP && ins.ops[0].type == OP_REG && ins.ops[1].type == OP_IMM) {
+      int bits = 8 * ins.ops[0].size;
+      checked = bits < 64 ? (ins.ops[1].imm() & ((i64(1) << bits) - 1)) + 1 : 0;
+    } else if (ins.type == FDI_JA) {
+      entries = limit;
+    } else if (ins.branches() || ins.type == FDI_RET) {
+      entries = 0;
+    }
+  }
+  return 0;
+}
+
 std::vector<OutsideTable> Code::outside_tables() const {
   i64 n = i64(code.size());
   std::vector<i64> starts;
@@ -743,10 +763,11 @@ std::vector<OutsideTable> Code::outside_tables() const {
         o.entries.push_back(e);
       }
     } else {
-      // a byte table holds indices into the offsets before it, and ends at the first byte that cannot be one: past it
-      // lies padding or the next function
-      o.raw = Bytes(img->bytes(start + u64(t), std::min<i64>(nxt - t, 256)));
-      if (!out.empty() && !out.back().entries.empty()) {
+      // the range check says how long the table is. With none, a byte table holds indices into the offsets before it,
+      // and ends at the first byte that cannot be one: past it lies padding or the next function
+      i64 entries = table_entries(t);
+      o.raw = Bytes(img->bytes(start + u64(t), std::min<i64>(nxt - t, entries ? entries : 256)));
+      if (!entries && !out.empty() && !out.back().entries.empty()) {
         size_t e = 0;
         while (e < o.raw.size() && static_cast<unsigned char>(o.raw[e]) < out.back().entries.size()) ++e;
         o.raw.resize(e);

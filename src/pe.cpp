@@ -276,6 +276,12 @@ bool Image::writable(u64 va) const {
   return f && (*f & SCN_WRITE);
 }
 
+bool Image::same_section(u64 a, u64 b) const {
+  for (auto& s : sections)
+    if (s.lo <= a && a < s.hi) return s.lo <= b && b < s.hi;
+  return !flags(b).has_value();
+}
+
 Bytes Image::cstring(u64 va, bool wide) const {
   size_t step = wide ? 2 : 1;
   Bytes out;

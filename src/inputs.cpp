@@ -571,7 +571,7 @@ std::optional<u64> Rebuilt::containing(u64 t) const {
   auto it = std::upper_bound(vas.begin(), vas.end(), t);
   if (it == vas.begin()) return std::nullopt;
   u64 s = *(it - 1);
-  if (t - s < MAX_SYM_OFFSET) return s;
+  if (t - s < MAX_SYM_OFFSET && img.same_section(s, t)) return s;
   return std::nullopt;
 }
 

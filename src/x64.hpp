@@ -185,6 +185,9 @@ class Code {
   size_t reloc_at_ = 0;            // add_fields: the first relocation not before the instruction
   void add_fields(const Insn& ins, u32 image_base);
   void trim_padding();
+  // what the `cmp reg, n; ja` guarding the instruction that indexes the table at `t` lets through; 0: no such check
+  // reaches that instruction without another branch
+  i64 table_entries(i64 t) const;
 };
 
 // per instruction, the GPRs (bit per gpr_index) that hold __ImageBase on entry; empty when none ever does
