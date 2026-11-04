@@ -689,6 +689,21 @@ Problems containing_reach() {
   return bad;
 }
 
+Problems span_before_vftable() {
+  // a table followed by a vftable ends at the vftable's RTTI locator slot, the 8 bytes before its symbol
+  FakeRebuilt reb;
+  reb.symbols = Symbols({{BASE, "?table@@3PAY0A@P6AXXZB"},
+                         {BASE + 0x20, "??_7Widget@@6B@"},
+                         {BASE + 0x40, "?other@@3PAY0A@P6AXXZB"},
+                         {BASE + 0x60, "?data@@3HA"}});
+  Problems bad;
+  if (reb.span(BASE) != 0x18) bad.push_back({"span", "table runs into the vftable's locator slot"});
+  if (reb.span(BASE + 0x20) != 0x20) bad.push_back({"span", "vftable"});
+  if (reb.span(BASE + 0x40) != 0x20) bad.push_back({"span", "table before plain data"});
+  if (reb.span(BASE + 0x18) != 0x8) bad.push_back({"span", "the locator slot itself"});
+  return bad;
+}
+
 Problems stub_pairing() {
   Original orig;
   FakeRebuilt reb;
@@ -2041,6 +2056,7 @@ int main(int argc, char** argv) {
       {"local static names", nullptr, local_static_names},
       {"containing symbol reach", nullptr, containing_reach},
       {"stub leaves its original open", nullptr, stub_pairing},
+      {"span stops before a vftable's locator", nullptr, span_before_vftable},
       {"GLOBAL bytes checked", nullptr, global_bytes},
       {"replay key", nullptr, replay_key},
       {"failed inference taken back", "reference", failed_inference},

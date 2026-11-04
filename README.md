@@ -23,7 +23,8 @@ A function **MATCHes** when:
   plus addend, and by inference: an unannotated rebuilt function whose code compares equal to the original
   target (its own references included) stands for it. Compiler constants (`__real@`, `__xmm@`, `__mask@`)
   and string literals (`??_C@`) compare by value, also when read at an offset. Read-only data compares by
-  content (pointers inside it by what they point at), accessed writable data by its initial bytes, vtables by
+  content (pointers inside it by what they point at), up to the next symbol, or to the RTTI locator slot
+  before it when that symbol is a vftable; accessed writable data by its initial bytes, vtables by
   their slots and RTTI (type name, offsets, base classes; a direct call through a later slot compares the same
   way, whatever the link put after the vtable), ThrowInfo by its catchable types, vbtables by their
   offsets. A function's local statics have no name to pair by: they are paired before any comparison by the
