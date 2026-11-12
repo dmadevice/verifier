@@ -2,6 +2,7 @@
 // original name, compiler constants and literals by value, local statics as the votes before the comparison and the
 // matching place them, and the unannotated functions that may stand for an original (function_candidate).
 #pragma once
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -97,6 +98,9 @@ class Pairing : public ComparerContext {
   };
   const Resolved& resolved(u64 t) const;
   mutable U64Map<Resolved> resolved_;
+  // the names made for addresses without one (kept for the pairing's life; a deque does not move them)
+  mutable std::deque<std::string> texts_;
+  std::string_view text(std::string s) const { return texts_.emplace_back(std::move(s)); }
   mutable std::unordered_map<u64, std::vector<u64>> alternates_;  // alternates' answers
   std::unordered_map<u64, std::vector<u64>> refs_of_;             // orig_refs' answers
 };

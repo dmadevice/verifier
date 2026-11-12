@@ -329,14 +329,18 @@ bool Image::same_section(u64 a, u64 b) const {
 }
 
 Bytes Image::cstring(u64 va, bool wide) const {
-  size_t step = wide ? 2 : 1;
-  Bytes out;
-  while (out.size() < MAX_DATA_COMPARE) {
-    auto ch = bytes(va + out.size(), i64(step));
-    out.append(ch);
-    if (ch.size() < step || ch == std::string_view(std::string(step, '\0'))) break;
+  std::string_view v = bytes(va, i64(MAX_DATA_COMPARE));  // short past the end of the image
+  size_t n = v.size();
+  if (!wide) {
+    if (const void* z = std::memchr(v.data(), 0, v.size())) n = size_t(static_cast<const char*>(z) - v.data()) + 1;
+  } else {
+    for (size_t i = 0; i + 1 < v.size(); i += 2)
+      if (v[i] == 0 && v[i + 1] == 0) {
+        n = i + 2;
+        break;
+      }
   }
-  return out;
+  return Bytes(v.substr(0, n));
 }
 
 std::optional<u64> Image::extent(u64 va) const {

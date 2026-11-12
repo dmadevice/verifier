@@ -304,7 +304,8 @@ const Pairing::Resolved& Pairing::resolved(u64 t) const {
         Key b = resolved(*base).symbol;  // a symbol's own entry: no further step
         if (b.kind == Key::VA)
           r.rest = annotated_between(b.va, b.va + t - *base)
-                       ? Key::named(Key::UNRESOLVED, std::string(reb.symbols.names(*base)[0]) + "+" + hex(t - *base))
+                       ? Key::named_view(Key::UNRESOLVED,
+                                         text(std::string(reb.symbols.names(*base)[0]) + "+" + hex(t - *base)))
                        : Key::of_va(b.va + t - *base);
       }
     }
@@ -330,7 +331,7 @@ Key Pairing::resolve_symbol_uncached(u64 t) const {
   if (auto n = first_of({NameKind::TypeDescriptor})) return Key::named_view(Key::TD, *n);
   if (auto n = first_of({NameKind::ThrowInfo})) return Key::named_view(Key::TI, *n);
   if (auto n = first_of({NameKind::VbTable})) return Key::named_view(Key::VBT, *n);
-  return names.empty() ? Key::named(Key::UNRESOLVED, hex(t)) : Key::named_view(Key::UNRESOLVED, names[0]);
+  return names.empty() ? Key::named_view(Key::UNRESOLVED, text(hex(t))) : Key::named_view(Key::UNRESOLVED, names[0]);
 }
 
 Key Pairing::resolve(u64 t) const {
