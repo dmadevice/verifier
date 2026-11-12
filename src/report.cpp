@@ -194,10 +194,8 @@ Category classify(const Toks& a, const Toks& b) {
     return n;
   };
   if (ncalls(a) != ncalls(b)) return Category::Inlining;
-  std::vector<std::string_view> ma, mb;
-  for (auto& t : a) ma.push_back(t.mnemonic);
-  for (auto& t : b) mb.push_back(t.mnemonic);
-  if (ma == mb) {
+  auto same_mnemonic = [](const Tok& x, const Tok& y) { return x.mnemonic == y.mnemonic; };
+  if (std::equal(a.begin(), a.end(), b.begin(), b.end(), same_mnemonic)) {
     size_t n = std::min(a.size(), b.size());
     auto all_ops = [&](auto same) {  // every instruction has as many operands, each pair `same`
       for (size_t i = 0; i < n; ++i) {
@@ -218,12 +216,14 @@ Category classify(const Toks& a, const Toks& b) {
     bool refs = all_ops([](const Op& o, const Op& p) { return o == p || o.k == Op::SYM || o.k == Op::MSYM; });
     return refs ? Category::Reference : Category::Immediate;
   }
-  auto sa = ma, sb = mb;
-  std::sort(sa.begin(), sa.end());
-  std::sort(sb.begin(), sb.end());
-  if (sa == sb) return Category::Reorder;
-  long d = long(ma.size()) - long(mb.size());
-  if (std::labs(d) > std::max<long>(4, long(ma.size()) / 4)) return Category::Inlining;
+  if (a.size() == b.size()) {  // the same mnemonics in another order (counted: a mnemonic is one interned string)
+    std::vector<int> count(Mnem::count());
+    for (auto& t : a) ++count[t.mnemonic.id()];
+    for (auto& t : b) --count[t.mnemonic.id()];
+    if (std::all_of(count.begin(), count.end(), [](int c) { return c == 0; })) return Category::Reorder;
+  }
+  long d = long(a.size()) - long(b.size());
+  if (std::labs(d) > std::max<long>(4, long(a.size()) / 4)) return Category::Inlining;
   return Category::Unexplained;
 }
 
