@@ -10,6 +10,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# Reproducible builds: the same sources and compiler give the same binary wherever the tree is (a consumer may lock
+# the binary by its hash). MSVC stamps a time into objects and the image unless told not to; GCC and Clang embed
+# source paths only in debug information and assertions, which the prefix maps make relative.
+if(WIN32)
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)  # getenv
+endif()
+if(MSVC)
+  add_compile_options(/Brepro)
+  add_link_options(/Brepro)
+else()
+  add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}=. -ffile-prefix-map=${CMAKE_BINARY_DIR}=build)
+endif()
+
 include(FetchContent)
 set(FADEC_ARCHMODE only64 CACHE STRING "" FORCE)
 set(FADEC_ENCODE OFF CACHE BOOL "" FORCE)
@@ -35,15 +48,22 @@ add_executable(verifier src/main.cpp)
 target_link_libraries(verifier PRIVATE verifier_core)
 
 enable_testing()
-add_executable(verifier-tests tests/fixtures.cpp)
+add_executable(verifier-tests tests/main.cpp tests/fixture_cases.cpp tests/names_test.cpp tests/report_test.cpp
+  tests/compare_test.cpp tests/pairing_test.cpp tests/inputs_test.cpp tests/cache_test.cpp tests/util_test.cpp)
+target_include_directories(verifier-tests PRIVATE tests)
 target_link_libraries(verifier-tests PRIVATE verifier_core)
 target_compile_definitions(verifier-tests PRIVATE VERIFIER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/fixtures.json")
 add_test(NAME fixtures COMMAND verifier-tests)
+
+# fixture-dump: a case of tests/data/fixtures.json printed readably (disassembly, data, mapping, expected problems)
+add_executable(fixture-dump tests/fixture_dump.cpp)
+target_link_libraries(fixture-dump PRIVATE verifier_core)
+target_compile_definitions(fixture-dump PRIVATE VERIFIER_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/fixtures.json")
 
 # cmake --build build --target format: the sources formatted by .clang-format
 find_program(CLANG_FORMAT clang-format)
 if(CLANG_FORMAT)
   file(GLOB FORMATTED ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp
-       ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
+       ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.hpp)
   add_custom_target(format COMMAND ${CLANG_FORMAT} -i --style=file ${FORMATTED} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

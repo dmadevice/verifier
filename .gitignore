@@ -1,3 +1,5 @@
 build/
+build-*/
 .verifier/
 verifier.conf
+__pycache__/
