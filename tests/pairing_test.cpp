@@ -80,8 +80,8 @@ Findings failed_inference() {
     explicit InferOnly(Pairing& x) : p(x) {}
     std::optional<FnPair> function_candidate(u64 a, u64 b) const override { return p.function_candidate(a, b); }
   } infer_only(p);
-  p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
-  auto got = p.cmp->check({{fo.G, fo.G + 6, fr.G, fr.G + 6}, {fo.F, fo.F + 8, fr.F, fr.F + 8}});
+  Comparer c(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only);
+  auto got = c.check({{fo.G, fo.G + 6, fr.G, fr.G + 6}, {fo.F, fo.F + 8, fr.F, fr.F + 8}});
   return got[0].empty() ? Findings{{"setup", "G should differ"}} : got[1];
 }
 
@@ -111,9 +111,9 @@ Findings inference_one_to_one() {
     explicit InferOnly(Pairing& x) : p(x) {}
     std::optional<FnPair> function_candidate(u64 a, u64 b) const override { return p.function_candidate(a, b); }
   } infer_only(p);
-  p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
+  Comparer c(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only);
   // H first or G first: the matching is the same
-  auto got = p.cmp->check({{oh, oh + 6, rh, rh + 6}, {og, og + 6, rg, rg + 6}});
+  auto got = c.check({{oh, oh + 6, rh, rh + 6}, {og, og + 6, rg, rg + 6}});
   return got[1].empty() ? got[0] : Findings{{"setup", "G should match"}};
 }
 
@@ -297,7 +297,6 @@ Findings addend_across_annotation(u64 off) {
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
   Pairing p(orig, reb, {{Kind::Global, og, "g", {}, "g.cpp", 1}, {Kind::Global, oy, "y", {}, "y.cpp", 1}});
-  p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
   Key got = p.resolve(rg + off);
   return bad_if(!got.is_va(og + off), "reference", "g+" + hex(off) + " resolves to " + got.text());
 }
@@ -316,7 +315,6 @@ Findings addend_across_sections() {
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
   Pairing p(orig, reb, {{Kind::Global, og, "g", {}, "g.cpp", 1}});
-  p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
   Findings bad;
   if (!p.resolve(rg + 0x10).is_va(og + 0x10)) bad.push_back({"reference", "inside the symbol"});
   u64 last = BASE + DATA - 1, past = BASE + DATA + 8;

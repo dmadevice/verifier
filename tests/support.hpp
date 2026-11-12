@@ -210,6 +210,7 @@ struct FakeRun {
   FakeRebuilt reb;
   std::unique_ptr<Pairing> p;
   std::unique_ptr<CodeCache> oc, rc;
+  std::unique_ptr<Comparer> cmp;
   Comparer* c = nullptr;
   void start(const std::vector<Annotation>& anns) {
     orig.img = O;
@@ -217,7 +218,12 @@ struct FakeRun {
     p = std::make_unique<Pairing>(orig, reb, anns);
     oc = std::make_unique<CodeCache>(&orig.img);
     rc = std::make_unique<CodeCache>(&reb.img);
-    c = &p->comparer(*oc, *rc);
+    p->use_caches(*oc, *rc);
+    cmp = std::make_unique<Comparer>(
+        &orig.img, &reb.img, [this](u64 t) { return p->resolve(t); }, &orig.vtables,
+        [this](u64 va) { return orig.ida_name(va); }, p.get());
+    c = cmp.get();
+    p->prebind(c->m);
   }
 };
 

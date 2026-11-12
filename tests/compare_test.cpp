@@ -250,8 +250,8 @@ Findings malformed_unwind() {
   Image O = o.image(), R = r.image();
   auto end = R.extent(fr);
   Comparer c(&O, &R, [](u64 t) { return Key::named(Key::UNRESOLVED, hex(t)); });
-  c.unwinds(fo, fo + 13, fr, fr + 13);
-  c.unwind_info(R.pdata_at(fr + 8)->unwind, R.pdata_at(fr + 8)->unwind, fo, fo + 13, fr, fr + 13);
+  c.unwinds({fo, fo + 13, fr, fr + 13});
+  c.unwind_info(R.pdata_at(fr + 8)->unwind, R.pdata_at(fr + 8)->unwind, {fo, fo + 13, fr, fr + 13});
   return bad_if(!(end && *end == fr + 8), "extent", end ? hex(*end) : "None");
 }
 

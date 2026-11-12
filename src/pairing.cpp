@@ -69,6 +69,11 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
   distinct(paired_o);
   for (auto& [rva, va] : reb_to_orig_) annotated_o.push_back(va);
   distinct(annotated_o);
+  for (auto& [n, ea] : orig.by_name) named_.push_back(ea);
+  for (auto& [n, ea] : vftables_) named_.push_back(ea);
+  for (auto& [r, o] : reb_to_orig_) named_.push_back(o);
+  for (auto& [v, s] : orig.vtables) named_.push_back(v);
+  distinct(named_);
 }
 
 std::optional<u64> Pairing::orig_of(u64 rva) const {
@@ -112,41 +117,38 @@ void Pairing::pair_vftables() {
   }
 }
 
-void Pairing::use(std::unique_ptr<Comparer> c) { cmp = std::move(c); }
-
-Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc) {
-  use(std::make_unique<Comparer>(
-      &orig.img, &reb.img, [this](u64 t) { return resolve(t); }, &orig.vtables,
-      [this](u64 va) { return orig.ida_name(va); }, this));
-  Comparer& c = *cmp;
+void Pairing::use_caches(CodeCache& oc, CodeCache& rc) {
   orig_cache_ = &oc;
   rebuilt_cache_ = &rc;
-  for (auto& [n, ea] : orig.by_name) named_.push_back(ea);
-  for (auto& [n, ea] : vftables_) named_.push_back(ea);
-  for (auto& [r, o] : reb_to_orig_) named_.push_back(o);
-  for (auto& [v, s] : orig.vtables) named_.push_back(v);
-  std::sort(named_.begin(), named_.end());
-  named_.erase(std::unique(named_.begin(), named_.end()), named_.end());
-  prebind_locals();
-  return c;
+}
+
+std::shared_ptr<const Code> Pairing::orig_function(u64 va) {
+  u64 end = orig.extent(va);
+  return orig_cache_ ? orig_cache_->code(va, end) : std::make_shared<const Code>(orig.img, va, end);
+}
+
+std::shared_ptr<const Code> Pairing::rebuilt_function(u64 va) {
+  u64 end = reb.extent(va);
+  return rebuilt_cache_ ? rebuilt_cache_->code(va, end) : std::make_shared<const Code>(reb.img, va, end);
 }
 
 bool Pairing::orig_named(u64 t) const {
   return std::binary_search(named_.begin(), named_.end(), t) || orig.named_data(t);
 }
 
-void Pairing::release_code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
-  if (orig_cache_) orig_cache_->release(ostart, oend);
-  if (rebuilt_cache_) rebuilt_cache_->release(rstart, rend);
+void Pairing::release_code(const FnPair& f) {
+  if (orig_cache_) orig_cache_->release(f.ostart, f.oend);
+  if (rebuilt_cache_) rebuilt_cache_->release(f.rstart, f.rend);
 }
 
-void Pairing::prebind_locals() {
+void Pairing::prebind(Matching& m) {
+  matching_ = &m;
   std::map<u64, Votes> votes;
   for (auto& [rva, ova] : voting_pairs()) {
     auto v = votes_of(rva, ova);
     if (!v.empty()) votes[rva] = std::move(v);
   }
-  for (auto& [base, o_base] : decide_locals(votes)) cmp->m.fix_local(base, o_base);
+  for (auto& [base, o_base] : decide_locals(votes)) m.fix_local(base, o_base);
 }
 
 std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
@@ -166,8 +168,8 @@ std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
 
 Pairing::Votes Pairing::votes_of(u64 rva, u64 ova) {
   const Image& O = orig.img;
-  auto oc = cmp->orig_code(ova, orig.extent(ova));
-  auto rc = cmp->rebuilt_code(rva, reb.extent(rva));
+  auto oc = orig_function(ova);
+  auto rc = rebuilt_function(rva);
   Votes out;
   if (oc->insns.size() != rc->insns.size()) return out;
   for (size_t k = 0; k < oc->insns.size(); ++k) {
@@ -181,7 +183,7 @@ Pairing::Votes Pairing::votes_of(u64 rva, u64 ova) {
       u64 xv = u64(x.value);
       if (!at || O.executable(xv) || !O.flags(xv)) continue;
       u64 o_base = xv - at->second;
-      bool fits = !orig.in_padding(o_base) && cmp->static_fits(o_base, at->first) && !annotated_between(o_base, xv);
+      bool fits = !orig.in_padding(o_base) && static_fits(O, reb.img, o_base, at->first, reb.span(at->first)) && !annotated_between(o_base, xv);
       auto [it, fresh] = out[at->first].try_emplace(fits ? std::optional<u64>(o_base) : std::nullopt, at->second);
       if (!fresh) it->second = std::max(it->second, at->second);
     }
@@ -257,7 +259,7 @@ std::optional<std::vector<u64>> Pairing::static_home(u64 base) const {
 
 std::vector<u64> Pairing::orig_refs(u64 f) {
   if (auto it = refs_of_.find(f); it != refs_of_.end()) return it->second;
-  auto c = cmp->orig_code(f, orig.extent(f));
+  auto c = orig_function(f);
   std::set<u64> s;
   for (auto& x : c->field_list)
     if (is_address(x.kind)) s.insert(u64(x.value));
@@ -296,8 +298,8 @@ Key Pairing::resolve(u64 t) const {
   Key r = resolve_symbol(t);
   if (r.kind == Key::UNRESOLVED) {
     auto at = reb.local_base(t);
-    if (at && cmp) {
-      if (auto b = cmp->m.local_of(at->first)) return Key::of_va(*b + at->second);
+    if (at && matching_) {
+      if (auto b = matching_->local_of(at->first)) return Key::of_va(*b + at->second);
     }
   }
   if (r.kind != Key::UNRESOLVED || reb.symbols.contains(t)) return r;

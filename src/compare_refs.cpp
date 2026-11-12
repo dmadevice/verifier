@@ -56,20 +56,22 @@ bool Comparer::folded_extra(u64 base, u64 o_primary, u64 o_base) {
   return O->bytes(o_base, n) == O->bytes(o_primary, n) && O->bytes(o_primary, n) == R->bytes(base, n);
 }
 
-bool Comparer::static_fits(u64 o_base, u64 base) {
-  if (!O->flags(o_base)) return true;
-  i64 n = i64(rstrip_char(R->bytes(base, i64(ctx->span(base))), '\0').size());
-  Bytes a(O->bytes(o_base, n)), b(R->bytes(base, n));
-  size_t lo = R->reloc_lower_bound(base), hi = R->reloc_lower_bound(base + u64(n));
+bool static_fits(const Image& O, const Image& R, u64 o_base, u64 base, u64 span) {
+  if (!O.flags(o_base)) return true;
+  i64 n = i64(rstrip_char(R.bytes(base, i64(span)), '\0').size());
+  Bytes a(O.bytes(o_base, n)), b(R.bytes(base, n));
+  size_t lo = R.reloc_lower_bound(base), hi = R.reloc_lower_bound(base + u64(n));
   for (size_t k = lo; k < hi; ++k) {
-    u64 off = R->reloc_sorted[k] - base;
-    if (!O->has_reloc(o_base + off)) return false;
+    u64 off = R.reloc_sorted[k] - base;
+    if (!O.has_reloc(o_base + off)) return false;
     i64 m = std::min<i64>(8, n - i64(off));
     mask(a, i64(off), i64(off) + m);
     mask(b, i64(off), i64(off) + m);
   }
   return a == b;
 }
+
+bool Comparer::static_fits(u64 o_base, u64 base) { return verifier::static_fits(*O, *R, o_base, base, ctx->span(base)); }
 
 bool Comparer::refers_to(u64 f, u64 lo, u64 n) {
   auto refs = ctx->orig_refs(f);

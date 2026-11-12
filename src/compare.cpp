@@ -69,7 +69,7 @@ Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res,
       ctx(context ? context : &nothing_known()) {}
 
 void Comparer::explore(const std::vector<FnPair>& functions, const std::vector<std::pair<u64, u64>>& data) {
-  for (auto& f : functions) function(f.ostart, f.oend, f.rstart, f.rend);
+  for (auto& f : functions) function(f);
   for (auto& [o, r] : data) rodata(o, r);
   explore_queued();
 }
@@ -77,7 +77,7 @@ void Comparer::explore(const std::vector<FnPair>& functions, const std::vector<s
 void Comparer::explore_queued() {
   for (auto q = m.take_queued(); !q.empty(); q = m.take_queued())
     for (auto& [o, r] : q)
-      if (auto f = ctx->function_candidate(o, r)) function(f->ostart, f->oend, f->rstart, f->rend);
+      if (auto f = ctx->function_candidate(o, r)) function(*f);
 }
 
 void Comparer::solve() {
@@ -141,8 +141,8 @@ bool Comparer::same_signature(const Signature& a, const Signature& b) {
   return same_names(names);
 }
 
-Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
-  auto ocp = orig_code(ostart, oend), rcp = rebuilt_code(rstart, rend);
+Problems Comparer::code(const FnPair& f) {
+  auto ocp = orig_code(f.ostart, f.oend), rcp = rebuilt_code(f.rstart, f.rend);
   const Code &oc = *ocp, &rc = *rcp;
   Problems probs;
   auto decoded = [](const Code& c) {
@@ -188,14 +188,13 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
 
 
 Problems Comparer::function_body(const FnPair& f, std::optional<std::pair<u64, u64>> fi) {
-  Problems probs = code(f.ostart, f.oend, f.rstart, f.rend);
-  if (probs.empty()) probs = unwinds(f.ostart, f.oend, f.rstart, f.rend, fi);
+  Problems probs = code(f);
+  if (probs.empty()) probs = unwinds(f, fi);
   return probs;
 }
 
-Problems Comparer::function(u64 ostart, u64 oend, u64 rstart, u64 rend) {
-  FnPair f{ostart, oend, rstart, rend};
-  return m.unit(Kind::Function, ostart, rstart, [&] { return function_body(f, std::nullopt); });
+Problems Comparer::function(const FnPair& f) {
+  return m.unit(Kind::Function, f.ostart, f.rstart, [&] { return function_body(f, std::nullopt); });
 }
 
 // a funclet of a function with FuncInfo `fi`: its own unit (its handler data is that FuncInfo, compared with the

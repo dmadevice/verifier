@@ -18,7 +18,6 @@ class Pairing : public ComparerContext {
   Pairing(const Original& orig, const Rebuilt& reb, const std::vector<Annotation>& anns);
   const Original& orig;
   const Rebuilt& reb;
-  std::unique_ptr<Comparer> cmp;
   std::optional<u64> named(
       std::string_view n) const;  // the original address the name has (the original's names, then vftables')
   std::optional<u64> orig_of(u64 rva) const;  // the original the last annotation naming `rva` gives
@@ -34,10 +33,13 @@ class Pairing : public ComparerContext {
   const Paired* paired(const Annotation& a) const;
 
   using Votes = std::map<u64, std::map<std::optional<u64>, u64>>;
-  Comparer& comparer(CodeCache& orig_cache, CodeCache& rebuilt_cache);
-  void use(std::unique_ptr<Comparer> c);  // fixtures: a Comparer with hooks of their own
+  // the decoded functions the votes and the comparison share (without them each decodes its own)
+  void use_caches(CodeCache& orig_cache, CodeCache& rebuilt_cache);
+  // the local statics the votes place, fixed in the run's matching; resolve() then also answers from the statics the
+  // matching places (it outlives the pairing's use)
+  void prebind(Matching& m);
   // a compared pair's code is no longer needed (its comparison is kept): free it, if the caches hold it
-  void release_code(u64 ostart, u64 oend, u64 rstart, u64 rend);
+  void release_code(const FnPair& f);
   Key resolve_symbol(u64 t) const;
   Key resolve(u64 t) const;
   // what the comparer asks (ComparerContext), answered from the two sides' tables and the pairing
@@ -70,7 +72,8 @@ class Pairing : public ComparerContext {
 
  private:
   void pair_vftables();
-  void prebind_locals();
+  std::shared_ptr<const Code> orig_function(u64 va);  // decoded through the cache, if any
+  std::shared_ptr<const Code> rebuilt_function(u64 va);
   Key resolve_symbol_uncached(u64 t) const;
 
   // rebuilt vftable names of classes with several bases, not among the original's names: the original vftable each
@@ -78,6 +81,7 @@ class Pairing : public ComparerContext {
   SvViewMap<u64> vftables_;
   std::unordered_map<std::string, Paired> paired_;  // by paired_key()
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
+  const Matching* matching_ = nullptr;
   std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct

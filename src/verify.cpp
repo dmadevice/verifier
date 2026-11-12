@@ -310,7 +310,11 @@ int run(int argc, char** argv) {
   Pairing pairing(orig, reb, anns);
   CodeCache orig_cache(&orig.img), rebuilt_cache(&reb.img);
   ph.mark("pairing");
-  Comparer& cmp = pairing.comparer(orig_cache, rebuilt_cache);
+  pairing.use_caches(orig_cache, rebuilt_cache);
+  Comparer cmp(
+      &orig.img, &reb.img, [&](u64 t) { return pairing.resolve(t); }, &orig.vtables,
+      [&](u64 va) { return orig.ida_name(va); }, &pairing);
+  pairing.prebind(cmp.m);
   ph.mark("prebind votes");
   auto globals = global_roots(
       anns, [&](const std::string& n) { return reb.lookup(n).vas; }, [&](u64 rva) { return pairing.orig_of(rva); },

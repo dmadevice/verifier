@@ -135,7 +135,8 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.name = lk.qname;
   u64 rva = lk.vas[0];
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
-  Problems probs = cmp.judge_function({ova, oend, rva, rend});
+  FnPair fns{ova, oend, rva, rend};
+  Problems probs = cmp.judge_function(fns);
   auto ocp = cmp.orig_code(ova, oend), rcp = cmp.rebuilt_code(rva, rend);  // decoded by the comparison
   const Code &oc = *ocp, &rc = *rcp;
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
@@ -186,7 +187,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
       out.print(std::string(eq ? " " : "*") + " " + pad_right(x, 48) + " | " + y);
     }
   }
-  pairing.release_code(ova, oend, rva, rend);  // compared: the code is not needed again
+  pairing.release_code(fns);  // compared: the code is not needed again
   return rec;
 }
 

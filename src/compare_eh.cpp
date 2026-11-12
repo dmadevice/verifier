@@ -9,38 +9,37 @@ namespace verifier {
 
 constexpr int MAX_CHAIN = 32;
 
-Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, std::optional<std::pair<u64, u64>> fi) {
-  auto ob = O->pdata_in(ostart, oend), rb = R->pdata_in(rstart, rend);
+Problems Comparer::unwinds(const FnPair& f, std::optional<std::pair<u64, u64>> fi) {
+  auto ob = O->pdata_in(f.ostart, f.oend), rb = R->pdata_in(f.rstart, f.rend);
   bool same = ob.size() == rb.size();
   for (size_t i = 0; same && i < ob.size(); ++i)
-    if (ob[i] - ostart != rb[i] - rstart || O->pdata_at(ob[i])->end - ostart != R->pdata_at(rb[i])->end - rstart)
+    if (ob[i] - f.ostart != rb[i] - f.rstart || O->pdata_at(ob[i])->end - f.ostart != R->pdata_at(rb[i])->end - f.rstart)
       same = false;
   if (!same) return {{Category::Unwind, ".pdata ranges differ"}};
   Problems probs;
   for (size_t i = 0; i < ob.size(); ++i) {
-    auto p = unwind_info(O->pdata_at(ob[i])->unwind, R->pdata_at(rb[i])->unwind, ostart, oend, rstart, rend, fi);
+    auto p = unwind_info(O->pdata_at(ob[i])->unwind, R->pdata_at(rb[i])->unwind, f, fi);
     probs.insert(probs.end(), p.begin(), p.end());
   }
   return probs;
 }
 
-Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend,
-                               std::optional<std::pair<u64, u64>> fi, int chain_depth) {
+Problems Comparer::unwind_info(u32 ou, u32 ru, const FnPair& f, std::optional<std::pair<u64, u64>> fi, int chain_depth) {
   Unwind o = O->unwind(ou), r = R->unwind(ru);
   if (o.body != r.body) return {{Category::Unwind, "UNWIND_INFO codes differ"}};
   if (o.has_chain != r.has_chain || o.handler.has_value() != r.handler.has_value())
     return {{Category::Unwind, "chain/handler presence differs"}};
   if (o.has_chain) {
-    if (O->base + o.chain_begin - ostart != R->base + r.chain_begin - rstart ||
-        O->base + o.chain_end - ostart != R->base + r.chain_end - rstart)
+    if (O->base + o.chain_begin - f.ostart != R->base + r.chain_begin - f.rstart ||
+        O->base + o.chain_end - f.ostart != R->base + r.chain_end - f.rstart)
       return {{Category::Unwind, "chained range differs"}};
     if (chain_depth >= MAX_CHAIN) return {{Category::Unwind, "unwind chain too long"}};
-    return unwind_info(o.chain_unwind, r.chain_unwind, ostart, oend, rstart, rend, fi, chain_depth + 1);
+    return unwind_info(o.chain_unwind, r.chain_unwind, f, fi, chain_depth + 1);
   }
   if (!o.handler) return {};
   Key got = resolve(*r.handler);
   if (!got.is_va(*o.handler)) return {{Category::Unwind, "handler " + hex(*o.handler) + " vs " + got.text()}};
-  return handler_data(names(*o.handler), *o.hdata, *r.hdata, ostart, oend, rstart, rend, fi);
+  return handler_data(names(*o.handler), *o.hdata, *r.hdata, f, fi);
 }
 
 // -- EH ----------------------------------------------------------------------------------------------------------
@@ -54,8 +53,8 @@ std::optional<u64> extent_or_leaf(const Image& img, u64 va) {  // .pdata's exten
 
 class EHContext {
  public:
-  EHContext(Comparer* c, u64 os, u64 oe, u64 rs, u64 re)
-      : c(c), O(c->O), R(c->R), ostart(os), oend(oe), rstart(rs), rend(re) {}
+  EHContext(Comparer* c, const FnPair& f)
+      : c(c), O(c->O), R(c->R), ostart(f.ostart), oend(f.oend), rstart(f.rstart), rend(f.rend) {}
   Comparer* c;
   const Image *O, *R;
   u64 ostart, oend, rstart, rend;
@@ -92,7 +91,7 @@ class EHContext {
       probs.push_back({Category::Eh, "funclet " + hex(o) + " has no .pdata"});
       return;
     }
-    Problems got = fi ? c->funclet({o, *oe, r, *re}, *fi) : c->function(o, *oe, r, *re);
+    Problems got = fi ? c->funclet({o, *oe, r, *re}, *fi) : c->function({o, *oe, r, *re});
     for (auto& [cat, why] : got)
       probs.push_back({Category::Eh, "funclet " + std::to_string(ofun.size() - 1) + ": " +
                                          std::string(category_name(cat)) + ": " + why});
@@ -209,9 +208,9 @@ class EHContext {
   }
 };
 
-Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend,
+Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, const FnPair& f,
                                 std::optional<std::pair<u64, u64>> fi) {
-  EHContext ctx(this, ostart, oend, rstart, rend);
+  EHContext ctx(this, f);
   // a funclet's FuncInfo is its function's, compared there
   auto funcinfo = [&](u64 ofi, u64 rfi) {
     return fi && *fi == std::make_pair(ofi, rfi) ? Problems{} : ctx.funcinfo(ofi, rfi);

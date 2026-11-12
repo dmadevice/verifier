@@ -59,6 +59,9 @@ struct FnPair {
 };
 
 i64 literal_size(const Image& img, u64 start, const Key& key);
+// the rebuilt local static at `base` (`span` bytes to its next symbol) can be the original's at o_base: its bytes up to
+// its last nonzero one the same there, its pointers where the original has relocations (outside the sections: anything)
+bool static_fits(const Image& O, const Image& R, u64 o_base, u64 base, u64 span);
 
 // What a comparison asks beyond the two images: where the rebuild's symbols lie, what the original's names and data
 // are, and what the pairing has decided. Pairing answers for a run; each default answers that nothing is known (no
@@ -129,7 +132,7 @@ class Comparer {
   std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end);
 
   // the units
-  Problems function(u64 ostart, u64 oend, u64 rstart, u64 rend);
+  Problems function(const FnPair& f);
   std::optional<Problem> rodata(u64 o_t, u64 r_t);
   std::optional<Problem> vtable(u64 o_vt, u64 r_vt);
 
@@ -143,15 +146,15 @@ class Comparer {
   bool static_fits(u64 o_base, u64 base);
   bool refers_to(u64 f, u64 lo, u64 n);
   // `fi`: the FuncInfo pair of the function a funclet belongs to (compared there, not again for the funclet)
-  Problems unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, std::optional<std::pair<u64, u64>> fi = std::nullopt);
-  Problems unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend,
-                       std::optional<std::pair<u64, u64>> fi = std::nullopt, int chain_depth = 0);
+  Problems unwinds(const FnPair& f, std::optional<std::pair<u64, u64>> fi = std::nullopt);
+  Problems unwind_info(u32 ou, u32 ru, const FnPair& f, std::optional<std::pair<u64, u64>> fi = std::nullopt,
+                       int chain_depth = 0);
 
  private:
   using Kind = Matching::Kind;
   Problems function_body(const FnPair& f, std::optional<std::pair<u64, u64>> fi);
   Problems funclet(const FnPair& f, std::pair<u64, u64> fi);
-  Problems code(u64 ostart, u64 oend, u64 rstart, u64 rend);
+  Problems code(const FnPair& f);
   std::optional<Problem> rodata_body(u64 o_t, u64 r_t);
   std::optional<Problem> vtable_body(u64 o_vt, u64 r_vt);
   // the guesses (Matching): whether r_t stands for o_t, as a function, vtable, read-only data or local static
@@ -164,7 +167,7 @@ class Comparer {
   std::optional<Problem> accessed(u64 o_t, u64 r_t, int n);
   bool is_alternate(u64 o_t, u64 r_t);  // r_t's symbol is one of several at its address, one of them naming o_t
   std::optional<Problem> throw_info_cmp(u64 o_t, u64 r_t, std::string_view name);
-  Problems handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend,
+  Problems handler_data(std::string_view handler, u64 od, u64 rd, const FnPair& f,
                         std::optional<std::pair<u64, u64>> fi);
   void explore_queued();
   friend class EHContext;
