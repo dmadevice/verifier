@@ -27,10 +27,19 @@ const char* size_name(int n) {
   }
 }
 
-// symbolise_one() into a fresh token
-void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve0,
-                    const Image& img, bool const_by_value) {
-  i64 flo = i64(lo - img.base), fhi = i64(hi - img.base);
+// An instruction of `c` as a token: its operands decoded again, and what each address operand is taken from the
+// address fields the decoding found (Code::add_fields), so what is an address, a branch out of the function or a
+// switch table is decided in one place.
+void symbolise_into(Tok& tok, const Code& c, const Lean& l, const std::function<Key(u64)>& resolve0,
+                    bool const_by_value) {
+  const Image& img = *c.img;
+  Insn ins = c.insn(l);
+  auto fields = c.fields(l);
+  auto field = [&](FieldKind kind) -> const Field* {
+    for (auto& f : fields)
+      if (f.kind == kind) return &f;
+    return nullptr;
+  };
   auto resolve = [&](u64 t) {
     auto it = img.imports.find(t);
     if (it != img.imports.end()) {
@@ -41,30 +50,27 @@ void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::functi
     }
     return resolve0(t);
   };
-  u16 rip = reg_rip();
   tok.mnemonic = ins.mnemonic;
   for (auto& op : ins.ops) {
     Op o{};
+    const Field* f = nullptr;
     if (op.type == OP_REG) {
       o.k = Op::R;
       o.base = reg_canon(op.reg);
     } else if (op.type == OP_IMM) {
-      if (ins.branches()) {
-        i64 t = op.imm();
-        if (i64(lo) <= t && t < i64(hi)) {
-          o.k = Op::REL;
-          o.v = t - i64(lo);
-        } else {
-          o.k = Op::SYM;
-          o.key = resolve(u64(t));
-        }
-      } else {
+      if (!ins.branches()) {
         o.k = Op::I;
         o.v = op.imm();
+      } else if ((f = field(F_EXT)) && f->value == op.imm()) {  // a branch out of the function
+        o.k = Op::SYM;
+        o.key = resolve(u64(f->value));
+      } else {
+        o.k = Op::REL;
+        o.v = op.imm() - i64(c.start);
       }
     } else if (op.type == OP_MEM) {
-      if (op.base() == rip) {
-        u64 t = ins.address + ins.size + u64(op.disp());
+      if (op.base() == reg_rip() && (f = field(F_RIP))) {
+        u64 t = u64(f->value);
         Key r = resolve(t);
         if (const_by_value && r.kind == Key::CONST) {
           o.k = Op::CONST;
@@ -75,14 +81,14 @@ void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::functi
           o.size = op.size;
         }
       } else {
-        bool table = flo <= op.disp() && op.disp() < fhi + i64(TABLE_SLACK) && op.index;
-        o.k = table ? Op::TBL : Op::M;
+        f = op.index ? field(F_TBL) : nullptr;  // a switch table: by its offset in the function
+        o.k = f ? Op::TBL : Op::M;
         o.base = reg_canon(op.base());
         o.index = reg_canon(op.index);
         o.scale = op.scale;
-        o.v = table ? op.disp() - flo : op.disp();
+        o.v = f ? f->value : op.disp();
         o.size = op.size;
-        if (!table) o.seg = reg_canon(segment_reg(op));
+        if (!f) o.seg = reg_canon(segment_reg(op));
       }
     } else {
       continue;
@@ -93,17 +99,15 @@ void symbolise_into(Tok& tok, const Insn& ins, u64 lo, u64 hi, const std::functi
 
 }  // namespace
 
-Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
-                  bool const_by_value) {
+Tok symbolise_one(const Code& c, const Lean& l, const std::function<Key(u64)>& resolve, bool const_by_value) {
   Tok tok;
-  symbolise_into(tok, ins, lo, hi, resolve, img, const_by_value);
+  symbolise_into(tok, c, l, resolve, const_by_value);
   return tok;
 }
 
 Toks symbolise(const Code& c, const std::function<Key(u64)>& resolve, bool const_by_value) {
   Toks toks(c.insns.size());
-  for (size_t k = 0; k < c.insns.size(); ++k)
-    symbolise_into(toks[k], c.insn(c.insns[k]), c.start, c.end, resolve, *c.img, const_by_value);
+  for (size_t k = 0; k < c.insns.size(); ++k) symbolise_into(toks[k], c, c.insns[k], resolve, const_by_value);
   return toks;
 }
 

@@ -61,9 +61,8 @@ struct Tok {
 };
 using Toks = std::vector<Tok>;
 
-Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>& resolve, const Image& img,
-                  bool const_by_value);
-// every instruction of `c`, decoded again one at a time
+// an instruction of `c` as a token (its operands decoded again, its addresses from its fields); every instruction
+Tok symbolise_one(const Code& c, const Lean& l, const std::function<Key(u64)>& resolve, bool const_by_value);
 Toks symbolise(const Code& c, const std::function<Key(u64)>& resolve, bool const_by_value);
 std::string tok_text(const Tok& t, const NameOf& names);
 Category classify(const Toks& a, const Toks& b);

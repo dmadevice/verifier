@@ -87,28 +87,6 @@ void add_unresolved(const Tok& t, std::set<std::string>& out) {
     if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) out.insert(std::string(op.key.name));
 }
 
-// Whether the two functions' tokens are equal, decided from their kept form: instructions with the same size,
-// field layout and bytes outside the fields have the same operands except where the address matters
-// (Lean::addressed), and only those are decoded again and compared as tokens. false when not known to be equal
-// (the full comparison decides); when true, `unresolved` has the rebuilt tokens' unresolved names.
-bool same_tokens(const Code& oc, const Code& rc, u64 ova, u64 oend, u64 rva, u64 rend, const Image& O, const Image& R,
-                 const std::function<Key(u64)>& resolve, std::set<std::string>& unresolved) {
-  if (oc.insns.size() != rc.insns.size()) return false;
-  for (size_t k = 0; k < oc.insns.size(); ++k) {
-    const Lean &a = oc.insns[k], &b = rc.insns[k];
-    auto fa = oc.fields(a), fb = rc.fields(b);
-    if (a.mnem != b.mnem || !same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa))
-      return false;
-    if (!a.addressed && !b.addressed) continue;
-    Tok to = symbolise_one(oc.insn(a), ova, oend, by_va(), O, false);
-    Tok tr = symbolise_one(rc.insn(b), rva, rend, resolve, R, true);
-    const_by_value(to, tr, O);
-    if (!(to == tr)) return false;
-    add_unresolved(tr, unresolved);
-  }
-  return true;
-}
-
 }  // namespace
 
 std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig, const Rebuilt& reb,
@@ -163,22 +141,17 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   const Code &oc = *ocp, &rc = *rcp;
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
-  bool same;
+  bool same = true;  // the instructions are the same as tokens
+  Toks ot, rt;       // only when the report shows instructions
   if (probs.empty() && !show) {
     // a match: the comparison accepted every address field, so no diff is shown; only the rebuilt side's names that
     // resolve to nothing are reported (unaddressed instructions have none)
     for (auto& b : rc.insns)
-      if (b.addressed) add_unresolved(symbolise_one(rc.insn(b), rva, rend, resolve, reb.img, true), unresolved);
-    same = true;
+      if (b.addressed) add_unresolved(symbolise_one(rc, b, resolve, true), unresolved);
   } else {
-    same = same_tokens(oc, rc, ova, oend, rva, rend, orig.img, reb.img, resolve, unresolved);
-  }
-  Toks ot, rt;  // only when the report shows instructions
-  if (!same || show) {
     ot = symbolise(oc, by_va(), false);
     rt = symbolise(rc, resolve, true);
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
-    unresolved.clear();
     for (auto& t : rt) add_unresolved(t, unresolved);
     same = ot == rt;
   }
