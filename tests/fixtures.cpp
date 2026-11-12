@@ -1111,15 +1111,36 @@ Problems addend_across_sections() {
 // same bytes is another program (the global can change)
 Problems literal_vs_global(bool string) {
   Side o(0), r(0x240);
-  Bytes v = string ? Bytes("abc ", 4) : unhex("0000803f");
+  Bytes v = string ? Bytes("abc\0", 4) : unhex("0000803f");
   u64 og = o.put(DATA, v, 4), rk = r.put(RDATA, v, 4);
   u64 of = o.reserve(TEXT, 16), rf = r.reserve(TEXT, 16);
-  o.write(of, mov_eax_g(of, og) + "Ã");
-  r.write(rf, mov_eax_g(rf, rk) + "Ã");
+  o.write(of, mov_eax_g(of, og) + "\xc3");
+  r.write(rf, mov_eax_g(rf, rk) + "\xc3");
   Image O = o.image(), R = r.image();
   Key k = string ? Key::named(Key::STR, "??_C@_03abc@") : Key::named(Key::CONST, "__real@3f800000");
   Comparer c(&O, &R, [&](u64 t) { return t == rk ? k : Key::named(Key::UNRESOLVED, hex(t)); });
   return c.function(of, of + 7, rf, rf + 7);
+}
+
+// read-only data whose original extent is known (from its padding): compared to that end, so a table cut short
+// ({1,2,3,4} vs {1,2,3,0}) differs, either way round. Without the extent only the rebuilt nonzero bytes are compared:
+// past them the original's bytes may as well be the next object, which the rebuild put after its padding
+Problems short_table(bool rebuilt_short) {
+  Side o(0), r(0x240);
+  Bytes full = unhex("01020304"), cut = unhex("01020300");
+  u64 ot = o.put(RDATA, rebuilt_short ? full : cut, 16), rt = r.put(RDATA, rebuilt_short ? cut : full, 16);
+  u64 of = o.reserve(TEXT, 16), rf = r.reserve(TEXT, 16);
+  o.write(of, lea_rcx(of, ot) + "\xc3");
+  r.write(rf, lea_rcx(rf, rt) + "\xc3");
+  Image O = o.image(), R = r.image();
+  struct Spans : ComparerContext {
+    u64 span(u64) const override { return 16; }
+    u64 orig_object_end(u64 t) const override { return t + 4; }
+  } spans;
+  Comparer c(
+      &O, &R, [&](u64 t) { return t == rt ? Key::of_va(ot) : Key::named(Key::UNRESOLVED, hex(t)); }, nullptr, nullptr,
+      &spans);
+  return c.function(of, of + 8, rf, rf + 8);
 }
 
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
@@ -2102,6 +2123,8 @@ int main(int argc, char** argv) {
       {"addend stays in its section", nullptr, addend_across_sections},
       {"constant vs writable global", "reference", [] { return literal_vs_global(false); }},
       {"string vs writable global", "reference", [] { return literal_vs_global(true); }},
+      {"rebuilt table cut short", "data", [] { return short_table(true); }},
+      {"original table cut short", "data", [] { return short_table(false); }},
       {"ignored annotations reported", nullptr, ignored_annotations},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},

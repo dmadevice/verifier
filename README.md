@@ -88,7 +88,8 @@ class Player { ... };
     "lib": <bool>, "thunk": <bool>}`.
   - `vtables` (optional): `{"vtable_ea": <va>, "name": "<decorated ??_7 name>", "slots": [<va>, ...]}`.
   - `data_items` (optional): data items; the alignment ones, `{"ea": <va>, "size": <bytes>, "kind": "align"}`,
-    tell where original objects end and where padding lies.
+    tell where original objects end and where padding lies. Without them a data object is compared only as far as
+    the rebuilt one's last nonzero byte, so a table whose trailing entries the rebuild leaves zero still matches.
   - `data_names` (optional): named data, `{"ea": <va>, "kind": "data", ...}`.
 - Optional library attribution: `library_matches`, `{"matches": [{"ea": <va>, "lib": "x.lib",
   "symbol": "<decorated>"}, ...]}` (library functions found in the original, for example by signature
