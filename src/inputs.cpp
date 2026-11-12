@@ -148,9 +148,11 @@ void Original::load_exports() {
     IdaFunction f;
     f.ea = u64(v["ea"].as_int());
     f.size = u64(v["size"].as_int());
-    f.name = keep(v["name"].as_str());
-    f.lib = v["lib"].as_bool();
-    f.thunk = v["thunk"].as_bool();
+    // optional: a name, and whether the disassembler took it for library code or a thunk
+    const json::Value *name = v.get("name"), *lib = v.get("lib"), *thunk = v.get("thunk");
+    if (name) f.name = keep(name->as_str());
+    f.lib = lib && lib->as_bool();
+    f.thunk = thunk && thunk->as_bool();
     fs.push_back(f);
   });
   functions.assign(fs);
@@ -158,7 +160,7 @@ void Original::load_exports() {
     // by name, in the order the file first has each address
     std::unordered_set<u64> seen;
     for (auto& f : fs)
-      if (seen.insert(f.ea).second) by_name.set(functions.at(f.ea).name, f.ea);
+      if (seen.insert(f.ea).second && !functions.at(f.ea).name.empty()) by_name.set(functions.at(f.ea).name, f.ea);
   }
   std::vector<json::Value> matches;
   if (file_exists(p.library_matches)) matches = json::parse(read_file(p.library_matches))["matches"].arr;

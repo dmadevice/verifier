@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "pairing.hpp"
+#include "policy.hpp"
 #include "report.hpp"
 
 namespace verifier {

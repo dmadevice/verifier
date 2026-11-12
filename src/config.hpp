@@ -26,7 +26,7 @@ struct Config {
   std::array<const std::string*, 8> snapshot_inputs() const {
     return {&original, &functions, &vtables, &data_items, &data_names, &library_matches, &library_functions, &symbols};
   }
-  // the file at `path`; exits with a message (code 2) when it is unreadable or a required key is missing
+  // the file at `path`; throws RunError (status 2) when it is unreadable or a required key is missing
   static Config load(const std::string& path);
 };
 

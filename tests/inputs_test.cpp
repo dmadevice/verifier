@@ -124,41 +124,43 @@ Findings data_items_load() {
   return bad;
 }
 
+// a two-section PE file at `base`: code and data, no zero bytes in them
+Bytes pe_file(u64 base) {
+  auto put = [](Bytes& b, size_t at, u64 v, int n) {
+    for (int i = 0; i < n; ++i) b[at + i] = char(v >> (8 * i));
+  };
+  Bytes f(0x600, '\0');
+  f[0] = 'M';
+  f[1] = 'Z';
+  put(f, 0x3c, 0x40, 4);
+  f.replace(0x40, 4, Bytes("PE\0\0", 4));
+  put(f, 0x44, 0x8664, 2);  // machine
+  put(f, 0x46, 2, 2);       // sections
+  put(f, 0x54, 0xf0, 2);    // optional header size
+  put(f, 0x58, 0x20b, 2);   // PE32+
+  put(f, 0x58 + 24, base, 8);
+  put(f, 0x58 + 32, 0x1000, 4);  // section alignment
+  put(f, 0x58 + 36, 0x200, 4);   // file alignment
+  struct S {
+    u32 vsize, va, rawsize, rawptr, ch;
+  };
+  S secs[2] = {{0x10, 0x1000, 0x200, 0x200, 0x60000020}, {0x2000, 0x2000, 0x200, 0x400, 0xc0000040}};
+  for (int i = 0; i < 2; ++i) {
+    size_t s = 0x148 + 40 * i;
+    put(f, s + 8, secs[i].vsize, 4);
+    put(f, s + 12, secs[i].va, 4);
+    put(f, s + 16, secs[i].rawsize, 4);
+    put(f, s + 20, secs[i].rawptr, 4);
+    put(f, s + 36, secs[i].ch, 4);
+  }
+  for (size_t k = 0x200; k < 0x600; ++k) f[k] = char(k * 7 + 1);  // code and data, no zeros
+  return f;
+}
+
 // a PE file on disk: loading lays it out at its virtual addresses, and an image laid out elsewhere (the cache's) reads
 // the same tables from its headers
 Findings file_layout() {
   namespace fs = std::filesystem;
-  auto put = [](Bytes& b, size_t at, u64 v, int n) {
-    for (int i = 0; i < n; ++i) b[at + i] = char(v >> (8 * i));
-  };
-  auto pe_file = [&](u64 base) {
-    Bytes f(0x600, '\0');
-    f[0] = 'M';
-    f[1] = 'Z';
-    put(f, 0x3c, 0x40, 4);
-    f.replace(0x40, 4, Bytes("PE\0\0", 4));
-    put(f, 0x44, 0x8664, 2);  // machine
-    put(f, 0x46, 2, 2);       // sections
-    put(f, 0x54, 0xf0, 2);    // optional header size
-    put(f, 0x58, 0x20b, 2);   // PE32+
-    put(f, 0x58 + 24, base, 8);
-    put(f, 0x58 + 32, 0x1000, 4);  // section alignment
-    put(f, 0x58 + 36, 0x200, 4);   // file alignment
-    struct S {
-      u32 vsize, va, rawsize, rawptr, ch;
-    };
-    S secs[2] = {{0x10, 0x1000, 0x200, 0x200, 0x60000020}, {0x2000, 0x2000, 0x200, 0x400, 0xc0000040}};
-    for (int i = 0; i < 2; ++i) {
-      size_t s = 0x148 + 40 * i;
-      put(f, s + 8, secs[i].vsize, 4);
-      put(f, s + 12, secs[i].va, 4);
-      put(f, s + 16, secs[i].rawsize, 4);
-      put(f, s + 20, secs[i].rawptr, 4);
-      put(f, s + 36, secs[i].ch, 4);
-    }
-    for (size_t k = 0x200; k < 0x600; ++k) f[k] = char(k * 7 + 1);  // code and data, no zeros
-    return f;
-  };
   fs::path d = fs::temp_directory_path() / ("verifier-pe-" + unique_suffix());
   fs::create_directories(d);
   std::string path = (d / "x.dll").string();
@@ -173,6 +175,40 @@ Findings file_layout() {
   Image same = Image::laid_out(im.headers, *buf, buf);
   if (same.img != im.img || same.sections.size() != 2 || same.base != im.base)
     bad.push_back({"layout", "a copy differs"});
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
+// the exports in any key order, the optional keys left out: functions without a name, library or thunk flag, and
+// vtables; the named ones are found by name
+Findings neutral_exports() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-exports-" + unique_suffix());
+  fs::create_directories(d);
+  Config p;
+  p.original = (d / "x.dll").string();
+  p.functions = (d / "functions.jsonl").string();
+  p.vtables = (d / "vtables.jsonl").string();
+  std::ofstream(p.original, std::ios::binary) << pe_file(0x180000000);
+  std::ofstream(p.functions, std::ios::binary)
+      << "{\"size\": 8, \"ea\": 6442455040}\n"
+      << "{\"name\": \"Get\", \"ea\": 6442455048, \"size\": 8}\n"
+      << "{\"ea\": 6442455056, \"size\": 4, \"name\": \"Set\", \"thunk\": true}\n";
+  std::ofstream(p.vtables, std::ios::binary)
+      << "{\"slots\": [6442455048], \"name\": \"??_7Widget@@6B@\", \"vtable_ea\": 6442459136}\n";
+  Findings bad;
+  {
+    Original o(p);
+    const IdaFunction* f = o.functions.find(0x180001000);
+    if (o.functions.size() != 3 || !f || f->size != 8 || !f->name.empty() || f->lib || f->thunk)
+      bad.push_back({"exports", "a function with only its address and size"});
+    const u64* get = o.by_name.find("Get");
+    if (!get || *get != 0x180001008) bad.push_back({"exports", "a named function in another key order"});
+    if (!o.functions.at(0x180001010).thunk) bad.push_back({"exports", "a thunk"});
+    if (o.vtables.size() != 1 || o.vtables.at(0x180002000) != std::vector<u64>{0x180001008})
+      bad.push_back({"exports", "a vtable in another key order"});
+  }
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;
@@ -212,6 +248,7 @@ void add_inputs_cases(Cases& cases) {
                                 {"span stops before a vftable's locator", nullptr, span_before_vftable},
                                 {"data items: object ends and padding", nullptr, data_items_load},
                                 {"unit: PE file layout", nullptr, file_layout},
+                                {"exports in any key order, optional keys left out", nullptr, neutral_exports},
                                 {"ignored annotations reported", nullptr, ignored_annotations},
                             });
 }

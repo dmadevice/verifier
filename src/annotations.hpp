@@ -14,8 +14,6 @@ namespace verifier {
 enum class Kind : u8 { Function, Stub, Synthetic, Template, Library, Global, Vtable };
 std::string_view kind_name(Kind k);                    // as written in source: FUNCTION, STUB, ...
 std::optional<Kind> kind_named(std::string_view name);  // the kind written `name`
-bool is_counted(Kind k);  // FUNCTION SYNTHETIC TEMPLATE: decompiled code, compared and counted
-bool is_paired(Kind k);   // the counted kinds and LIBRARY: compared
 
 struct AnnotationFlags {
   bool folded = false;  // FOLDED: identical-code folding gave several functions the address
@@ -46,7 +44,5 @@ std::vector<std::string> list_files(const std::string& root);
 // The annotations in the source files under roots, in list_files order
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
                                           std::vector<Ignored>* ignored);
-// exits (message on stderr, code 1) when two annotations claim one address without both saying FOLDED
-void check_duplicates(const std::vector<Annotation>& anns);
 
 }  // namespace verifier

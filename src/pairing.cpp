@@ -4,6 +4,8 @@
 #include <cctype>
 #include <set>
 
+#include "policy.hpp"
+
 namespace verifier {
 
 namespace {

@@ -89,7 +89,7 @@ void add_unresolved(const Tok& t, std::set<std::string>& out) {
 std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig, const Rebuilt& reb,
                                     const Pairing& pairing) {
   u64 ova = ann.va;
-  if (!orig.functions.contains(ova) || (is_counted(ann.kind) && orig.linked.count(ova))) return std::nullopt;
+  if (!orig.functions.contains(ova) || library_code(ann, orig)) return std::nullopt;
   const Pairing::Paired* pd = pairing.paired(ann);
   Lookup lk = pd ? pd->lookup : reb.lookup(ann.name, sig_flag(ann.flags), true);
   if (lk.vas.empty() || lk.nhits > 1) return std::nullopt;
@@ -118,12 +118,11 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     rec.status = Status::BadAddr;
     return rec;
   }
-  if (is_counted(ann.kind) && orig.linked.count(ova)) {
+  if (const Linked* l = library_code(ann, orig)) {
     rec.status = Status::LibCode;
-    auto& l = orig.linked.at(ova);
     rec.linked = true;
-    rec.lib = l.lib;
-    if (l.has_symbol) rec.symbol = l.symbol;
+    rec.lib = l->lib;
+    if (l->has_symbol) rec.symbol = l->symbol;
     return rec;
   }
   if (lk.vas.empty() || lk.nhits > 1) {

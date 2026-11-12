@@ -83,9 +83,12 @@ class Player { ... };
 - The original binary, and your rebuild of it with its linker map (`/MAP`).
 - MSVC's `undname.exe` (from the toolchain you build with) to undecorate the map's names; any program that
   prints `undname`'s output format works.
-- Exports from your disassembler database (IDA's field names), as JSON Lines:
-  - `functions` (required): one object per function, `{"ea": <va>, "size": <bytes>, "name": "...",
-    "lib": <bool>, "thunk": <bool>}`.
+- Exports from your disassembler database, as JSON Lines (one object per line; keys in any order, other keys
+  ignored, addresses as decimal integers). The key names are IDA's, but any disassembler or script that writes
+  these objects will do:
+  - `functions` (required): one object per function, `{"ea": <va>, "size": <bytes>}`, optionally with
+    `"name": "..."` (the original's name for it, used to pair references by name), `"lib": <bool>` and
+    `"thunk": <bool>` (left out of coverage).
   - `vtables` (optional): `{"vtable_ea": <va>, "name": "<decorated ??_7 name>", "slots": [<va>, ...]}`.
   - `data_items` (optional): the items of the data sections, `{"ea": <va>, "size": <bytes>, "kind": "..."}`.
     Each item ends the original object before it, and the `"align"` ones are padding. A data object is then
@@ -165,11 +168,24 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 55 cases in code: pairing (a guessed function or table that fails, guesses
-kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items export, literals against globals, tables cut short, tables that
-point at each other), name handling, the annotation parser, the instruction diff,
-each record of the EH handler data, hashing, the report's JSON escaping, file reading, line splitting, the name table, the name cache file and the
-snapshot key. `ctest` also runs fadec's own decoder tests.
+exact problems it must report, and 56 cases in code: pairing (a guessed function or table that fails, guesses
+kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items
+export, literals against globals, tables cut short, tables that point at each other), each record of the EH
+handler data, name handling, the annotation parser, the exports in any key order, the instruction diff, hashing,
+the report's JSON escaping, file reading, line splitting, the name table, the name cache file and the snapshot
+key. `ctest` also runs fadec's own decoder tests.
+
+## Code layout
+
+- The engine, which knows MSVC x64 binaries and nothing of a project: `pe.cpp` (the image), `x64.cpp`
+  (decoding, address fields), `layouts.cpp` (EH and RTTI records), `compare.cpp`, `compare_refs.cpp`,
+  `compare_eh.cpp` (the comparison), `matching.cpp` (the guesses), `report.cpp` (tokens, the instruction diff,
+  the classifier), `names.cpp`, `undname.cpp`.
+- The inputs: `inputs.cpp` (the original with its exports, the rebuild with its map), `annotations.cpp`,
+  `pairing.cpp` (what each rebuilt address stands for), `config.cpp`, `args.cpp`, and the caches
+  (`name_cache.cpp`, the snapshot in `inputs.cpp`).
+- The project policy, `policy.cpp`: which annotation kinds are compared and counted, `FOLDED`, `LIBCODE`.
+- The run and its output: `verify.cpp`, `result.cpp`.
 
 ## How it works
 
