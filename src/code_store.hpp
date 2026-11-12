@@ -6,6 +6,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -85,7 +86,13 @@ class CodeCache {
   CodeStore* store_ = nullptr;
   RebuiltStore* rebuilt_store_ = nullptr;
   std::function<std::string_view(u64)> name_of_;  // a rebuilt function's name ("" for none)
-  std::map<std::pair<u64, u64>, std::shared_ptr<const Code>> live_;
+  struct PlaceHash {
+    size_t operator()(const std::pair<u64, u64>& p) const {
+      u64 h = (p.first ^ (p.second * 0xC2B2AE3D27D4EB4Full)) * 0x9E3779B97F4A7C15ull;
+      return size_t(h ^ (h >> 32));  // the high bits down: the table indexes by the low ones
+    }
+  };
+  std::unordered_map<std::pair<u64, u64>, std::shared_ptr<const Code>, PlaceHash> live_;  // by start and end
 };
 
 }  // namespace verifier
