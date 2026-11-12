@@ -66,25 +66,7 @@ const std::function<Key(u64)>& by_va() {
   return f;
 }
 
-// the original's RIP-relative operand stands for its bytes where the rebuilt one is a compiler constant (by value)
-void const_by_value(Tok& o, const Tok& r, const Image& O) {
-  if (r.ops.size() != o.ops.size()) return;
-  for (size_t z = 0; z < r.ops.size(); ++z) {
-    if (r.ops[z].k == Op::CONST && o.ops[z].k == Op::MSYM) {
-      Op c{};
-      c.k = Op::CONST;
-      c.key.name = O.bytes(o.ops[z].key.va, i64(r.ops[z].bytes().size()));
-      o.ops[z] = c;
-    }
-  }
-}
-
-void add_unresolved(const Tok& t, std::set<std::string>& out) {
-  for (auto& op : t.ops)
-    if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) out.insert(std::string(op.key.name));
-}
-
-// the same for an address field's target, as symbolise takes it (an import first; a compiler constant is by value)
+// an address field's target that resolves to nothing (an import is something; a compiler constant is by value)
 void add_unresolved(const Field& f, const Image& img, const std::function<Key(u64)>& resolve,
                     std::set<std::string>& out) {
   if (img.imports.count(u64(f.value))) return;
@@ -150,41 +132,34 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   auto rcp = fields ? ocp : cmp.rebuilt_code(rva, rend);
   const Code& rc = *rcp;  // the original's when the fields are known
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
+  // the rebuilt side's names that resolve to nothing: what its branches out of the function and RIP-relative operands
+  // refer to
   std::set<std::string> unresolved;
-  bool same = true;  // the instructions are the same as tokens
-  Toks ot, rt;       // only when the report shows instructions
-  if (probs.empty() && !show) {
-    // a match: the comparison accepted every address field, so no diff is shown; only the rebuilt side's names that
-    // resolve to nothing are reported: what its branches out of the function and RIP-relative operands refer to
-    for (const Field& f : fields ? std::span<const Field>(*fields) : rc.field_list)
-      if (f.kind == F_EXT || f.kind == F_RIP) add_unresolved(f, reb.img, resolve, unresolved);
-  } else {
-    ot = symbolise(oc, by_va(), false);
-    rt = symbolise(rc, resolve, true);
-    for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
-    for (auto& t : rt) add_unresolved(t, unresolved);
-    same = ot == rt;
-  }
+  for (const Field& f : fields ? std::span<const Field>(*fields) : rc.field_list)
+    if (f.kind == F_EXT || f.kind == F_RIP) add_unresolved(f, reb.img, resolve, unresolved);
   rec.compared = true;
-  auto offsets = [](const Code& c) {
-    std::vector<u32> v;
-    for (auto& l : c.insns) v.push_back(l.off);
-    return v;
-  };
-  if (!probs.empty()) rec.category = same ? probs[0].category : classify(ot, rt);
   rec.osize = i64(oc.code.size());  // padding after the last ret is not code, whichever side's extent reaches over it
   rec.rsize = i64(rc.code.size());
   rec.status = probs.empty() ? Status::Match : Status::Diff;
   rec.unresolved.assign(unresolved.begin(), unresolved.end());
   for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].text());
-  if (!same) {
-    for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
-      if (ot[k] == rt[k]) continue;
-      rec.first_diff = Result::FirstDiff{i64(k), oc.insn(oc.insns[k]).text(), rc.insn(rc.insns[k]).text()};
-      break;
+  Toks ot, rt;  // the instructions as tokens, when the category or the listing needs their operands
+  if (!probs.empty() || show) {
+    std::optional<Category> cat = classify_mnemonics(oc, rc);
+    if (!cat || show) {
+      ot = symbolise(oc, by_va(), false);
+      rt = symbolise(rc, resolve, true);
+      for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
     }
-    rec.has_diff = true;
-    if (want_diff) rec.diff = insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
+    if (!probs.empty()) rec.category = cat ? *cat : ot == rt ? probs[0].category : classify(ot, rt);
+    CodeDiff d = code_diff(oc, rc, {resolve, &cmp.m, cmp.names}, want_diff);
+    if (d.differs) {
+      if (d.first)
+        rec.first_diff = Result::FirstDiff{i64(d.first->first), oc.insn(oc.insns[d.first->first]).text(),
+                                           rc.insn(rc.insns[d.first->second]).text()};
+      rec.has_diff = true;
+      rec.diff = std::move(d.lines);
+    }
   }
   if (show) {
     out.print("--- " + lk.qname + "  orig " + std::to_string(rec.osize) + "B | rebuilt " + std::to_string(rec.rsize) +

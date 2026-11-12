@@ -4,11 +4,13 @@
 #include <array>
 #include <functional>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "compare.hpp"
+#include "matching.hpp"
 
 namespace verifier {
 
@@ -67,20 +69,29 @@ Toks symbolise(const Code& c, const std::function<Key(u64)>& resolve, bool const
 std::string tok_text(const Tok& t, const NameOf& names);
 Category classify(const Toks& a, const Toks& b);
 
-struct LongestMatch {
-  size_t i, j, k;
-};
-LongestMatch find_longest_match(const std::vector<int>& a, const std::vector<int>& b, size_t alo, size_t ahi,
-                                size_t blo, size_t bhi);
-struct Opcode {
-  char tag;
-  size_t i1, i2, j1, j2;
-};  // tag: e(qual) r(eplace) d(elete) i(nsert)
-std::vector<Opcode> get_opcodes(const std::vector<int>& a,
-                                const std::vector<int>& b);  // sequence alignment (report.cpp)
+// the original's RIP-relative operands that stand for their bytes where the rebuilt one's are compiler constants
+void const_by_value(Tok& o, const Tok& r, const Image& O);
+// the category from the mnemonics alone (classify's answer for them), or nullopt when both functions have the same
+// mnemonics in the same order and classify needs the operands
+std::optional<Category> classify_mnemonics(const Code& a, const Code& b);
 
-// the instructions' offsets in their functions and their tokens
-std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot,
-                                   const Toks& rt, const NameOf& names, int context = 2, size_t limit = 200);
+// What the instruction diff needs beyond the two functions' code
+struct DiffContext {
+  std::function<Key(u64)> resolve;     // what a rebuilt address stands for
+  const Matching* matching = nullptr;  // the pairs the comparison guessed and kept (after solve)
+  NameOf names;                        // original VA -> name, for the lines shown
+};
+// The instruction diff of two functions: their instructions aligned as the comparison sees them (the same bytes
+// outside the address fields, each field standing for the same thing; see Identities in report.cpp), as a unified
+// diff of `context` lines around each change, `@N` heading each hunk (N: the original's instruction there), at most
+// `limit` lines and then a count of the rest. A replaced pair that reads the same differs in encoding only, and says
+// so with its bytes.
+struct CodeDiff {
+  bool differs = false;                            // some instruction is not aligned with an equal one
+  std::optional<std::pair<size_t, size_t>> first;  // the first difference: (original, rebuilt) instruction
+  std::vector<std::string> lines;                  // when asked for
+};
+CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context = 2,
+                   size_t limit = 200);
 
 }  // namespace verifier

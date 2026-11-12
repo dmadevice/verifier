@@ -38,7 +38,11 @@ A function **MATCHes** when:
   funclets compared as functions), GS cookie data, and SEH scope tables.
 
 Otherwise it is a **DIFF**, with the problems found (up to eight), a category, the first differing instruction
-and a unified instruction diff with targets shown by name. Categories: `reorder`, `regalloc`, `immediate`,
+and a unified instruction diff with targets shown by name. The diff aligns instructions as the comparison sees
+them: the same bytes outside their address fields, each field standing for the same thing (a string literal the
+original's bytes hold is the same string), and branches inside the function going to instructions in each other's
+place. A pair that reads the same is marked: `; encoding <bytes>` when only the bytes differ, `; target not aligned`
+when two branches to the same offset go to instructions that are not. Categories: `reorder`, `regalloc`, `immediate`,
 `inlining`, `unexplained` (the instruction streams differ), `encoding`, `undecodable`, `length` (same
 instructions, different bytes or size), `reference`, `data`, `vtable` (something referenced differs),
 `unwind`, `eh`. Other statuses: `MISSING` (no rebuilt symbol for the annotation), `AMBIGUOUS` (the name
@@ -185,7 +189,7 @@ key, the sources cache and the stored decoded code. The comparison cases run a s
 - The engine, which knows MSVC x64 binaries and nothing of a project: `pe.cpp` (the image), `x64.cpp`
   (decoding, address fields), `layouts.cpp` (EH and RTTI records), `compare.cpp`, `compare_refs.cpp`,
   `compare_eh.cpp` (the comparison), `matching.cpp` (the guesses), `report.cpp` (tokens, the instruction diff,
-  the classifier), `names.cpp`, `undname.cpp`.
+  the classifier), `align.cpp` (the alignment), `names.cpp`, `undname.cpp`.
 - The inputs: `inputs.cpp` (the original with its exports, the rebuild with its map), `annotations.cpp`,
   `pairing.cpp` (what each rebuilt address stands for), `config.cpp`, `args.cpp`, and the caches
   (`name_cache.cpp`, the snapshot in `inputs.cpp`, the decoded code in `code_store.cpp`).
@@ -216,8 +220,8 @@ A run, in the order `verify.cpp`'s `run` takes it:
    decides, for all functions at once: every annotated function and GLOBAL is explored first with each guess
    assumed, the guesses that hold together are kept by fixed rules, and then each function is judged against them.
    The results do not depend on the order the functions are compared in.
-6. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the symbolised
-   instruction diff (`report.cpp`), its stdout line and its report entry.
+6. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the instruction
+   diff (`report.cpp`, `align.cpp`), its stdout line and its report entry.
 7. **Summary and gate** (`verify.cpp`): coverage and the regression gate against the matched list.
 
 The comparison asks the pairing what it needs through `ComparerContext` (`compare.hpp`), never through the
@@ -228,7 +232,7 @@ pairing's tables directly. The tests answer the same questions with small fakes.
 A run is single-threaded. With the cache directory warm it maps the original's snapshot and decoded functions,
 reads the source files that changed and the map, and compares every annotated function. A rebuilt function that
 matches is mostly compared from its address fields, without a decode of its own; most of the time then goes to
-the DIFFs (their decode, tokens and instruction diffs). Zero-filled data past a section's file data is not read.
+the DIFFs (their decode and instruction diffs; text is made only for the lines a diff shows). Zero-filled data past a section's file data is not read.
 A run without the name cache runs undname for every rebuilt name and takes several times as long.
 
 ## License

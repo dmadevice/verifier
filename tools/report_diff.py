@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Compare two verifier reports (--json) result by result.
 
-    report_diff.py OLD.json NEW.json [--all] [--limit N]
+    report_diff.py OLD.json NEW.json [--all | --no-text] [--limit N]
 
 Results are matched by (orig, name, src). For each, the status, category, problems and sizes are compared (with
 --all also the unresolved names, the first differing instruction and the instruction diff), then the totals.
+--no-text compares what --all does but the instruction text: of the diff only whether there is one, of first_diff
+only whether there is one and its index (the changed indexes are counted apart).
 Prints one block per changed result and a summary; exits 1 when anything differs.
 """
 import argparse
@@ -40,18 +42,33 @@ def main():
     ap.add_argument("old")
     ap.add_argument("new")
     ap.add_argument("--all", action="store_true", help="also compare unresolved names, first_diff and the diff")
+    ap.add_argument("--no-text", action="store_true", help="as --all, without the diff's and first_diff's text")
     ap.add_argument("--limit", type=int, default=200, help="changed results printed at most (default 200)")
     a = ap.parse_args()
     old, old_t = load(a.old)
     new, new_t = load(a.new)
-    fields = FIELDS + (MORE if a.all else [])
+    fields = FIELDS + (MORE if a.all or a.no_text else [])
+
+    def get(r, f):
+        v = r.get(f)
+        if a.no_text and f == "diff":
+            return v is not None
+        if a.no_text and f == "first_diff":
+            return None if v is None else v.get("index")
+        return v
+
     changed = []
+    index_moved = 0
     for k in sorted(set(old) | set(new), key=lambda k: tuple(str(x) for x in k)):
         o, n = old.get(k), new.get(k)
         if o is None or n is None:
             changed.append((k, "only in " + ("new" if o is None else "old"), []))
             continue
-        diffs = [(f, o.get(f), n.get(f)) for f in fields if o.get(f) != n.get(f)]
+        diffs = [(f, get(o, f), get(n, f)) for f in fields if get(o, f) != get(n, f)]
+        moved = [d for d in diffs if d[0] == "first_diff" and d[1] is not None and d[2] is not None]
+        index_moved += len(moved)
+        if a.no_text and moved and len(diffs) == 1:
+            continue  # counted only
         if diffs:
             changed.append((k, "changed", diffs))
     transitions = Counter()
@@ -71,6 +88,8 @@ def main():
     for k, (x, y) in sorted(tdiff.items()):
         out.write("total %s: %s -> %s\n" % (k, json.dumps(x), json.dumps(y)))
     out.write("\n%d results compared, %d changed\n" % (len(set(old) | set(new)), len(changed)))
+    if a.no_text:
+        out.write("first_diff index moved in %d results\n" % index_moved)
     for t, c in transitions.most_common():
         out.write("  %5d  %s\n" % (c, t))
     return 1 if changed or tdiff else 0

@@ -1,10 +1,11 @@
 #include "report.hpp"
 
 #include <algorithm>
-#include <map>
+#include <climits>
 #include <optional>
-#include <set>
-#include <tuple>
+#include <unordered_map>
+
+#include "align.hpp"
 
 namespace verifier {
 
@@ -227,339 +228,330 @@ Category classify(const Toks& a, const Toks& b) {
   return Category::Unexplained;
 }
 
-// -- opcodes of a sequence alignment ------------------------------------------------------------------------
-//
-// The instruction diff aligns two token streams the way Python's difflib.SequenceMatcher(None, a, b, autojunk=False)
-// does, opcode for opcode (the tests hold 2,000 cases it gives): find the longest common block, the earliest in a and
-// then in b when several are as long, then align the parts before and after it the same way. Those tie-breaks decide
-// which of several equally good diffs is shown, so they are part of the output.
-//
-// difflib finds each block with a dynamic programme over pairs of positions, quadratic in a function's length at
-// worst, and repeated for every part. Here a suffix automaton of b's part is built (linear in its length) and a's part
-// is run through it, which finds the same block, with the same tie-breaks, in linear time: large functions' diffs (tens
-// of thousands of instructions) take milliseconds.
+// the original's RIP-relative operand stands for its bytes where the rebuilt one is a compiler constant (by value)
+void const_by_value(Tok& o, const Tok& r, const Image& O) {
+  if (r.ops.size() != o.ops.size()) return;
+  for (size_t z = 0; z < r.ops.size(); ++z) {
+    if (r.ops[z].k == Op::CONST && o.ops[z].k == Op::MSYM) {
+      Op c{};
+      c.k = Op::CONST;
+      c.key.name = O.bytes(o.ops[z].key.va, i64(r.ops[z].bytes().size()));
+      o.ops[z] = c;
+    }
+  }
+}
+
+std::optional<Category> classify_mnemonics(const Code& a, const Code& b) {
+  if (std::equal(a.insns.begin(), a.insns.end(), b.insns.begin(), b.insns.end(),
+                 [](const Lean& x, const Lean& y) { return x.mnem == y.mnem; }))
+    return std::nullopt;
+  static const u16 call = Mnem("call").id(), jmp = Mnem("jmp").id();
+  auto ncalls = [](const Code& c) {  // calls, and jumps out of the function (tail calls)
+    size_t n = 0;
+    for (auto& l : c.insns) {
+      auto fs = c.fields(l);
+      n += l.mnem == call ||
+           (l.mnem == jmp && std::any_of(fs.begin(), fs.end(), [](const Field& f) { return f.kind == F_EXT; }));
+    }
+    return n;
+  };
+  if (ncalls(a) != ncalls(b)) return Category::Inlining;
+  if (a.insns.size() == b.insns.size()) {  // the same mnemonics in another order
+    std::vector<int> count(Mnem::count());
+    for (auto& l : a.insns) ++count[l.mnem];
+    for (auto& l : b.insns) --count[l.mnem];
+    if (std::all_of(count.begin(), count.end(), [](int c) { return c == 0; })) return Category::Reorder;
+  }
+  long d = long(a.insns.size()) - long(b.insns.size());
+  if (std::labs(d) > std::max<long>(4, long(a.insns.size()) / 4)) return Category::Inlining;
+  return Category::Unexplained;
+}
 
 namespace {
 
-// suffix automaton of b[blo:bhi] with edge lists in one pool (the root's transitions in a table by symbol);
-// first: where the state's first occurrence in b ends. Symbols are small non-negative ints. One alignment calls
-// this many times on smaller and smaller ranges: the buffers are kept between calls, and the root's table is
-// emptied by moving to a new generation instead of clearing it.
-struct Automaton {
-  struct Edge {
-    int c, to, next;
-  };
-  struct State {
-    int head;
-    int link;
-    size_t len, first;
-  };
-  std::vector<State> st;
-  std::vector<Edge> edges;
-  std::vector<int> root;  // root[c] valid when stamp[c] == gen
-  std::vector<unsigned> stamp;
-  std::vector<int> root_syms;  // the symbols with a root transition, in the order set
-  unsigned gen = 0;
-  // the other states' transitions by (state, symbol), open addressing: an instruction's successors can be
-  // thousands of distinct tokens, too many to search a list for
-  std::vector<u64> keys;  // state << 32 | symbol
-  std::vector<int> slot_edge;
-  std::vector<unsigned> slot_gen;  // a slot is empty unless its generation is gen
-  u64 mask = 0;
-  void size_table(size_t max_edges) {  // grown only: the first call of an alignment is its largest
-    size_t cap = 16;
-    while (cap < 2 * max_edges) cap *= 2;
-    if (keys.size() >= cap) return;
-    keys.resize(cap);
-    slot_edge.resize(cap);
-    slot_gen.assign(cap, 0);
-    mask = cap - 1;
-  }
-  size_t slot(int v, int c) const {  // the key's slot, or the empty slot where it would go
-    u64 key = u64(u32(v)) << 32 | u32(c);
-    size_t i = size_t((key * 0x9E3779B97F4A7C15ull) >> 20) & mask;
-    while (slot_gen[i] == gen && keys[i] != key) i = (i + 1) & mask;
-    return i;
-  }
-  bool used(size_t i) const { return slot_gen[i] == gen; }
-};
-
-LongestMatch longest_match(Automaton& w, const std::vector<int>& a, const std::vector<int>& b, size_t alo, size_t ahi,
-                           size_t blo, size_t bhi) {
-  auto& st = w.st;
-  auto& edges = w.edges;
-  size_t nsym = 0;
-  for (size_t p = blo; p < bhi; ++p) nsym = std::max(nsym, size_t(b[p]) + 1);
-  if (w.root.size() < nsym) {
-    w.root.resize(nsym);
-    w.stamp.resize(nsym, 0);
-  }
-  ++w.gen;
-  w.root_syms.clear();
-  st.clear();
-  edges.clear();
-  st.reserve(2 * (bhi - blo) + 1);
-  edges.reserve(3 * (bhi - blo) + 1);
-  w.size_table(3 * (bhi - blo) + 1);  // a suffix automaton of n symbols has at most 3n transitions
-  st.push_back({-1, -1, 0, 0});
-  auto get = [&](int v, int c) -> int {
-    if (v == 0) return size_t(c) < nsym && w.stamp[size_t(c)] == w.gen ? w.root[size_t(c)] : -1;
-    size_t i = w.slot(v, c);
-    return w.used(i) ? edges[size_t(w.slot_edge[i])].to : -1;
-  };
-  auto set = [&](int v, int c, int to) {
-    if (v == 0) {
-      if (w.stamp[size_t(c)] != w.gen) {
-        w.stamp[size_t(c)] = w.gen;
-        w.root_syms.push_back(c);
-      }
-      w.root[size_t(c)] = to;
-      return;
-    }
-    size_t i = w.slot(v, c);
-    if (w.used(i)) {
-      edges[size_t(w.slot_edge[i])].to = to;
-      return;
-    }
-    edges.push_back({c, to, st[size_t(v)].head});
-    st[size_t(v)].head = int(edges.size() - 1);
-    w.keys[i] = u64(u32(v)) << 32 | u32(c);
-    w.slot_edge[i] = st[size_t(v)].head;
-    w.slot_gen[i] = w.gen;
-  };
-  int last = 0;
-  for (size_t p = blo; p < bhi; ++p) {
-    int c = b[p];
-    int cur = int(st.size());
-    st.push_back({-1, 0, st[size_t(last)].len + 1, p});
-    int v = last;
-    while (v != -1 && get(v, c) == -1) {
-      set(v, c, cur);
-      v = st[size_t(v)].link;
-    }
-    if (v != -1) {
-      int q = get(v, c);
-      if (st[size_t(q)].len == st[size_t(v)].len + 1) {
-        st[size_t(cur)].link = q;
-      } else {
-        int clone = int(st.size());
-        st.push_back({-1, st[size_t(q)].link, st[size_t(v)].len + 1, st[size_t(q)].first});
-        if (q == 0) {
-          std::vector<int> syms(w.root_syms);
-          std::sort(syms.begin(), syms.end());
-          for (int k : syms) set(clone, k, w.root[size_t(k)]);
-        } else {
-          for (int e = st[size_t(q)].head; e != -1; e = edges[size_t(e)].next)
-            set(clone, edges[size_t(e)].c, edges[size_t(e)].to);
-        }
-        while (v != -1 && get(v, c) == q) {
-          set(v, c, clone);
-          v = st[size_t(v)].link;
-        }
-        st[size_t(q)].link = st[size_t(cur)].link = clone;
-      }
-    }
-    last = cur;
-  }
-  size_t besti = alo, bestj = blo, bestsize = 0;
-  int v = 0;
-  size_t k = 0;
-  for (size_t i = alo; i < ahi; ++i) {
-    int c = a[i];
-    while (v && get(v, c) == -1) {
-      v = st[size_t(v)].link;
-      k = st[size_t(v)].len;
-    }
-    int to = get(v, c);
-    if (to != -1) {
-      v = to;
-      ++k;
-      if (k > bestsize) {
-        besti = i - k + 1;
-        bestj = st[size_t(v)].first - k + 1;
-        bestsize = k;
-      }
-    } else {
-      k = 0;
-    }
-  }
-  return {besti, bestj, bestsize};
+// a relative branch's offset in its bytes (after the prefixes: E8/E9 and 0F 8x take 4 bytes, EB, 7x and E0-E3 one;
+// it ends the instruction), {0, 0} for any other instruction
+std::pair<u8, u8> rel_operand(std::string_view b) {
+  size_t p = 0;
+  while (p < b.size() && (b[p] == '\x66' || b[p] == '\xf2' || b[p] == '\xf3' || b[p] == '\x2e' || b[p] == '\x3e' ||
+                          (u8(b[p]) & 0xf0) == 0x40))
+    ++p;
+  if (p >= b.size()) return {0, 0};
+  u8 op = u8(b[p]);
+  u8 size = op == 0xe8 || op == 0xe9                                                 ? 4
+            : op == 0xeb || (op >= 0x70 && op <= 0x7f) || (op >= 0xe0 && op <= 0xe3) ? 1
+            : op == 0x0f && p + 1 < b.size() && (u8(b[p + 1]) & 0xf0) == 0x80        ? 4
+                                                                                     : 0;
+  if (!size || b.size() < size) return {0, 0};
+  return {u8(b.size() - size), size};
 }
+
+constexpr size_t NONE_AT = ~size_t(0);
+
+// where an instruction has a REX prefix without bits (40) right before its opcode, NONE_AT when it has none
+size_t empty_rex(std::string_view b) {
+  auto legacy = [](u8 c) {  // a legacy prefix: operand or address size, lock, rep, segment
+    return c == 0x66 || c == 0x67 || c == 0xf0 || c == 0xf2 || c == 0xf3 || c == 0x2e || c == 0x3e || c == 0x26 ||
+           c == 0x36 || c == 0x64 || c == 0x65;
+  };
+  size_t p = 0;
+  while (p < b.size() && legacy(u8(b[p]))) ++p;
+  return p + 1 < b.size() && u8(b[p]) == 0x40 ? p : NONE_AT;
+}
+
+i64 read_signed(std::string_view b, size_t at, size_t n) {
+  u64 raw = 0;
+  for (size_t i = 0; i < n; ++i) raw |= u64(u8(b[at + i])) << (8 * i);
+  return n < 8 && (raw >> (8 * n - 1) & 1) ? i64(raw | (~u64(0) << (8 * n))) : i64(raw);
+}
+
+constexpr i64 NO_TARGET = INT64_MIN;
+
+// Each instruction of both functions as a small int, equal exactly when the comparison would take the two as the same
+// instruction: the same bytes outside the address fields and the branch offset inside the function, the fields at the
+// same places, and each field standing for the same thing. A rebuilt address stands for the original one its name
+// resolves to, or else for one of the original function's own targets that the matching holds, or whose bytes are
+// the same literal's; nothing here guesses a new pair (Comparer::ref may, so it is not called). Branches inside the
+// function are left open: whether they agree depends on the alignment (CodeDiff::same_targets).
+class Identities {
+ public:
+  Identities(const Code& oc, const Code& rc, const DiffContext& cx) : oc_(oc), rc_(rc), cx_(cx) {
+    for (auto& f : oc.field_list)
+      if (f.kind != F_TBL && !oc.img->imports.count(u64(f.value)) && u64(f.value) != oc.img->base)
+        targets_.push_back(u64(f.value));
+    std::sort(targets_.begin(), targets_.end());
+    targets_.erase(std::unique(targets_.begin(), targets_.end()), targets_.end());
+    size_t cap = 16;
+    while (cap < 2 * (oc.insns.size() + rc.insns.size())) cap *= 2;
+    slots_.assign(cap, Slot{});
+  }
+  // ids, and per instruction the in-function branch target (function-relative, NO_TARGET for none)
+  void side(bool rebuilt, std::vector<u32>& ids, std::vector<i64>& rel) {
+    const Code& c = rebuilt ? rc_ : oc_;
+    ids.reserve(c.insns.size());
+    rel.reserve(c.insns.size());
+    for (auto& l : c.insns) {
+      auto fs = c.fields(l);
+      // the bytes with the fields and an in-function branch offset zeroed, then the fields' places
+      std::string_view b = c.bytes(l);
+      key_.assign(b);
+      for (auto& f : fs) std::fill_n(key_.begin() + f.off, std::min<size_t>(f.size, key_.size() - f.off), '\0');
+      i64 target = NO_TARGET;
+      bool ext = std::any_of(fs.begin(), fs.end(), [](const Field& f) { return f.kind == F_EXT; });
+      auto [at, n] = rel_operand(b);
+      if (n && !ext) {
+        target = i64(l.off) + i64(l.size) + read_signed(b, at, n);
+        std::fill_n(key_.begin() + at, n, '\0');
+      }
+      // a REX prefix that changes nothing (40) is an encoding difference only: aligned, then shown as one
+      size_t rex = empty_rex(b);
+      if (rex != NONE_AT) key_.erase(rex, 1);
+      auto place = [&](size_t off) { return char(rex != NONE_AT && off > rex ? off - 1 : off); };
+      for (auto& f : fs) {
+        key_ += char(f.kind);
+        key_ += place(f.off);
+        key_ += char(f.size);
+      }
+      if (n && !ext) key_ += 'J';
+      for (auto& f : fs) target_key(rebuilt, f);
+      ids.push_back(id_of(key_));
+      rel.push_back(target);
+    }
+  }
+
+ private:
+  const Code &oc_, &rc_;
+  const DiffContext& cx_;
+  std::vector<u64> targets_;  // the original's targets other than imports and __ImageBase, sorted
+  // the keys seen, as ids in order of first sight: open addressing over their hashes, the keys in one buffer
+  struct Slot {
+    size_t hash = 0;
+    u32 at = 0, size = 0, id = 0;  // id 0: empty (ids are numbered from 1)
+  };
+  std::vector<Slot> slots_;
+  std::string keys_;
+  u32 next_id_ = 0;
+  u32 id_of(std::string_view key) {
+    size_t h = std::hash<std::string_view>()(key), mask = slots_.size() - 1;
+    for (size_t i = h & mask;; i = (i + 1) & mask) {
+      Slot& s = slots_[i];
+      if (!s.id) {
+        s = {h, u32(keys_.size()), u32(key.size()), ++next_id_};
+        keys_ += key;
+        return s.id;
+      }
+      if (s.hash == h && std::string_view(keys_).substr(s.at, s.size) == key) return s.id;
+    }
+  }
+  std::unordered_map<u64, std::optional<u64>> stands_for_;
+  std::string key_;
+
+  void put64(char tag, u64 v) {
+    key_ += tag;
+    key_.append(reinterpret_cast<const char*>(&v), 8);
+  }
+  void target_key(bool rebuilt, const Field& f) {
+    const Image& img = rebuilt ? *rc_.img : *oc_.img;
+    u64 t = u64(f.value);
+    if (f.kind == F_TBL) return put64('T', t);
+    if (t == img.base) return put64('B', 0);
+    if (auto it = img.imports.find(t); it != img.imports.end()) {
+      key_ += 'I';
+      key_ += it->second.dll;
+      key_ += '\0';
+      key_ += it->second.name;
+      key_ += '\0';
+      key_.append(reinterpret_cast<const char*>(&it->second.ordinal), 4);
+      return;
+    }
+    if (!rebuilt) return put64('V', t);
+    auto it = stands_for_.find(t);
+    if (it == stands_for_.end()) it = stands_for_.emplace(t, stands_for(t, f.access)).first;
+    if (it->second) return put64('V', *it->second);
+    put64('U', t);  // stands for nothing the original has here
+  }
+  std::optional<u64> stands_for(u64 r, int access) const {
+    const Image &O = *oc_.img, &R = *rc_.img;
+    Key k = cx_.resolve(r);
+    if (k.kind == Key::VA) return k.va;
+    Bytes s;
+    i64 n = 0;
+    if (k.kind == Key::STR) {
+      s = R.cstring(r, k.wide());
+    } else if (k.kind == Key::CONST) {
+      n = constant_size(k.name);
+      if (!n) n = access ? access : 4;
+      s = Bytes(R.bytes(r, n));
+    }
+    using MK = Matching::Kind;
+    for (u64 o : targets_) {
+      if (!s.empty()) {
+        if (!O.writable(o) && O.bytes(o, i64(s.size())) == s) return o;
+      } else if (cx_.matching && (cx_.matching->holds(MK::Function, o, r) || cx_.matching->holds(MK::Data, o, r) ||
+                                  cx_.matching->holds(MK::Vtable, o, r))) {
+        return o;
+      }
+    }
+    return std::nullopt;
+  }
+};
 
 }  // namespace
 
-LongestMatch find_longest_match(const std::vector<int>& a, const std::vector<int>& b, size_t alo, size_t ahi,
-                                size_t blo, size_t bhi) {
-  Automaton w;
-  return longest_match(w, a, b, alo, ahi, blo, bhi);
-}
-
-std::vector<Opcode> get_opcodes(const std::vector<int>& a, const std::vector<int>& b) {
-  size_t la = a.size(), lb = b.size();
-  std::vector<std::tuple<size_t, size_t, size_t, size_t>> queue{{0, la, 0, lb}};
-  std::vector<LongestMatch> blocks;
-  Automaton w;
-  while (!queue.empty()) {
-    auto [alo, ahi, blo, bhi] = queue.back();
-    queue.pop_back();
-    LongestMatch x = longest_match(w, a, b, alo, ahi, blo, bhi);
-    if (x.k) {
-      blocks.push_back(x);
-      if (alo < x.i && blo < x.j) queue.emplace_back(alo, x.i, blo, x.j);
-      if (x.i + x.k < ahi && x.j + x.k < bhi) queue.emplace_back(x.i + x.k, ahi, x.j + x.k, bhi);
-    }
+CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context, size_t limit) {
+  std::vector<u32> ia, ib;
+  std::vector<i64> ra, rb;
+  {
+    Identities ids(oc, rc, cx);
+    ids.side(false, ia, ra);
+    ids.side(true, ib, rb);
   }
-  std::sort(blocks.begin(), blocks.end(), [](const LongestMatch& p, const LongestMatch& q) {
-    return std::tie(p.i, p.j, p.k) < std::tie(q.i, q.j, q.k);
-  });
-  std::vector<LongestMatch> na;
-  size_t i1 = 0, j1 = 0, k1 = 0;
-  for (auto& m : blocks) {
-    if (i1 + k1 == m.i && j1 + k1 == m.j) {
-      k1 += m.k;
-    } else {
-      if (k1) na.push_back({i1, j1, k1});
-      i1 = m.i;
-      j1 = m.j;
-      k1 = m.k;
-    }
-  }
-  if (k1) na.push_back({i1, j1, k1});
-  na.push_back({la, lb, 0});
-  std::vector<Opcode> out;
-  size_t i = 0, j = 0;
-  for (auto& m : na) {
-    char tag = 0;
-    if (i < m.i && j < m.j)
-      tag = 'r';
-    else if (i < m.i)
-      tag = 'd';
-    else if (j < m.j)
-      tag = 'i';
-    if (tag) out.push_back({tag, i, m.i, j, m.j});
-    i = m.i + m.k;
-    j = m.j + m.k;
-    if (m.k) out.push_back({'e', m.i, i, m.j, j});
-  }
-  return out;
-}
-
-std::vector<std::string> insn_diff(const std::vector<u32>& o_off, const std::vector<u32>& r_off, const Toks& ot,
-                                   const Toks& rt, const NameOf& names, int context, size_t limit) {
-  // the instruction at a function-relative offset (offsets ascend), if one starts there
-  auto at = [](const std::vector<u32>& off, i64 v) -> std::optional<size_t> {
-    if (off.empty()) return std::nullopt;
-    auto it = std::lower_bound(off.begin(), off.end(), i64(off[0]) + v, [](u32 x, i64 y) { return i64(x) < y; });
-    if (it == off.end() || i64(*it) != i64(off[0]) + v) return std::nullopt;
-    return size_t(it - off.begin());
-  };
-  // tokens as small ints (equal exactly when the tokens are), branch targets inside the function left open ("rel",)
-  struct WildHash {
-    size_t operator()(const Tok* t) const {
-      size_t h = std::hash<const void*>()(&t->mnemonic.str());
-      auto mix = [&](size_t x) { h ^= x + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
-      for (auto& o : t->ops) {
-        mix(o.k);
-        if (o.k == Op::REL) continue;
-        mix(size_t(o.base) << 32 | size_t(o.index) << 16 | o.seg);
-        mix(std::hash<std::string_view>()(o.key.name));
-        mix(size_t(o.key.va));
-        mix(size_t(o.v));
-        mix(size_t(o.size) * 31 + size_t(o.scale) * 7 + o.key.kind);
-      }
-      return h;
-    }
-  };
-  struct WildEq {
-    bool operator()(const Tok* x, const Tok* y) const {
-      if (x->mnemonic != y->mnemonic || x->ops.size() != y->ops.size()) return false;
-      for (size_t i = 0; i < x->ops.size(); ++i) {
-        const Op &a = x->ops[i], &b = y->ops[i];
-        if (a.k != b.k) return false;
-        if (a.k != Op::REL && !(a == b)) return false;
-      }
-      return true;
-    }
-  };
-  // ids in order of first appearance; open addressing over the tokens (slot: index into `first` + 1, 0 empty)
-  size_t cap = 16;
-  while (cap < 2 * (ot.size() + rt.size())) cap *= 2;
-  std::vector<u32> slots(cap, 0);
-  std::vector<const Tok*> first;  // id -> its first token
-  first.reserve(ot.size() + rt.size());
-  WildHash hash;
-  WildEq eq;
-  auto id_of = [&](const Tok* t) {
-    size_t i = hash(t) & (cap - 1);
-    while (slots[i] && !eq(first[slots[i] - 1], t)) i = (i + 1) & (cap - 1);
-    if (!slots[i]) {
-      first.push_back(t);
-      slots[i] = u32(first.size());
-    }
-    return int(slots[i] - 1);
-  };
-  std::vector<int> ia, ib;
-  ia.reserve(ot.size());
-  ib.reserve(rt.size());
-  for (auto& t : ot) ia.push_back(id_of(&t));
-  for (auto& t : rt) ib.push_back(id_of(&t));
-  auto ops = get_opcodes(ia, ib);
+  auto ops = align(ia, ib);
   constexpr size_t NONE = ~size_t(0);
-  std::vector<size_t> aligned(ot.size(), NONE);  // a's instruction -> b's it is aligned with
+  // the original's instruction -> the rebuilt one in its place: aligned with it, or at the same place in a block
+  // replaced by as many instructions (registers allocated otherwise, say)
+  std::vector<size_t> aligned(ia.size(), NONE);
   for (auto& o : ops)
-    if (o.tag == 'e')
-      for (size_t i = o.i1, j = o.j1; i < o.i2; ++i, ++j) aligned[i] = j;
-  auto same_targets = [&](size_t i, size_t j) {
-    auto &x = ot[i].ops, &y = rt[j].ops;
-    for (size_t z = 0; z < std::min(x.size(), y.size()); ++z) {
-      if (x[z].k != Op::REL) continue;
-      std::optional<size_t> A, B;
-      if (auto i = at(o_off, x[z].v); i && *i < aligned.size() && aligned[*i] != NONE) A = aligned[*i];
-      B = at(r_off, y[z].v);
-      if (A != B) return false;
-    }
-    return true;
+    if (o.tag == 'e' || (o.tag == 'r' && o.i2 - o.i1 == o.j2 - o.j1))
+      for (size_t i = o.i1, j = o.j1; i < o.i2 && j < o.j2; ++i, ++j) aligned[i] = j;
+  // the instruction at a function-relative offset, if one starts there
+  auto at = [](const Code& c, i64 v) -> size_t {
+    auto it = std::lower_bound(c.insns.begin(), c.insns.end(), v, [](const Lean& l, i64 x) { return i64(l.off) < x; });
+    return it != c.insns.end() && i64(it->off) == v ? size_t(it - c.insns.begin()) : NONE;
   };
-  // the text of an entry is made only for the lines kept: tok is ot[tok] for ' ' and '-', rt[tok] for '+'
+  // an aligned pair's branches inside the function go to instructions in each other's place
+  auto same_targets = [&](size_t i, size_t j) {
+    if (ra[i] == NO_TARGET) return true;
+    size_t ti = at(oc, ra[i]), tj = at(rc, rb[j]);
+    return (ti == NONE ? NONE : aligned[ti]) == tj;
+  };
+  // a line: '-' and ' ' show the original's instruction i, '+' the rebuilt one j; `at` is the original's index where it
+  // is; `other`: the instruction on the other side it pairs with (NONE: none)
   struct Entry {
     char mark;
-    size_t tok, at;
+    size_t i, j, at, other;
   };
   std::vector<Entry> entries;
+  CodeDiff out;
   for (auto& o : ops) {
     if (o.tag == 'e') {
       for (size_t i = o.i1, j = o.j1; i < o.i2; ++i, ++j) {
-        if (same_targets(i, j)) {
-          entries.push_back({' ', i, i});
+        if (same_targets(i, j) && oc.insns[i].size == rc.insns[j].size) {
+          entries.push_back({' ', i, j, i, NONE});
         } else {
-          entries.push_back({'-', i, i});
-          entries.push_back({'+', j, i});
+          entries.push_back({'-', i, j, i, j});
+          entries.push_back({'+', i, j, i, i});
         }
       }
     } else {
-      for (size_t i = o.i1; i < o.i2; ++i) entries.push_back({'-', i, i});
-      for (size_t j = o.j1; j < o.j2; ++j) entries.push_back({'+', j, o.i1});
+      size_t pairs = std::min(o.i2 - o.i1, o.j2 - o.j1);  // a replaced block pairs its instructions in order
+      for (size_t i = o.i1; i < o.i2; ++i)
+        entries.push_back({'-', i, o.j1, i, i - o.i1 < pairs ? o.j1 + i - o.i1 : NONE});
+      for (size_t j = o.j1; j < o.j2; ++j)
+        entries.push_back({'+', o.i2, j, o.i1, j - o.j1 < pairs ? o.i1 + j - o.j1 : NONE});
     }
   }
+  for (auto& e : entries) {
+    if (e.mark == ' ') continue;
+    out.differs = true;
+    // where the first difference is: the original's instruction there and the rebuilt one in its place
+    size_t i = e.mark == '-' ? e.i : e.at, j = e.j;
+    if (i < oc.insns.size() && j < rc.insns.size()) out.first = {i, j};
+    break;
+  }
+  if (!want_lines || !out.differs) return out;
   std::vector<bool> keep(entries.size());
   for (size_t c = 0; c < entries.size(); ++c) {
     if (entries[c].mark == ' ') continue;
     size_t lo = c >= size_t(context) ? c - size_t(context) : 0, hi = std::min(entries.size(), c + size_t(context) + 1);
     for (size_t k = lo; k < hi; ++k) keep[k] = true;
   }
+  // the text of an instruction, made only for the lines shown (each at most once: a pair's lines are shown together)
+  static const std::function<Key(u64)> by_va = [](u64 t) { return Key::of_va(t); };
+  std::unordered_map<size_t, Tok> rtoks;
+  std::unordered_map<size_t, std::string> otexts, rtexts;
+  auto rtok = [&](size_t j) -> const Tok& {
+    auto it = rtoks.find(j);
+    if (it == rtoks.end()) it = rtoks.emplace(j, symbolise_one(rc, rc.insns[j], cx.resolve, true)).first;
+    return it->second;
+  };
+  auto rtext = [&](size_t j) -> const std::string& {
+    auto it = rtexts.find(j);
+    if (it == rtexts.end()) it = rtexts.emplace(j, tok_text(rtok(j), cx.names)).first;
+    return it->second;
+  };
+  auto otext = [&](size_t i, size_t other) -> const std::string& {  // `other`: the rebuilt one it pairs with
+    auto it = otexts.find(i);
+    if (it == otexts.end()) {
+      Tok o = symbolise_one(oc, oc.insns[i], by_va, false);
+      if (other != NONE) const_by_value(o, rtok(other), *oc.img);
+      it = otexts.emplace(i, tok_text(o, cx.names)).first;
+    }
+    return it->second;
+  };
+  auto text = [&](const Entry& e) -> const std::string& { return e.mark == '+' ? rtext(e.j) : otext(e.i, e.other); };
+  // A pair that reads the same: two branches inside the function to the same offset whose targets are not in each
+  // other's place (their lines say so), or else a difference in encoding only (their lines give the bytes).
+  auto same_text = [&](const Entry& e) {
+    if (e.mark == ' ' || e.other == NONE) return std::string();
+    size_t i = e.mark == '-' ? e.i : e.other, j = e.mark == '+' ? e.j : e.other;
+    std::string_view x = oc.bytes(oc.insns[i]), y = rc.bytes(rc.insns[j]);
+    if (oc.insns[i].mnem != rc.insns[j].mnem || otext(i, j) != rtext(j)) return std::string();
+    if (ra[i] != NO_TARGET && rb[j] != NO_TARGET && x.size() == y.size()) return std::string("  ; target not aligned");
+    if (x == y) return std::string();
+    return "  ; encoding " + hex_bytes(e.mark == '-' ? x : y);
+  };
   // lines past the limit are only counted
-  std::vector<std::string> out;
   size_t lines = 0;
   long prev = -2;
   for (size_t k = 0; k < entries.size(); ++k) {
     if (!keep[k]) continue;
     const Entry& e = entries[k];
-    if (long(k) != prev + 1 && lines++ < limit) out.push_back("@" + std::to_string(e.at));
-    if (lines++ < limit)
-      out.push_back(std::string(1, e.mark) + " " + tok_text(e.mark == '+' ? rt[e.tok] : ot[e.tok], names));
+    if (long(k) != prev + 1 && lines++ < limit) out.lines.push_back("@" + std::to_string(e.at));
+    if (lines++ < limit) out.lines.push_back(std::string(1, e.mark) + " " + text(e) + same_text(e));
     prev = long(k);
   }
-  if (lines > limit) out.push_back("... " + std::to_string(lines - limit) + " more lines");
+  if (lines > limit) out.lines.push_back("... " + std::to_string(lines - limit) + " more lines");
   return out;
 }
 

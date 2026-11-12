@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "align.hpp"
 #include "support.hpp"
 
 namespace verifier::test {
@@ -30,49 +31,152 @@ Findings category(i64 rimm, u64 rtarget, bool branch) {
   return {{std::string(category_name(classify(a, b))), ""}};
 }
 
-Findings instruction_diff() {
-  auto insns = [](std::vector<u32> offsets) { return offsets; };
-  Toks o_toks = {
-      {"push", {opr("rbx")}}, {"je", {oprel(7)}}, {"call", {opsym(Key::of_va(0x180001000))}}, {"pop", {opr("rbx")}}};
-  Toks r_toks = {{"push", {opr("rbx")}},
-                 {"je", {oprel(10)}},
-                 {"nop", {}},
-                 {"call", {opsym(Key::named(Key::UNRESOLVED, "Foo"))}},
-                 {"pop", {opr("rbx")}}};
-  auto oi = insns({0, 1, 3, 7}), ri = insns({0, 1, 3, 4, 10});
-  NameMap names{{0x180001000, "Bar"}};
+// what is wrong with an alignment of a and b: the opcodes must cover both in order, an equal run must be equal,
+// adjacent opcodes must not share a tag ("" when nothing is wrong)
+std::string alignment_fault(const std::vector<u32>& a, const std::vector<u32>& b, const std::vector<Opcode>& ops) {
+  size_t i = 0, j = 0;
+  char last = 0;
+  for (auto& o : ops) {
+    if (o.i1 != i || o.j1 != j || o.i2 < o.i1 || o.j2 < o.j1) return "not contiguous";
+    if (o.tag == last || (o.tag != 'e' && last && last != 'e')) return "adjacent opcodes share a tag";
+    bool da = o.i2 > o.i1, db = o.j2 > o.j1;
+    if ((o.tag == 'e' && (o.i2 - o.i1 != o.j2 - o.j1 || !da)) || (o.tag == 'r' && !(da && db)) ||
+        (o.tag == 'd' && (!da || db)) || (o.tag == 'i' && (da || !db)))
+      return std::string("bad ") + o.tag;
+    if (o.tag == 'e' && !std::equal(a.begin() + long(o.i1), a.begin() + long(o.i2), b.begin() + long(o.j1)))
+      return "equal run differs";
+    i = o.i2;
+    j = o.j2;
+    last = o.tag;
+  }
+  if (i != a.size() || j != b.size()) return "does not cover both";
+  return "";
+}
+
+// The alignment against what any shortest-edit-script aligner must do: each diff gives back both sequences, equal
+// inputs give one equal run (nothing for empty ones), and the same inputs the same diff. Random sequences over small
+// alphabets (many repeats: the Myers part), larger ones (the patience part), and a tiny cost limit (the split taken
+// where the search got furthest).
+Findings alignment_properties() {
+  std::mt19937_64 g(11);
+  for (int n = 0; n < 4000; ++n) {
+    size_t alphabet = 1 + g() % (n % 4 == 0 ? 200 : 6), la = g() % (n % 50 == 0 ? 600 : 40), lb = g() % 40;
+    if (n % 3 == 0) lb = la;
+    std::vector<u32> a(la), b(lb);
+    for (auto& x : a) x = u32(g() % alphabet);
+    if (n % 3 == 0) {
+      b = a;  // b: a edited in a few places
+      for (int e = int(g() % 5); e > 0 && !b.empty(); --e) {
+        size_t at = g() % b.size();
+        switch (g() % 3) {
+          case 0:
+            b.erase(b.begin() + long(at));
+            break;
+          case 1:
+            b.insert(b.begin() + long(at), u32(g() % alphabet));
+            break;
+          default:
+            b[at] = u32(g() % alphabet);
+        }
+      }
+    } else {
+      for (auto& x : b) x = u32(g() % alphabet);
+    }
+    size_t cost = n % 7 == 0 ? 2 : 1024;
+    auto ops = align(a, b, cost);
+    if (auto why = alignment_fault(a, b, ops); !why.empty())
+      return {{"alignment", why + " (case " + std::to_string(n) + ")"}};
+    auto again = align(a, b, cost);
+    bool same = again.size() == ops.size();
+    for (size_t k = 0; same && k < ops.size(); ++k)
+      same = again[k].tag == ops[k].tag && again[k].i1 == ops[k].i1 && again[k].i2 == ops[k].i2 &&
+             again[k].j1 == ops[k].j1 && again[k].j2 == ops[k].j2;
+    if (!same) return {{"alignment", "not deterministic (case " + std::to_string(n) + ")"}};
+    auto self = align(a, a, cost);
+    if (!(a.empty() ? self.empty() : self.size() == 1 && self[0].tag == 'e'))
+      return {{"alignment", "equal inputs differ (case " + std::to_string(n) + ")"}};
+  }
+  return {};
+}
+
+// the opcodes as text: "e0-2/0-2 i2-2/2-3"
+std::string opcodes_text(const std::vector<Opcode>& ops) {
+  std::string out;
+  for (auto& o : ops)
+    out += (out.empty() ? "" : " ") + std::string(1, o.tag) + std::to_string(o.i1) + "-" + std::to_string(o.i2) + "/" +
+           std::to_string(o.j1) + "-" + std::to_string(o.j2);
+  return out;
+}
+
+Findings alignment_cases() {
+  struct C {
+    const char* name;
+    std::vector<u32> a, b;
+    const char* want;
+  };
+  std::vector<C> cases = {
+      {"insertion", {1, 2, 3, 4}, {1, 2, 9, 3, 4}, "e0-2/0-2 i2-2/2-3 e2-4/3-5"},
+      {"deletion", {1, 2, 9, 3, 4}, {1, 2, 3, 4}, "e0-2/0-2 d2-3/2-2 e3-5/2-4"},
+      {"replaced block", {1, 2, 3, 4, 5}, {1, 7, 8, 9, 5}, "e0-1/0-1 r1-4/1-4 e4-5/4-5"},
+      // two blocks swapped: one stays aligned, the other is deleted where it was and inserted where it went
+      {"reordered blocks", {1, 2, 3, 4, 5, 6}, {4, 5, 6, 1, 2, 3}, "d0-3/0-0 e3-6/0-3 i6-6/3-6"},
+      // repeats only, no common prefix or suffix: Myers, a shortest script
+      {"no unique element", {1, 2, 1, 2, 1}, {2, 1, 2, 1, 2}, "d0-1/0-0 e1-5/0-4 i5-5/4-5"},
+      {"empty", {}, {1}, "i0-0/0-1"},
+  };
   Findings bad;
-  auto got = insn_diff(oi, ri, o_toks, r_toks, name_of(names), 1);
-  std::vector<std::string> want = {"@1", "  je <+0x7>", "- call Bar", "+ nop", "+ call Foo", "  pop rbx"};
-  if (got != want) bad.push_back({"diff", join(got, " | ")});
-  r_toks[1] = {"je", {oprel(0)}};
-  got = insn_diff(oi, ri, o_toks, r_toks, name_of(names), 0);
-  want = {"@1", "- je <+0x7>", "+ je <+0x0>", "- call Bar", "+ nop", "+ call Foo"};
-  if (got != want) bad.push_back({"diff", join(got, " | ")});
+  for (auto& c : cases) {
+    std::string got = opcodes_text(align(c.a, c.b));
+    if (got != c.want) bad.push_back({"alignment", std::string(c.name) + ": " + got});
+  }
   return bad;
 }
 
-Findings linear_matcher(const Value& doc) {
-  for (auto& c : doc["matcher"].arr) {
-    std::vector<int> a, b;
-    for (auto& x : c["a"].arr) a.push_back(int(x.as_int()));
-    for (auto& x : c["b"].arr) b.push_back(int(x.as_int()));
-    auto& r = c["r"].arr;
-    auto m = find_longest_match(a, b, size_t(r[0].as_int()), size_t(r[1].as_int()), size_t(r[2].as_int()),
-                                size_t(r[3].as_int()));
-    auto& w = c["match"].arr;
-    bool ok = m.i == size_t(w[0].as_int()) && m.j == size_t(w[1].as_int()) && m.k == size_t(w[2].as_int());
-    auto ops = get_opcodes(a, b);
-    auto& wo = c["opcodes"].arr;
-    ok = ok && ops.size() == wo.size();
-    for (size_t i = 0; ok && i < ops.size(); ++i) {
-      auto& x = wo[i].arr;
-      ok = ops[i].tag == x[0].as_str()[0] && ops[i].i1 == size_t(x[1].as_int()) && ops[i].i2 == size_t(x[2].as_int()) &&
-           ops[i].j1 == size_t(x[3].as_int()) && ops[i].j2 == size_t(x[4].as_int());
-    }
-    if (!ok) return {{"matcher", json::dump(c).substr(0, 200)}};
+// The instruction diff of two small functions in synthetic images: a REX prefix that changes nothing (an encoding
+// difference, shown as one), an inserted instruction, a call to the function the rebuilt one's name stands for, and
+// a branch inside the function whose target moves with the code (the same) or to another instruction (not).
+Findings instruction_diff() {
+  Side os(0), rs(0x200);
+  u64 of = os.put(TEXT, Bytes("\xc3", 1)), rf = rs.put(TEXT, Bytes("\xc3", 1));  // the callee
+  u64 o = os.reserve(TEXT, 0x20), r = rs.reserve(TEXT, 0x20);
+  // push rbx; je pop; call f; pop rbx; ret
+  Bytes ob = Bytes("\x53\x74\x05", 3) + call(o + 3, of) + Bytes("\x5b\xc3", 2);
+  // push rbx (40 53); je pop; nop; call f; pop rbx; ret
+  auto rebuilt = [&](u8 je) {
+    return Bytes("\x40\x53\x74", 3) + char(je) + Bytes("\x90", 1) + call(r + 5, rf) + Bytes("\x5b\xc3", 2);
+  };
+  os.write(o, ob);
+  Image O = os.image();
+  NameMap names{{of, "Callee"}};
+  auto resolve = [&](u64 t) { return t == rf ? Key::of_va(of) : Key::named(Key::UNRESOLVED, "x"); };
+  Findings bad;
+  for (u8 je : {u8(6), u8(7)}) {
+    rs.write(r, rebuilt(je));
+    Image R = rs.image();
+    Code oc(O, o, o + ob.size()), rc(R, r, r + rebuilt(je).size());
+    CodeDiff d = code_diff(oc, rc, {resolve, nullptr, name_of(names)}, true, 1);
+    std::vector<std::string> want = je == 6 ? std::vector<std::string>{"@0",
+                                                                       "- push rbx  ; encoding 53",
+                                                                       "+ push rbx  ; encoding 4053",
+                                                                       "  jz <+0x8>",
+                                                                       "+ nop",
+                                                                       "  call Callee"}
+                                            : std::vector<std::string>{"@0",
+                                                                       "- push rbx  ; encoding 53",
+                                                                       "+ push rbx  ; encoding 4053",
+                                                                       "- jz <+0x8>",
+                                                                       "+ jz <+0xb>",
+                                                                       "+ nop",
+                                                                       "  call Callee"};
+    if (d.lines != want) bad.push_back({"diff", join(d.lines, " | ")});
+    if (!d.differs || !d.first || d.first->first != 0 || d.first->second != 0)
+      bad.push_back({"diff", "first difference not at the push"});
   }
-  return {};
+  // the same code: no difference
+  Code a(O, o, o + ob.size()), b(O, o, o + ob.size());
+  CodeDiff d = code_diff(a, b, {[](u64 t) { return Key::of_va(t); }, nullptr, name_of(names)}, true);
+  if (d.differs || !d.lines.empty() || d.first) bad.push_back({"diff", "the same code differs"});
+  return bad;
 }
 
 // the report's records, written as they are made, are the text json::dump gives for the same document
@@ -221,8 +325,9 @@ void add_report_cases(Cases& cases) {
                {
                    {"category: other branch target", "reference", [] { return category(0, 0x180001b00, true); }},
                    {"category: other immediate", "immediate", [] { return category(1, 0, false); }},
+                   {"alignment: properties", nullptr, alignment_properties},
+                   {"alignment: hand cases", nullptr, alignment_cases},
                    {"instruction diff", nullptr, instruction_diff},
-                   {"linear matcher", nullptr, [] { return linear_matcher(fixtures()); }},
                    {"report writer", nullptr, report_writer},
                    {"unit: JSON string escaping", nullptr, json_escaping},
                });
