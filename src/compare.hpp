@@ -50,7 +50,6 @@ struct Key {
   std::string text() const;  // what a problem message shows: hex(va) or the name
 };
 
-
 using NamePairs = std::vector<std::pair<Bytes, Bytes>>;  // (original decorated name, rebuilt one)
 
 // a pair of functions to compare: the original's [ostart, oend) and the rebuild's [rstart, rend)

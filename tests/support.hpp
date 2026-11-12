@@ -49,7 +49,7 @@ struct Case {
 };
 using Cases = std::vector<Case>;
 
-const Value& fixtures();         // tests/data/fixtures.json, read once
+const Value& fixtures();  // tests/data/fixtures.json, read once
 
 // each test file's cases (main runs them in this order)
 void add_names_cases(Cases&);

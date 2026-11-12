@@ -46,7 +46,8 @@ Findings build_hashes() {
       bad.push_back({"hash", "same name, other hash" + order});
     if (c.same_names({{a, ".?AVX@?A0x33333333@@"}}) || c.same_names({{".?AVX@?A0x44444444@@", b}}))
       bad.push_back({"hash", "a hash paired twice" + order});
-    if (c.same_signature(rtti_of(a, 1), rtti_of(b, 2)) || c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
+    if (c.same_signature(rtti_of(a, 1), rtti_of(b, 2)) ||
+        c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
       bad.push_back({"hash", "other value or name" + order});
     if (!c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}))
       bad.push_back({"hash", "a failed comparison left a pairing behind" + order});
@@ -167,9 +168,7 @@ Findings end_pointer() {
   table.rt = rt;
   Comparer c(
       &O, &R,
-      [&](u64 t) {
-        return t >= rt && t < rt + 32 ? Key::of_va(ot + (t - rt)) : Key::named(Key::UNRESOLVED, hex(t));
-      },
+      [&](u64 t) { return t >= rt && t < rt + 32 ? Key::of_va(ot + (t - rt)) : Key::named(Key::UNRESOLVED, hex(t)); },
       nullptr, nullptr, &table);
   return c.check(of, of + 8, rf, rf + 8);
 }
@@ -303,23 +302,24 @@ Findings image_relative_table(bool same) {
 }  // namespace
 
 void add_compare_cases(Cases& cases) {
-  cases.insert(cases.end(), {
-      {"build hashes pair one-to-one", nullptr, build_hashes},
-      {"GLOBAL bytes checked", nullptr, global_bytes},
-      {"constant vs writable global", "reference", [] { return literal_vs_global(false); }},
-      {"string vs writable global", "reference", [] { return literal_vs_global(true); }},
-      {"rebuilt table cut short", "data", [] { return short_table(true); }},
-      {"original table cut short", "data", [] { return short_table(false); }},
-      {"pointer only in the original", "data", pointer_only_in_original},
-      {"end pointer past a table", nullptr, end_pointer},
-      {"table cycle, the failing table first", "data", [] { return table_cycle(true); }},
-      {"table cycle, the other first", "data", [] { return table_cycle(false); }},
-      {"malformed unwind chain ends", nullptr, malformed_unwind},
-      {"table past 4 KB, the same", nullptr, [] { return long_table(true); }},
-      {"table past 4 KB, differs late", "data", [] { return long_table(false); }},
-      {"image-relative table, the same", nullptr, [] { return image_relative_table(true); }},
-      {"image-relative table, a later entry differs", "data", [] { return image_relative_table(false); }},
-  });
+  cases.insert(cases.end(),
+               {
+                   {"build hashes pair one-to-one", nullptr, build_hashes},
+                   {"GLOBAL bytes checked", nullptr, global_bytes},
+                   {"constant vs writable global", "reference", [] { return literal_vs_global(false); }},
+                   {"string vs writable global", "reference", [] { return literal_vs_global(true); }},
+                   {"rebuilt table cut short", "data", [] { return short_table(true); }},
+                   {"original table cut short", "data", [] { return short_table(false); }},
+                   {"pointer only in the original", "data", pointer_only_in_original},
+                   {"end pointer past a table", nullptr, end_pointer},
+                   {"table cycle, the failing table first", "data", [] { return table_cycle(true); }},
+                   {"table cycle, the other first", "data", [] { return table_cycle(false); }},
+                   {"malformed unwind chain ends", nullptr, malformed_unwind},
+                   {"table past 4 KB, the same", nullptr, [] { return long_table(true); }},
+                   {"table past 4 KB, differs late", "data", [] { return long_table(false); }},
+                   {"image-relative table, the same", nullptr, [] { return image_relative_table(true); }},
+                   {"image-relative table, a later entry differs", "data", [] { return image_relative_table(false); }},
+               });
 }
 
 }  // namespace verifier::test

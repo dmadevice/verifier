@@ -1,6 +1,5 @@
 #include "annotations.hpp"
 
-
 #include <algorithm>
 #include <cctype>
 #include <cstdio>

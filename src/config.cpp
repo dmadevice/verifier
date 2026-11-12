@@ -11,9 +11,7 @@ namespace verifier {
 
 namespace {
 
-[[noreturn]] void fail(const std::string& why) {
-  throw RunError(2, "verifier: " + why + "\n");
-}
+[[noreturn]] void fail(const std::string& why) { throw RunError(2, "verifier: " + why + "\n"); }
 
 }  // namespace
 

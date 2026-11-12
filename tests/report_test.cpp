@@ -217,14 +217,15 @@ Findings json_escaping() {
 }  // namespace
 
 void add_report_cases(Cases& cases) {
-  cases.insert(cases.end(), {
-      {"category: other branch target", "reference", [] { return category(0, 0x180001b00, true); }},
-      {"category: other immediate", "immediate", [] { return category(1, 0, false); }},
-      {"instruction diff", nullptr, instruction_diff},
-      {"linear matcher", nullptr, [] { return linear_matcher(fixtures()); }},
-      {"report writer", nullptr, report_writer},
-      {"unit: JSON string escaping", nullptr, json_escaping},
-  });
+  cases.insert(cases.end(),
+               {
+                   {"category: other branch target", "reference", [] { return category(0, 0x180001b00, true); }},
+                   {"category: other immediate", "immediate", [] { return category(1, 0, false); }},
+                   {"instruction diff", nullptr, instruction_diff},
+                   {"linear matcher", nullptr, [] { return linear_matcher(fixtures()); }},
+                   {"report writer", nullptr, report_writer},
+                   {"unit: JSON string escaping", nullptr, json_escaping},
+               });
 }
 
 }  // namespace verifier::test

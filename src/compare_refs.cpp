@@ -71,7 +71,9 @@ bool static_fits(const Image& O, const Image& R, u64 o_base, u64 base, u64 span)
   return a == b;
 }
 
-bool Comparer::static_fits(u64 o_base, u64 base) { return verifier::static_fits(*O, *R, o_base, base, ctx->span(base)); }
+bool Comparer::static_fits(u64 o_base, u64 base) {
+  return verifier::static_fits(*O, *R, o_base, base, ctx->span(base));
+}
 
 bool Comparer::refers_to(u64 f, u64 lo, u64 n) {
   auto refs = ctx->orig_refs(f);
@@ -209,7 +211,8 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
   for (i64 p = i64(r_t) - 7; p < i64(r_t) + n; ++p) {
     if (R->has_reloc(u64(p))) {
       if (!O->has_reloc(u64(i64(o_t) + (p - i64(r_t)))))
-        return Problem{Category::Data, std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
+        return Problem{Category::Data,
+                       std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
       ptrs.push_back(p - i64(r_t));
     }
   }
@@ -271,12 +274,13 @@ std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
     size_t o_lo = O->reloc_lower_bound(o_t), o_hi = O->reloc_lower_bound(o_t + u64(size));
     if (o_hi - o_lo > kept.size())
       res = Problem{Category::Data, what + " at " + hex(o_t) + ": +" + hex(O->reloc_sorted[o_lo] - o_t) +
-                                " or after is a pointer only in the original"};
+                                        " or after is a pointer only in the original"};
   }
   if (!res) {
     for (i64 off : kept) {
       if (!O->has_reloc(o_t + u64(off))) {
-        res = Problem{Category::Data, what + " at " + hex(o_t) + ": +" + hex(u64(off)) + " is a pointer only in the rebuild"};
+        res = Problem{Category::Data,
+                      what + " at " + hex(o_t) + ": +" + hex(u64(off)) + " is a pointer only in the rebuild"};
         break;
       }
       u64 o_p = O->u64_at(o_t + u64(off)), r_p = R->u64_at(r_t + u64(off));
@@ -314,7 +318,8 @@ std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_vi
   for (size_t i = 0; i < std::min(os.functions.size(), rs.functions.size()); ++i) {
     u64 a = os.functions[i], b = rs.functions[i];
     if (bool(a) != bool(b))
-      return Problem{Category::Reference, hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
+      return Problem{Category::Reference,
+                     hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
     if (a) {
       auto p = ref(a, b, 0);
       if (p) return Problem{p->category, std::string(name) + ": " + p->detail};
@@ -336,7 +341,8 @@ std::optional<Problem> Comparer::vtable_body(u64 o_vt, u64 r_vt) {
     Key got = resolve(r_s);
     if (got.is_va(s) || is_alternate(s, r_s)) continue;
     if (got.kind == Key::UNRESOLVED && O->executable(s) && infer_function(s, r_s)) continue;
-    res = Problem{Category::Vtable, "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
+    res = Problem{Category::Vtable,
+                  "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
     break;
   }
   if (!res && !same_signature(rtti_signature(*O, O->u64_at(o_vt - 8)), rtti_signature(*R, R->u64_at(r_vt - 8))))

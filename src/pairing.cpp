@@ -183,7 +183,8 @@ Pairing::Votes Pairing::votes_of(u64 rva, u64 ova) {
       u64 xv = u64(x.value);
       if (!at || O.executable(xv) || !O.flags(xv)) continue;
       u64 o_base = xv - at->second;
-      bool fits = !orig.in_padding(o_base) && static_fits(O, reb.img, o_base, at->first, reb.span(at->first)) && !annotated_between(o_base, xv);
+      bool fits = !orig.in_padding(o_base) && static_fits(O, reb.img, o_base, at->first, reb.span(at->first)) &&
+                  !annotated_between(o_base, xv);
       auto [it, fresh] = out[at->first].try_emplace(fits ? std::optional<u64>(o_base) : std::nullopt, at->second);
       if (!fresh) it->second = std::max(it->second, at->second);
     }

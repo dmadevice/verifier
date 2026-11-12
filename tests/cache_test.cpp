@@ -157,9 +157,9 @@ Findings name_cache() {
 
 void add_cache_cases(Cases& cases) {
   cases.insert(cases.end(), {
-      {"name cache file", nullptr, name_cache},
-      {"snapshot key", nullptr, snapshot_key},
-  });
+                                {"name cache file", nullptr, name_cache},
+                                {"snapshot key", nullptr, snapshot_key},
+                            });
 }
 
 }  // namespace verifier::test

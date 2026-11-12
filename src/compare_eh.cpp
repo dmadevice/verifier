@@ -13,7 +13,8 @@ Problems Comparer::unwinds(const FnPair& f, std::optional<std::pair<u64, u64>> f
   auto ob = O->pdata_in(f.ostart, f.oend), rb = R->pdata_in(f.rstart, f.rend);
   bool same = ob.size() == rb.size();
   for (size_t i = 0; same && i < ob.size(); ++i)
-    if (ob[i] - f.ostart != rb[i] - f.rstart || O->pdata_at(ob[i])->end - f.ostart != R->pdata_at(rb[i])->end - f.rstart)
+    if (ob[i] - f.ostart != rb[i] - f.rstart ||
+        O->pdata_at(ob[i])->end - f.ostart != R->pdata_at(rb[i])->end - f.rstart)
       same = false;
   if (!same) return {{Category::Unwind, ".pdata ranges differ"}};
   Problems probs;
@@ -24,7 +25,8 @@ Problems Comparer::unwinds(const FnPair& f, std::optional<std::pair<u64, u64>> f
   return probs;
 }
 
-Problems Comparer::unwind_info(u32 ou, u32 ru, const FnPair& f, std::optional<std::pair<u64, u64>> fi, int chain_depth) {
+Problems Comparer::unwind_info(u32 ou, u32 ru, const FnPair& f, std::optional<std::pair<u64, u64>> fi,
+                               int chain_depth) {
   Unwind o = O->unwind(ou), r = R->unwind(ru);
   if (o.body != r.body) return {{Category::Unwind, "UNWIND_INFO codes differ"}};
   if (o.has_chain != r.has_chain || o.handler.has_value() != r.handler.has_value())

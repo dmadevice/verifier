@@ -178,11 +178,11 @@ Findings line_splitting() {
 
 void add_util_cases(Cases& cases) {
   cases.insert(cases.end(), {
-      {"unit: SHA-256 paths agree", nullptr, sha256_paths},
-      {"unit: file contents", nullptr, file_contents},
-      {"unit: line splitting", nullptr, line_splitting},
-      {"unit: name table", nullptr, name_table},
-  });
+                                {"unit: SHA-256 paths agree", nullptr, sha256_paths},
+                                {"unit: file contents", nullptr, file_contents},
+                                {"unit: line splitting", nullptr, line_splitting},
+                                {"unit: name table", nullptr, name_table},
+                            });
 }
 
 }  // namespace verifier::test

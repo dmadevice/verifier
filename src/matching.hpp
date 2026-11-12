@@ -58,11 +58,11 @@ class Matching {
   // local static), a dependency of the unit being compared, and assumed to hold; a function is queued to be
   // compared (take_queued). Judge: whether the final matching holds it (a guess never explored does not hold).
   bool assume(Kind k, u64 o, u64 r, u64 reach = 0);
-  u64 text_id(std::string_view s);  // a build hash's number, for Kind::Hash
+  u64 text_id(std::string_view s);                 // a build hash's number, for Kind::Hash
   std::vector<std::pair<u64, u64>> take_queued();  // function candidates registered and not compared yet
 
-  // A comparison unit, (o, r) of class Function, Funclet, Data or Vtable, compared by `body`. Explore: once, its problems
-  // kept; met again while it is being compared, it holds (a cycle). Judge: compared again against the final
+  // A comparison unit, (o, r) of class Function, Funclet, Data or Vtable, compared by `body`. Explore: once, its
+  // problems kept; met again while it is being compared, it holds (a cycle). Judge: compared again against the final
   // matching (results kept unless they assumed a unit still being compared). Either way the unit being compared
   // depends on it.
   Problems unit(Kind k, u64 o, u64 r, const std::function<Problems()>& body);
@@ -70,8 +70,8 @@ class Matching {
   Problems judge_root(Kind k, u64 o, u64 r, const std::function<Problems()>& body);
 
   struct Rules {
-    std::function<int(u64)> folded_locals;                // symbols at a rebuilt local static's address
-    std::function<bool(u64, u64, u64)> folded_extra;      // (base, its original, another original): same bytes
+    std::function<int(u64)> folded_locals;            // symbols at a rebuilt local static's address
+    std::function<bool(u64, u64, u64)> folded_extra;  // (base, its original, another original): same bytes
   };
   void solve(const Rules& rules);  // explore -> judge
   bool solved() const { return mode_ == Mode::Judge; }
@@ -125,7 +125,7 @@ class Matching {
   };
   std::vector<Frame> jstack_;
   std::unordered_map<u32, Problems> judged_, judged_here_;  // complete results; this root's truncated ones
-  std::vector<u32> here_log_;                              // judged_here_'s entries in the order they were made
+  std::vector<u32> here_log_;                               // judged_here_'s entries in the order they were made
   size_t rejudged_ = 0;
 
   u32 node(Kind k, u64 o, u64 r);

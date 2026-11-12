@@ -171,12 +171,12 @@ Findings local_static_names() {
 
 void add_names_cases(Cases& cases) {
   cases.insert(cases.end(), {
-      {"qualified names", nullptr, qualified_names},
-      {"definition names", nullptr, definition_names},
-      {"long names", nullptr, long_names},
-      {"destructor pairing", nullptr, destructor_pairing},
-      {"local static names", nullptr, local_static_names},
-  });
+                                {"qualified names", nullptr, qualified_names},
+                                {"definition names", nullptr, definition_names},
+                                {"long names", nullptr, long_names},
+                                {"destructor pairing", nullptr, destructor_pairing},
+                                {"local static names", nullptr, local_static_names},
+                            });
 }
 
 }  // namespace verifier::test

@@ -14,9 +14,7 @@ std::string_view status_name(Status s) {
   return names[size_t(s)];
 }
 
-void Out::write(const std::string& s) {
-  std::fwrite(s.data(), 1, s.size(), stdout);
-}
+void Out::write(const std::string& s) { std::fwrite(s.data(), 1, s.size(), stdout); }
 void Out::print(const std::string& line) { write(line + "\n"); }
 
 namespace {

@@ -300,9 +300,9 @@ int run(int argc, char** argv) {
   // keyed by undname and by this verifier: the qualified names, signatures and owners kept with the undecorated
   // names are worked out by names.cpp, so another verifier build may give others
   std::string exe = self_exe();
-  NameCache name_cache(p.names_cache(),
-                       "verifier names 2 " + sha256_of(p.undname) + " " + (exe.empty() ? std::string() : sha256_of(exe)),
-                       p.undname);
+  NameCache name_cache(
+      p.names_cache(),
+      "verifier names 2 " + sha256_of(p.undname) + " " + (exe.empty() ? std::string() : sha256_of(exe)), p.undname);
   Rebuilt reb(a.rebuilt, a.map, name_cache);
   ph.mark("rebuilt+names");
 

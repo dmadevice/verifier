@@ -151,12 +151,13 @@ Problems Comparer::code(const FnPair& f) {
     return s;
   };
   if (!oc.complete || !rc.complete)
-    probs.push_back({Category::Undecodable, "decoded " + std::to_string(decoded(oc)) + "/" + std::to_string(oc.cut) + " | " +
-                                        std::to_string(decoded(rc)) + "/" + std::to_string(rc.cut) + " code bytes"});
+    probs.push_back({Category::Undecodable, "decoded " + std::to_string(decoded(oc)) + "/" + std::to_string(oc.cut) +
+                                                " | " + std::to_string(decoded(rc)) + "/" + std::to_string(rc.cut) +
+                                                " code bytes"});
   if (oc.code.size() != rc.code.size() || oc.cut != rc.cut || oc.resume != rc.resume ||
       oc.insns.size() != rc.insns.size()) {
-    probs.push_back({Category::Length, std::to_string(oc.code.size()) + "/" + std::to_string(rc.code.size()) + " bytes, code " +
-                                   std::to_string(oc.cut) + "/" + std::to_string(rc.cut)});
+    probs.push_back({Category::Length, std::to_string(oc.code.size()) + "/" + std::to_string(rc.code.size()) +
+                                           " bytes, code " + std::to_string(oc.cut) + "/" + std::to_string(rc.cut)});
     return probs;
   }
   for (size_t k = 0; k < oc.insns.size(); ++k) {
@@ -170,8 +171,8 @@ Problems Comparer::code(const FnPair& f) {
     for (size_t z = 0; z < fa.size(); ++z) {
       if (fa[z].kind == F_TBL) {
         if (fa[z].value != fb[z].value)
-          probs.push_back({Category::Encoding, "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) + " vs " +
-                                           hex_signed(fb[z].value)});
+          probs.push_back({Category::Encoding, "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) +
+                                                   " vs " + hex_signed(fb[z].value)});
         continue;
       }
       // an indexed read can be of any part of the object: compared as the whole object, its address taken
@@ -185,7 +186,6 @@ Problems Comparer::code(const FnPair& f) {
     probs.push_back({Category::Encoding, "switch tables after the function differ"});
   return probs;
 }
-
 
 Problems Comparer::function_body(const FnPair& f, std::optional<std::pair<u64, u64>> fi) {
   Problems probs = code(f);

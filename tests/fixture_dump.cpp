@@ -27,7 +27,9 @@ Bytes unhex(const std::string& h) {
   return out;
 }
 
-const char* section_of(u64 off) { return off < 0x1000 ? "headers" : off < 0x3000 ? ".text" : off < 0x5000 ? ".rdata" : ".data"; }
+const char* section_of(u64 off) {
+  return off < 0x1000 ? "headers" : off < 0x3000 ? ".text" : off < 0x5000 ? ".rdata" : ".data";
+}
 
 // a value on one line, addresses in hex
 std::string compact(const Value& v) {
@@ -89,7 +91,8 @@ void dump(const Value& c, size_t index) {
   side("rebuilt", c["rebuilt"], c["rfn"]);
   const Value& m = c["mapping"];
   for (auto& k : m["keys"].arr) {
-    std::string what = k.arr[1].as_str() == "va" ? hex(u64(k.arr[2].as_int())) : k.arr[1].as_str() + " " + k.arr[2].as_str();
+    std::string what =
+        k.arr[1].as_str() == "va" ? hex(u64(k.arr[2].as_int())) : k.arr[1].as_str() + " " + k.arr[2].as_str();
     std::printf("  rebuilt %s stands for %s\n", hex(u64(k.arr[0].as_int())).c_str(), what.c_str());
   }
   for (auto& [name, v] : m.obj) {

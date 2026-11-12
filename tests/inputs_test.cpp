@@ -206,14 +206,14 @@ Findings ignored_annotations() {
 
 void add_inputs_cases(Cases& cases) {
   cases.insert(cases.end(), {
-      {"leaf extent", nullptr, leaf_extent_case},
-      {"decode at two addresses", nullptr, decode_case},
-      {"containing symbol reach", nullptr, containing_reach},
-      {"span stops before a vftable's locator", nullptr, span_before_vftable},
-      {"data items: object ends and padding", nullptr, data_items_load},
-      {"unit: PE file layout", nullptr, file_layout},
-      {"ignored annotations reported", nullptr, ignored_annotations},
-  });
+                                {"leaf extent", nullptr, leaf_extent_case},
+                                {"decode at two addresses", nullptr, decode_case},
+                                {"containing symbol reach", nullptr, containing_reach},
+                                {"span stops before a vftable's locator", nullptr, span_before_vftable},
+                                {"data items: object ends and padding", nullptr, data_items_load},
+                                {"unit: PE file layout", nullptr, file_layout},
+                                {"ignored annotations reported", nullptr, ignored_annotations},
+                            });
 }
 
 }  // namespace verifier::test

@@ -5,7 +5,7 @@
 namespace verifier {
 
 namespace {
-constexpr std::array<std::string_view, 13> kNames = {"reorder",  "regalloc",    "immediate", "inlining", "unexplained",
+constexpr std::array<std::string_view, 13> kNames = {"reorder",  "regalloc",    "immediate", "inlining",  "unexplained",
                                                      "encoding", "undecodable", "length",    "reference", "data",
                                                      "vtable",   "unwind",      "eh"};
 }  // namespace

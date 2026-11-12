@@ -40,7 +40,8 @@ Findings stub_pairing() {
   reb.symbols = Symbols({{0x100, "sub_1000"}, {0x200, "A"}});
   std::map<std::string, u64> m{{"sub_1000", 0x100}, {"A", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  Pairing p(orig, reb, {{Kind::Stub, 0x1000, "sub_1000", {}, "s.cpp", 1}, {Kind::Function, 0x2000, "A", {}, "a.cpp", 1}});
+  Pairing p(orig, reb,
+            {{Kind::Stub, 0x1000, "sub_1000", {}, "s.cpp", 1}, {Kind::Function, 0x2000, "A", {}, "a.cpp", 1}});
   bool ok = p.paired_o == std::vector<u64>{0x2000};
   return bad_if(!ok, "paired", "stub/function paired wrongly");
 }
@@ -327,23 +328,25 @@ Findings addend_across_sections() {
 }  // namespace
 
 void add_pairing_cases(Cases& cases) {
-  cases.insert(cases.end(), {
-      {"folded annotations", nullptr, folded_annotations},
-      {"stub leaves its original open", nullptr, stub_pairing},
-      {"failed inference taken back", "reference", failed_inference},
-      {"inference one-to-one", "reference", inference_one_to_one},
-      {"data guess one-to-one, lower root compared first", "reference", [] { return data_guess_one_to_one(true); }},
-      {"data guess one-to-one, lower root compared last", "reference", [] { return data_guess_one_to_one(false); }},
-      {"padded leaf, same size reported", nullptr, padded_leaf_sizes},
-      {"other static, owner compared later", "reference", [] { return prebound_static(false); }},
-      {"other static, owner compared first", "reference", [] { return prebound_static(true); }},
-      {"local static paired by consensus", nullptr, consensus_static},
-      {"callee folded in the original, same code", nullptr, [] { return folded_original(true); }},
-      {"callee folded in the original, other code", "reference", [] { return folded_original(false); }},
-      {"addend inside an annotated object", nullptr, [] { return addend_across_annotation(0x10); }},
-      {"addend reaching another annotation", "reference", [] { return addend_across_annotation(0x20); }},
-      {"addend stays in its section", nullptr, addend_across_sections},
-  });
+  cases.insert(
+      cases.end(),
+      {
+          {"folded annotations", nullptr, folded_annotations},
+          {"stub leaves its original open", nullptr, stub_pairing},
+          {"failed inference taken back", "reference", failed_inference},
+          {"inference one-to-one", "reference", inference_one_to_one},
+          {"data guess one-to-one, lower root compared first", "reference", [] { return data_guess_one_to_one(true); }},
+          {"data guess one-to-one, lower root compared last", "reference", [] { return data_guess_one_to_one(false); }},
+          {"padded leaf, same size reported", nullptr, padded_leaf_sizes},
+          {"other static, owner compared later", "reference", [] { return prebound_static(false); }},
+          {"other static, owner compared first", "reference", [] { return prebound_static(true); }},
+          {"local static paired by consensus", nullptr, consensus_static},
+          {"callee folded in the original, same code", nullptr, [] { return folded_original(true); }},
+          {"callee folded in the original, other code", "reference", [] { return folded_original(false); }},
+          {"addend inside an annotated object", nullptr, [] { return addend_across_annotation(0x10); }},
+          {"addend reaching another annotation", "reference", [] { return addend_across_annotation(0x20); }},
+          {"addend stays in its section", nullptr, addend_across_sections},
+      });
 }
 
 }  // namespace verifier::test

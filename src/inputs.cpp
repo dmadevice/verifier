@@ -123,9 +123,7 @@ std::span<const std::string_view> Symbols::names(u64 va) const {
 // -- Original ------------------------------------------------------------------------------------------------
 
 Original::Original(const Config& p, const std::function<std::string(const std::string&)>& hash_file) : config_(&p) {
-  if (!file_exists(p.original)) {
-    throw RunError(2, "verifier: no original binary " + p.original + "\n");
-  }
+  if (!file_exists(p.original)) { throw RunError(2, "verifier: no original binary " + p.original + "\n"); }
   digest = p.original_sha256;
   // the image laid out and the tables from the text exports, which rarely change: a snapshot in the cache, mapped. A
   // run from the snapshot does not read the original, so the original is checked when the snapshot is made (its key
