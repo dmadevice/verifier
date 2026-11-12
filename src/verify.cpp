@@ -372,6 +372,7 @@ int run(int argc, char** argv) {
   // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run
   // undname for them again)
   if (a.update || name_cache.has_new()) name_cache.save();
+  orig_cache.clear();  // the functions read from the store let it be replaced
   orig_store.save();
   if (report.on()) {
     finish_report(report, totals);

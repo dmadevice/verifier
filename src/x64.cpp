@@ -639,20 +639,22 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   complete = decoded == cut + (resume ? n - *resume : 0);
   std::vector<u32> image_base = image_base_regs(all, im.base);
   shape.known = complete && tables.empty() && image_base.empty() && !all.empty();
-  insns.reserve(all.size());
+  lean_.reserve(all.size());
   reloc_at_ = relocated ? im.reloc_lower_bound(s) : 0;
   for (size_t k = 0; k < all.size(); ++k) {
     const Insn& ins = all[k];
-    if (ins.address - s > Lean::MAX_OFF || field_list.size() > Lean::MAX_FIELD)
+    if (ins.address - s > Lean::MAX_OFF || fields_.size() > Lean::MAX_FIELD)
       throw std::runtime_error("function at " + hex(s) + " too large to decode (8 MB at most)");
-    Lean l{ins.address - s, field_list.size(), ins.mnemonic.id(), ins.size, 0, ins.branches()};
+    Lean l{ins.address - s, fields_.size(), ins.mnemonic.id(), ins.size, 0, ins.branches()};
     add_fields(ins, k < image_base.size() ? image_base[k] : 0);
-    l.nfields = u8(field_list.size() - l.field);
+    l.nfields = u8(fields_.size() - l.field);
     l.addressed = l.addressed || l.nfields;
     for (auto& op : ins.ops) l.addressed = l.addressed || (op.type == OP_MEM && (op.base() == rip || op.index));
     if (shape.known) add_to_shape(ins, l);
-    insns.push_back(l);
+    lean_.push_back(l);
   }
+  insns = lean_;
+  field_list = fields_;
   if (shape.known) {
     shape.ends_in_jump = all.back().type == FDI_RET || all.back().type == FDI_JMP;
     std::sort(shape.indexed.begin(), shape.indexed.end());
@@ -678,7 +680,7 @@ bool in_table_range(i64 disp, i64 frva, i64 erva) { return frva <= disp && disp 
 }  // namespace
 
 void Code::add_to_shape(const Insn& ins, const Lean& l) {
-  for (const Field& f : fields(l)) {
+  for (const Field& f : std::span<const Field>(fields_.data() + l.field, l.nfields)) {
     auto inside = [&](unsigned at, unsigned size) {
       return size && at <= f.off && unsigned(f.off + f.size) <= at + size;
     };
@@ -734,7 +736,7 @@ std::optional<std::vector<Field>> unchecked_same_code_fields(const Code& o, cons
       if (op.type == OP_MEM && op.base() != reg_rip() && op.index && in_table_range(op.disp(), frva, erva))
         return answer(FastPath::Tail);
   }
-  std::vector<Field> out(o.field_list);
+  std::vector<Field> out(o.field_list.begin(), o.field_list.end());
   size_t same_to = 0;  // the bytes before it are compared
   size_t reloc = img.reloc_lower_bound(start);
   auto same_bytes = [&](size_t to) {
@@ -920,9 +922,9 @@ std::vector<OutsideTable> Code::outside_tables() const {
 }
 
 void Code::add_fields(const Insn& ins, u32 image_base) {
-  size_t first = field_list.size();
+  size_t first = fields_.size();
   auto add = [&](int off, int size, FieldKind kind, i64 value, int access, bool indexed = false) {
-    field_list.push_back(Field{value, u16(access), u16(indexed), u8(off), u8(size), kind});
+    fields_.push_back(Field{value, u16(access), u16(indexed), u8(off), u8(size), kind});
   };
   i64 frva = i64(start - img->base);
   if (ins.branches()) {
@@ -966,7 +968,7 @@ void Code::add_fields(const Insn& ins, u32 image_base) {
       ++i;
     }
   }
-  if (field_list.size() - first > 1) std::sort(field_list.begin() + long(first), field_list.end());
+  if (fields_.size() - first > 1) std::sort(fields_.begin() + long(first), fields_.end());
 }
 
 std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {

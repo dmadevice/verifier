@@ -14,13 +14,14 @@ namespace verifier {
 
 // The original's decoded functions kept in the cache directory between runs: the original does not change, so a
 // function decoded once is read back instead of decoded again. Keyed by the original's snapshot key and the verifier
-// build (the decoder). The functions a run decodes are added; the file is written again when there are new ones.
+// build (the decoder). The functions a run decodes are added; the file is written again when there are new ones (once
+// no function read from it is held).
 class CodeStore {
  public:
   CodeStore(std::string path, std::string key);  // path empty: nothing kept
   std::shared_ptr<const Code> find(const Image& img, u64 start, u64 end) const;  // nullptr when not kept
   void add(const Code& c);                                                        // a function decoded this run
-  void save();                                                                    // when functions were added
+  void save();  // when functions were added
 
  private:
   struct Record {
@@ -29,8 +30,9 @@ class CodeStore {
     bool operator<(const Record& o) const { return std::make_pair(start, end) < std::make_pair(o.start, o.end); }
   };
   std::string path_, key_;
-  std::unique_ptr<const MappedFile> file_;
-  std::vector<u16> mnems_;     // the file's mnemonic numbers -> this run's (Mnem ids are numbered as a run meets them)
+  std::shared_ptr<const MappedFile> file_;  // held by the functions read in place too
+  std::vector<u16> mnems_;  // the file's mnemonic numbers -> this run's (Mnem ids are numbered as a run meets them)
+  bool in_place_ = false;   // the numbers are the same: instructions and fields are read in place
   std::vector<Record> index_;  // the file's functions, sorted
   BinWriter added_;            // the functions decoded this run, as the file has them
 };
@@ -42,6 +44,7 @@ class CodeCache {
   explicit CodeCache(const Image* img, CodeStore* store = nullptr) : img_(img), store_(store) {}
   std::shared_ptr<const Code> code(u64 start, u64 end);
   void release(u64 start, u64 end) { live_.erase({start, end}); }
+  void clear() { live_.clear(); }
 
  private:
   const Image* img_;

@@ -8,9 +8,10 @@ namespace verifier {
 namespace {
 
 // The file: its header; the mnemonics (u32 count, then each as a string, numbered from 0); then each function: its
-// head (below), then its instructions, fields, switch tables (offset i64, entry size i32) and the shape's indexed
-// displacements, as Code holds them
-constexpr std::string_view CODE_MAGIC = "verifier-code 1\n";
+// head (below), zeros to a multiple of 8 bytes from the start of the file, then its instructions, fields, switch tables
+// (offset i64, entry size i32) and the shape's indexed displacements, as Code holds them. The instructions and fields
+// are used in place when the run numbers the mnemonics as the file does.
+constexpr std::string_view CODE_MAGIC = "verifier-code 2\n";
 enum : u8 { COMPLETE = 1, RESUMES = 2, SHAPE_KNOWN = 4, ENDS_IN_JUMP = 8 };
 
 struct Head {
@@ -18,8 +19,8 @@ struct Head {
   i64 cut = 0, resume = 0, reach = 0;
   u8 flags = 0;
   u32 insns = 0, fields = 0, tables = 0, indexed = 0;
-  size_t body() const {  // the bytes after the head
-    return insns * sizeof(Lean) + fields * sizeof(Field) + tables * (sizeof(i64) + sizeof(i32)) + indexed * sizeof(i64);
+  size_t rest() const {  // the bytes after the instructions and fields
+    return tables * (sizeof(i64) + sizeof(i32)) + indexed * sizeof(i64);
   }
 };
 
@@ -28,6 +29,7 @@ void put_head(BinWriter& w, const Head& h) {
   for (i64 v : {h.cut, h.resume, h.reach}) w.put(v);
   w.put(h.flags);
   for (u32 v : {h.insns, h.fields, h.tables, h.indexed}) w.put(v);
+  w.out.resize((w.out.size() + 7) & ~size_t(7), '\0');
 }
 
 bool get_head(BinReader& r, Head& h) {
@@ -35,6 +37,7 @@ bool get_head(BinReader& r, Head& h) {
   for (i64* v : {&h.cut, &h.resume, &h.reach}) r.get(*v);
   r.get(h.flags);
   for (u32* v : {&h.insns, &h.fields, &h.tables, &h.indexed}) r.get(*v);
+  r.take(((r.at() + 7) & ~size_t(7)) - r.at());
   return r.ok();
 }
 
@@ -62,13 +65,33 @@ void put_code(BinWriter& w, const Code& c) {
   w.array(c.shape.indexed.data(), c.shape.indexed.size());
 }
 
-// n items of a trivially copyable type, from the file
-template <class T>
-bool get_array(BinReader& r, std::vector<T>& out, size_t n) {
-  std::string_view b = r.take(n * sizeof(T));
+// a record's instructions and fields, in the buffer read
+struct Arrays {
+  std::string_view insns, fields;
+};
+bool get_arrays(BinReader& r, const Head& h, Arrays& a) {
+  a.insns = r.take(size_t(h.insns) * sizeof(Lean));
+  a.fields = r.take(size_t(h.fields) * sizeof(Field));
+  return r.ok();
+}
+
+// a function's record from one buffer to another, its mnemonics renumbered (false: one the table does not have)
+bool copy_record(BinReader& r, BinWriter& w, const std::vector<u16>& mnems) {
+  Head h;
+  Arrays a;
+  if (!get_head(r, h) || !get_arrays(r, h, a)) return false;
+  std::vector<Lean> insns(h.insns);
+  if (h.insns) std::memcpy(insns.data(), a.insns.data(), a.insns.size());
+  for (Lean& l : insns) {
+    if (l.mnem >= mnems.size()) return false;
+    l.mnem = mnems[l.mnem];
+  }
+  std::string_view rest = r.take(h.rest());
   if (!r.ok()) return false;
-  out.resize(n);
-  if (n) std::memcpy(out.data(), b.data(), b.size());
+  put_head(w, h);
+  w.array(insns.data(), insns.size());
+  w.out += a.fields;
+  w.out += rest;
   return true;
 }
 
@@ -85,10 +108,13 @@ CodeStore::CodeStore(std::string path, std::string key) : path_(std::move(path))
     std::string s;
     if (r.str(s)) mnems_.push_back(Mnem(s).id());
   }
+  in_place_ = true;
+  for (size_t i = 0; i < mnems_.size(); ++i) in_place_ = in_place_ && mnems_[i] == i;
   while (r.ok() && !r.done()) {
     size_t at = r.at();
     Head h;
-    if (get_head(r, h)) r.take(h.body());
+    Arrays a;
+    if (get_head(r, h) && get_arrays(r, h, a)) r.take(h.rest());
     index_.push_back({h.start, h.end, at});
   }
   if (!r.ok()) {  // a damaged file is not used
@@ -104,14 +130,27 @@ std::shared_ptr<const Code> CodeStore::find(const Image& img, u64 start, u64 end
   if (it == index_.end() || it->start != start || it->end != end) return nullptr;
   BinReader r(file_->view(), it->at);
   Head h;
+  Arrays a;
   get_head(r, h);
+  get_arrays(r, h, a);
   std::shared_ptr<Code> c(new Code(img, start, end, Code::Undecoded{}));
-  if (h.size > c->code.size() || !get_array(r, c->insns, h.insns) || !get_array(r, c->field_list, h.fields))
-    return nullptr;
+  if (h.size > c->code.size()) return nullptr;
   c->code = c->code.substr(0, size_t(h.size));
-  for (Lean& l : c->insns) {
-    if (l.mnem >= mnems_.size()) return nullptr;
-    l.mnem = mnems_[l.mnem];
+  if (in_place_) {
+    c->owner_ = file_;
+    c->insns = {reinterpret_cast<const Lean*>(a.insns.data()), h.insns};
+    c->field_list = {reinterpret_cast<const Field*>(a.fields.data()), h.fields};
+  } else {
+    c->lean_.resize(h.insns);
+    c->fields_.resize(h.fields);
+    if (h.insns) std::memcpy(c->lean_.data(), a.insns.data(), a.insns.size());
+    if (h.fields) std::memcpy(c->fields_.data(), a.fields.data(), a.fields.size());
+    for (Lean& l : c->lean_) {
+      if (l.mnem >= mnems_.size()) return nullptr;
+      l.mnem = mnems_[l.mnem];
+    }
+    c->insns = c->lean_;
+    c->field_list = c->fields_;
   }
   for (u32 i = 0; i < h.tables; ++i) {
     i64 t = 0;
@@ -120,7 +159,10 @@ std::shared_ptr<const Code> CodeStore::find(const Image& img, u64 start, u64 end
     r.get(size);
     c->tables[t] = size;
   }
-  if (!get_array(r, c->shape.indexed, h.indexed)) return nullptr;
+  std::string_view indexed = r.take(size_t(h.indexed) * sizeof(i64));
+  if (!r.ok()) return nullptr;
+  c->shape.indexed.resize(h.indexed);
+  if (h.indexed) std::memcpy(c->shape.indexed.data(), indexed.data(), indexed.size());
   c->cut = h.cut;
   if (h.flags & RESUMES) c->resume = h.resume;
   c->complete = h.flags & COMPLETE;
@@ -135,7 +177,8 @@ void CodeStore::add(const Code& c) {
 }
 
 void CodeStore::save() {
-  if (path_.empty() || added_.out.empty()) return;
+  // nothing new; or functions read in place still held, which keep the file open (it cannot be replaced then)
+  if (path_.empty() || added_.out.empty() || file_.use_count() > 1) return;
   BinWriter w;
   w.out = cache_header(CODE_MAGIC, key_);
   w.put(u32(Mnem::count()));
@@ -143,21 +186,13 @@ void CodeStore::save() {
   // the functions kept, their mnemonics numbered as this run numbers them, then the new ones
   for (auto& rec : index_) {
     BinReader r(file_->view(), rec.at);
-    Head h;
-    get_head(r, h);
-    std::vector<Lean> insns;
-    get_array(r, insns, h.insns);
-    bool known = true;
-    for (Lean& l : insns) {
-      known = known && l.mnem < mnems_.size();
-      if (known) l.mnem = mnems_[l.mnem];
-    }
-    if (!known) continue;  // not kept (find does not read it either)
-    put_head(w, h);
-    w.array(insns.data(), insns.size());
-    w.out += r.take(h.body() - insns.size() * sizeof(Lean));
+    size_t before = w.out.size();
+    if (!copy_record(r, w, mnems_)) w.out.resize(before);  // not kept (find does not read it either)
   }
-  w.out += added_.out;
+  std::vector<u16> same(Mnem::count());
+  for (size_t i = 0; i < same.size(); ++i) same[i] = u16(i);
+  for (BinReader r(added_.out, 0); r.ok() && !r.done();)
+    if (!copy_record(r, w, same)) break;
   file_.reset();  // the file is replaced (not while it is mapped)
   index_.clear();
   write_cache_file(path_, w.out);

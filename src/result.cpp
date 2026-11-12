@@ -156,7 +156,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   if (probs.empty() && !show) {
     // a match: the comparison accepted every address field, so no diff is shown; only the rebuilt side's names that
     // resolve to nothing are reported: what its branches out of the function and RIP-relative operands refer to
-    for (const Field& f : fields ? *fields : rc.field_list)
+    for (const Field& f : fields ? std::span<const Field>(*fields) : rc.field_list)
       if (f.kind == F_EXT || f.kind == F_RIP) add_unresolved(f, reb.img, resolve, unresolved);
   } else {
     ot = symbolise(oc, by_va(), false);
