@@ -392,6 +392,14 @@ Problems build_hashes() {
   if (c.same_rtti(rtti_of(".?AVW@?A0x99999999@@", 1), rtti_of(".?AVW@?A0xaaaaaaaa@@", 2)) ||
       !c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}))
     bad.push_back({"hash", "a failed comparison left a pairing behind"});
+  // a hash spelled the same on both sides is paired with itself like any other, in either order
+  for (bool same_first : {true, false}) {
+    Comparer d(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
+    Bytes s = "F<lambda_cc>", t = "F<lambda_dd>";
+    bool first = same_first ? d.same_names({{s, s}}) : d.same_names({{s, t}});
+    bool second = same_first ? d.same_names({{s, t}}) : d.same_names({{s, s}});
+    if (!first || second) bad.push_back({"hash", std::string("a hash paired twice, same spelling ") + (same_first ? "first" : "second")});
+  }
   return bad;
 }
 

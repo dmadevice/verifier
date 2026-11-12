@@ -117,7 +117,6 @@ bool Comparer::same_names(const NamePairs& names) {
   }
   std::unordered_map<std::string, std::string> new_o, new_r;
   for (auto& [o, r] : pairs) {
-    if (o == r && !hash_o.contains(o) && !hash_r.contains(r)) continue;  // spelled the same: nothing to pair
     auto get = [](const JMap<std::string, std::string>& m, const std::unordered_map<std::string, std::string>& nw,
                   const std::string& k, const std::string& dflt) {
       if (auto p = m.find(k)) return *p;
