@@ -229,10 +229,29 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
   return std::nullopt;
 }
 
-std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
+// A comparison that can meet itself again (tables or vtables that point at each other) counts as consistent while it
+// runs. Its success holds as long as what it assumed, so it stays in the journal of an enclosing assumption; its
+// failure takes back everything assumed under it (a table found consistent only because this one was assumed to be)
+// before it is recorded.
+std::optional<Problem> Comparer::coinductive(Memo& memo, u64 o_t, u64 r_t,
+                                             const std::function<std::optional<Problem>()>& body) {
   auto k = std::make_pair(o_t, r_t);
-  if (auto m = memo_ro.find(k)) return *m;
-  memo_ro.set(k, std::nullopt);  // tables that point at each other count as consistent
+  if (auto m = memo.find(k)) return *m;
+  std::optional<Problem> res;
+  journal.speculate([&] {
+    memo.set(k, std::nullopt);
+    res = body();
+    return !res;
+  });
+  if (res) memo.set(k, res);
+  return res;
+}
+
+std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
+  return coinductive(memo_ro, o_t, r_t, [&] { return rodata_body(o_t, r_t); });
+}
+
+std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   u64 n = ctx->span(r_t);
   Bytes all(R->bytes(r_t, i64(n)));
   i64 want = i64(rstrip_char(all, '\0').size());
@@ -268,7 +287,6 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
       }
     }
   }
-  memo_ro.set(k, res);
   return res;
 }
 
@@ -305,9 +323,10 @@ std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_vi
 }
 
 std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
-  auto k = std::make_pair(o_vt, r_vt);
-  if (auto m = memo_vt.find(k)) return *m;
-  memo_vt.set(k, std::nullopt);  // cycles (a slot that refers back) count as consistent
+  return coinductive(memo_vt, o_vt, r_vt, [&] { return vtable_body(o_vt, r_vt); });
+}
+
+std::optional<Problem> Comparer::vtable_body(u64 o_vt, u64 r_vt) {
   std::optional<Problem> res;
   const auto& slots = vtables.at(o_vt);
   for (size_t i = 0; i < slots.size(); ++i) {
@@ -321,7 +340,6 @@ std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
   }
   if (!res && !same_rtti(rtti(*O, O->u64_at(o_vt - 8)), rtti(*R, R->u64_at(r_vt - 8))))
     res = Problem{"vtable", "RTTI of " + hex(o_vt) + " differs"};
-  memo_vt.set(k, res);
   return res;
 }
 

@@ -151,8 +151,8 @@ class Comparer {
   // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;
   // FuncInfo pairs both ways
   JMap<std::pair<u64, u64>, Problems, PairHash> memo_fn{&journal};
-  JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash> memo_ro{&journal};
-  JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash> memo_vt{&journal};
+  using Memo = JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash>;
+  Memo memo_ro{&journal}, memo_vt{&journal};
   JMap<u64, u64> memo_fi{&journal}, memo_fir{&journal};
   JMap<u64, u64> bound{&journal}, bound_o{&journal};
   JMap<u64, u64> data_r{&journal}, data_o{&journal};
@@ -169,6 +169,9 @@ class Comparer {
   std::optional<Problem> ref(u64 o_t, u64 r_t, int access);
   std::optional<Problem> rodata(u64 o_t, u64 r_t);
   std::optional<Problem> vtable(u64 o_vt, u64 r_vt);
+  std::optional<Problem> coinductive(Memo& memo, u64 o_t, u64 r_t, const std::function<std::optional<Problem>()>& body);
+  std::optional<Problem> rodata_body(u64 o_t, u64 r_t);
+  std::optional<Problem> vtable_body(u64 o_vt, u64 r_vt);
   // equal names, except that each build hash in a rebuilt name (anonymous namespace `?A0x...@`, lambda) stands
   // for one hash of the original's, the same one for the whole run
   bool same_names(const NamePairs& names);

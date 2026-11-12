@@ -1143,6 +1143,45 @@ Problems short_table(bool rebuilt_short) {
   return c.function(of, of + 8, rf, rf + 8);
 }
 
+// tables that point at each other: A = {&B, &C}, B = {&A}, and C differs. B was found consistent while A was assumed
+// to be, so A's failure takes B's success back: a function taking B's address differs whichever is compared first
+Problems table_cycle(bool a_first) {
+  Side o(0), r(0x240);
+  struct Tables {
+    u64 A, B, C, FA, FB;
+  } to{}, tr{};
+  for (auto [s, t, fill] : {std::tuple<Side*, Tables*, char>{&o, &to, 0x11}, {&r, &tr, 0x22}}) {
+    t->A = s->reserve(RDATA, 16);
+    t->B = s->reserve(RDATA, 16);
+    t->C = s->put(RDATA, Bytes(8, fill), 16);
+    s->write(t->A, le64b(t->B) + le64b(t->C));
+    s->write(t->B, le64b(t->A));
+    for (u64 p : {t->A, t->A + 8, t->B}) s->relocs.push_back(p);
+    t->FA = s->reserve(TEXT, 16);
+    s->write(t->FA, lea_rcx(t->FA, t->A) + "\xc3");
+    t->FB = s->reserve(TEXT, 16);
+    s->write(t->FB, lea_rcx(t->FB, t->B) + "\xc3");
+  }
+  Image O = o.image(), R = r.image();
+  std::map<u64, u64> to_orig{{tr.A, to.A}, {tr.B, to.B}, {tr.C, to.C}, {tr.FA, to.FA}, {tr.FB, to.FB}};
+  struct Spans : ComparerContext {
+    u64 span(u64) const override { return 16; }
+  } spans;
+  Comparer c(
+      &O, &R,
+      [&](u64 t) {
+        auto it = to_orig.find(t);
+        return it != to_orig.end() ? Key::of_va(it->second) : Key::named(Key::UNRESOLVED, hex(t));
+      },
+      nullptr, nullptr, &spans);
+  auto fa = [&] { return c.function(to.FA, to.FA + 8, tr.FA, tr.FA + 8); };
+  auto fb = [&] { return c.function(to.FB, to.FB + 8, tr.FB, tr.FB + 8); };
+  Problems pa = a_first ? fa() : Problems(), pb = fb();
+  if (!a_first) pa = fa();
+  if (pa.empty()) return {{"setup", "A should differ"}};
+  return pb;
+}
+
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
 // ids equal exactly when the strings are), and a damaged file is ignored. Names without a leading '?' need no
 // undname.
@@ -2125,6 +2164,8 @@ int main(int argc, char** argv) {
       {"string vs writable global", "reference", [] { return literal_vs_global(true); }},
       {"rebuilt table cut short", "data", [] { return short_table(true); }},
       {"original table cut short", "data", [] { return short_table(false); }},
+      {"table cycle, the failing table first", "data", [] { return table_cycle(true); }},
+      {"table cycle, the other first", "data", [] { return table_cycle(false); }},
       {"ignored annotations reported", nullptr, ignored_annotations},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
