@@ -208,14 +208,14 @@ A run, in the order `verify.cpp`'s `run` takes it:
    function against its original. This covers the instruction bytes with address fields set aside, then what
    each address field refers to, then unwind and EH data. A rebuilt function whose bytes are the original's outside
    the address fields, and decode the same way, is not decoded: its fields are read at the original's places
-   (`same_code_fields`; `VERIFIER_CHECK_FAST=1` checks each such answer against a full decode). The EH and RTTI records (FuncInfo and its tables, SEH
-   scope tables, the RTTI hierarchy, ThrowInfo) are described once as layouts (`layouts.cpp`) and compared
-   generically; `__CxxFrameHandler4`'s compressed FuncInfo is not described yet and reported as not verifiable.
-   Where it has to guess (an unannotated function, vtable or table standing for an original one, a local static's place, a build
-   hash in a name, a shared FuncInfo), the matching (`matching.cpp`) decides, for all functions at once: every
-   annotated function and GLOBAL is explored first with each guess assumed, the guesses that hold together are
-   kept by fixed rules, and then each function is judged against them. The results do not depend on the order
-   the functions are compared in.
+   (`same_code_fields`; `VERIFIER_CHECK_FAST=1` checks each such answer against a full decode). The EH and RTTI
+   records (FuncInfo and its tables, SEH scope tables, the RTTI hierarchy, ThrowInfo) are described once as layouts
+   (`layouts.cpp`) and compared generically; `__CxxFrameHandler4`'s compressed FuncInfo is not described yet and
+   reported as not verifiable. Where it has to guess (an unannotated function, vtable or table standing for an
+   original one, a local static's place, a build hash in a name, a shared FuncInfo), the matching (`matching.cpp`)
+   decides, for all functions at once: every annotated function and GLOBAL is explored first with each guess
+   assumed, the guesses that hold together are kept by fixed rules, and then each function is judged against them.
+   The results do not depend on the order the functions are compared in.
 6. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the symbolised
    instruction diff (`report.cpp`), its stdout line and its report entry.
 7. **Summary and gate** (`verify.cpp`): coverage and the regression gate against the matched list.
@@ -225,10 +225,11 @@ pairing's tables directly. The tests answer the same questions with small fakes.
 
 ## Performance
 
-A run is single-threaded. With the cache directory warm it maps the original's snapshot, reads the sources and
-the map, and decodes and compares every annotated function; most of its time is the comparison and the DIFFs'
-instruction diffs. A run without the name cache runs undname for every rebuilt name and takes several times as
-long.
+A run is single-threaded. With the cache directory warm it maps the original's snapshot and decoded functions,
+reads the source files that changed and the map, and compares every annotated function. A rebuilt function that
+matches is mostly compared from its address fields, without a decode of its own; most of the time then goes to
+the DIFFs (their decode, tokens and instruction diffs). Zero-filled data past a section's file data is not read.
+A run without the name cache runs undname for every rebuilt name and takes several times as long.
 
 ## License
 
