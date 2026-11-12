@@ -913,6 +913,38 @@ Problems failed_inference() {
   return g.empty() ? Problems{{"setup", "G should differ"}} : f;
 }
 
+// inference pairs one rebuilt function with each original: G and H both call A in the original, and two copies of it
+// in the rebuild (A1, A2); once A1 is inferred to be A, H's call to A2 is a reference problem
+Problems inference_one_to_one() {
+  Side o(0), r(0x240);
+  Bytes body = unhex("b801000000c3");
+  u64 oa = o.put(TEXT, body, 16), og = o.reserve(TEXT, 16), oh = o.reserve(TEXT, 16);
+  o.write(og, call(og, oa) + "\xc3");
+  o.write(oh, call(oh, oa) + "\xc3");
+  u64 ra1 = r.put(TEXT, body, 16), ra2 = r.put(TEXT, body, 16), rg = r.reserve(TEXT, 16), rh = r.reserve(TEXT, 16);
+  r.write(rg, call(rg, ra1) + "\xc3");
+  r.write(rh, call(rh, ra2) + "\xc3");
+  Original orig;
+  for (auto [va, size] : {std::pair<u64, u64>{oa, 6}, {og, 6}, {oh, 6}})
+    orig.functions.set(IdaFunction{va, size, "", false, false});
+  FakeRebuilt reb;
+  reb.symbols = symbols_at({ra1, ra2, rg, rh});
+  reb.fake.extent = [](u64 va) { return va + 6; };
+  std::map<std::string, u64> m{{"G", rg}, {"H", rh}};
+  reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  Pairing p(orig, reb, {{Kind::Function, og, "G", {}, "g.cpp", 1}, {Kind::Function, oh, "H", {}, "h.cpp", 1}});
+  Image O = o.image(), R = r.image();
+  struct InferOnly : ComparerContext {
+    Pairing& p;
+    explicit InferOnly(Pairing& x) : p(x) {}
+    bool infer(u64 a, u64 b) override { return p.infer(a, b); }
+  } infer_only(p);
+  p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
+  auto g = p.cmp->function(og, og + 6, rg, rg + 6);
+  auto h = p.cmp->function(oh, oh + 6, rh, rh + 6);
+  return g.empty() ? h : Problems{{"setup", "G should match"}};
+}
+
 // a Pairing over fake Original/Rebuilt with real hooks (prebound_static, consensus_static, folded_original)
 struct FakeRun {
   Image O, R;
@@ -2155,6 +2187,7 @@ int main(int argc, char** argv) {
       {"GLOBAL bytes checked", nullptr, global_bytes},
       {"replay key", nullptr, replay_key},
       {"failed inference taken back", "reference", failed_inference},
+      {"inference one-to-one", "reference", inference_one_to_one},
       {"other static, owner compared later", "reference", [] { return prebound_static(false); }},
       {"other static, owner compared first", "reference", [] { return prebound_static(true); }},
       {"addend inside an annotated object", nullptr, [] { return addend_across_annotation(0x10); }},

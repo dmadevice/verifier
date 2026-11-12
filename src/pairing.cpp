@@ -122,8 +122,8 @@ void Pairing::pair_vftables() {
 
 void Pairing::use(std::unique_ptr<Comparer> c) {
   cmp = std::move(c);
-  inferred_.attach(&cmp->journal);
   inferred_r_.attach(&cmp->journal);
+  inferred_o_.attach(&cmp->journal);
 }
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc) {
@@ -367,13 +367,13 @@ std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
 }
 
 bool Pairing::infer(u64 o_t, u64 r_t) {
-  if (inferred_.contains({o_t, r_t})) return true;
-  if (inferred_r_.contains(r_t) || orig_of(r_t)) return false;
+  if (auto o = inferred_r_.find(r_t)) return *o == o_t;
+  if (inferred_o_.contains(o_t) || orig_of(r_t)) return false;  // one rebuilt function for each original
   if (!orig.functions.contains(o_t) || !reb.symbols.contains(r_t) || infer_depth_ >= 4) return false;
   u64 oend = orig.extent(o_t), rend = reb.extent(r_t);
   return cmp->journal.speculate([&] {
-    inferred_.set({o_t, r_t}, true);
     inferred_r_.set(r_t, o_t);
+    inferred_o_.set(o_t, r_t);
     struct Depth {
       int& d;
       Depth(int& x) : d(++x) {}

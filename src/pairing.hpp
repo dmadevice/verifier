@@ -79,8 +79,7 @@ class Pairing : public ComparerContext {
   std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
-  JMap<std::pair<u64, u64>, bool, PairHash> inferred_;
-  JMap<u64, u64> inferred_r_;
+  JMap<u64, u64> inferred_r_, inferred_o_;  // unresolved rebuilt functions inferred to be originals, both ways
   Key resolve_symbol_uncached(u64 t) const;
   mutable std::unordered_map<u64, Key> resolved_;  // resolve_symbol's answers
   int infer_depth_ = 0;
