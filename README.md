@@ -107,14 +107,14 @@ With a `cache_dir`, runs keep there what the next run can use again:
   and library attribution; used while every one of those files keeps its size and modification time (the
   original is checked against `original_sha256` when the snapshot is made). While one of them changed within
   two seconds of the run, they are read directly and the snapshot is left as it is.
-- `undname-cache.bin`: the undecorated names. A run that had to run undname saves them, this build's names
-  first, then as many of other builds' names.
+- `undname-cache.bin`: the undecorated names, with the qualified names and signatures worked out from them. A
+  run that had to run undname saves them, this build's names first, then as many of other builds' names.
 - `code-original.bin`: the original's decoded functions, each used while its bytes and relocations are as kept.
 - `sources-cache.bin`: each source file's annotations and content hash, used while the file keeps its size and
   modification time (a file changed within two seconds of the run is read again).
 - `diff-cache.bin`: each DIFF's category and instruction diff, keyed by the two instruction streams as compared.
 
-The last three belong to the verifier build that wrote them: another build starts them afresh. The directory can
+The last four belong to the verifier build that wrote them: another build starts them afresh. The directory can
 be deleted at any time; the next run rebuilds what it needs.
 
 ## Usage

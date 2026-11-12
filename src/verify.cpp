@@ -409,7 +409,9 @@ int run(int argc, char** argv) {
   check_duplicates(anns);
   s.ph.mark("annotations");
 
-  NameCache name_cache(p.names_cache(), "verifier names 1 " + sha256_of(p.undname), p.undname);
+  // keyed by undname and by this verifier: the qualified names, signatures and owners kept with the undecorated
+  // names are worked out by names.cpp, so another verifier build may give others
+  NameCache name_cache(p.names_cache(), "verifier names 2 " + sha256_of(p.undname) + " " + s.self_hash(), p.undname);
   Rebuilt reb(a.rebuilt, a.map, name_cache, s.read());
   s.ph.mark("rebuilt+names");
 
