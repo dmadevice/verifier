@@ -47,8 +47,9 @@ bool have_sha_ni() {
 #endif
 }
 
-// the x86 SHA extensions: n 64-byte blocks
-#ifndef _MSC_VER
+// the x86 SHA extensions: n 64-byte blocks. Clang and GCC want the function marked for them; clang-cl is Clang with
+// _MSC_VER defined, so the test is for the compiler, not for that macro
+#if defined(__clang__) || defined(__GNUC__)
 __attribute__((target("sha,sse4.1")))
 #endif
 void blocks_sha_ni(std::uint32_t state[8], const unsigned char* data, size_t n) {
