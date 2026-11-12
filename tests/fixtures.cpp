@@ -1107,6 +1107,21 @@ Problems addend_across_sections() {
   return bad;
 }
 
+// a compiler constant or string literal pairs with read-only data only: the original reading a global that holds the
+// same bytes is another program (the global can change)
+Problems literal_vs_global(bool string) {
+  Side o(0), r(0x240);
+  Bytes v = string ? Bytes("abc ", 4) : unhex("0000803f");
+  u64 og = o.put(DATA, v, 4), rk = r.put(RDATA, v, 4);
+  u64 of = o.reserve(TEXT, 16), rf = r.reserve(TEXT, 16);
+  o.write(of, mov_eax_g(of, og) + "Ã");
+  r.write(rf, mov_eax_g(rf, rk) + "Ã");
+  Image O = o.image(), R = r.image();
+  Key k = string ? Key::named(Key::STR, "??_C@_03abc@") : Key::named(Key::CONST, "__real@3f800000");
+  Comparer c(&O, &R, [&](u64 t) { return t == rk ? k : Key::named(Key::UNRESOLVED, hex(t)); });
+  return c.function(of, of + 7, rf, rf + 7);
+}
+
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
 // ids equal exactly when the strings are), and a damaged file is ignored. Names without a leading '?' need no
 // undname.
@@ -2085,6 +2100,8 @@ int main(int argc, char** argv) {
       {"addend inside an annotated object", nullptr, [] { return addend_across_annotation(0x10); }},
       {"addend reaching another annotation", "reference", [] { return addend_across_annotation(0x20); }},
       {"addend stays in its section", nullptr, addend_across_sections},
+      {"constant vs writable global", "reference", [] { return literal_vs_global(false); }},
+      {"string vs writable global", "reference", [] { return literal_vs_global(true); }},
       {"ignored annotations reported", nullptr, ignored_annotations},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},

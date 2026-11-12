@@ -151,6 +151,9 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
       if (infer_data(o_base, *base)) key = Key::of_va(o_t);
     }
   }
+  // a literal is read-only data: the original reading a global with the same bytes is another program
+  if ((key.kind == Key::CONST || key.kind == Key::STR) && O->writable(o_t))
+    return Problem{"reference", hex(o_t) + " is writable data, not " + std::string(key.name.substr(0, 40))};
   if (key.kind == Key::CONST) {
     i64 n = const_size(key.name);
     if (!n) n = access ? access : 4;
