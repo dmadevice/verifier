@@ -170,6 +170,9 @@ class Comparer {
   Problems handler_data(std::string_view handler, u64 od, u64 rd, const FnPair& f,
                         std::optional<std::pair<u64, u64>> fi);
   void explore_queued();
+  // a funclet's end: .pdata's extent, else a leaf function's (decoded); each address worked out once per side
+  std::optional<u64> extent_or_leaf(const Image& img, u64 va);
+  U64Map<std::optional<u64>> o_extents_, r_extents_;
   friend class EHContext;
 };
 

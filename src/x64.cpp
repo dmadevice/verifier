@@ -1077,19 +1077,22 @@ std::optional<u64> leaf_extent(const Image& img, u64 va) {
   // straight-line decode up to the ret/jmp no earlier internal branch jumps past, in growing slices
   // (a slice ending on a truncated instruction is continued)
   u64 reach = va;
-  Bytes window(img.bytes(va, i64(MAX_DATA_COMPARE)));
+  std::string_view window = img.bytes(va, i64(MAX_DATA_COMPARE));
   size_t at = 0, size = 64;
   for (;;) {
     size_t endp = std::min(at + size, window.size());
     u64 nxt = va + at;
-    for (auto& ins : decode_linear(std::string_view(window).substr(at, endp - at), va + at)) {
+    std::optional<u64> end;
+    decode_each(window.substr(at, endp - at), va + at, [&](const Insn& ins, size_t) {
       nxt = ins.address + ins.size;
       for (auto& op : ins.ops)
         if (op.type == OP_IMM && ins.branches() && i64(va) <= op.imm() && op.imm() < i64(va + MAX_DATA_COMPARE))
           reach = std::max(reach, u64(op.imm()));
       if ((ins.type == FDI_RET || ins.type == FDI_RETF || ins.type == FDI_JMP || ins.type == FDI_INT3) && reach < nxt)
-        return ins.type != FDI_INT3 ? nxt : ins.address;
-    }
+        end = ins.type != FDI_INT3 ? nxt : ins.address;
+      return !end;
+    });
+    if (end) return end;
     if (endp == window.size() || va + endp - nxt >= 15) return std::nullopt;
     at = size_t(nxt - va);
     size *= 2;

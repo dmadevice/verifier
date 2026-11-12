@@ -46,12 +46,16 @@ Problems Comparer::unwind_info(u32 ou, u32 ru, const FnPair& f, std::optional<st
 
 // -- EH ----------------------------------------------------------------------------------------------------------
 
-namespace {
-std::optional<u64> extent_or_leaf(const Image& img, u64 va) {  // .pdata's extent, else a leaf function's
+std::optional<u64> Comparer::extent_or_leaf(const Image& img, u64 va) {
+  U64Map<std::optional<u64>>& memo = &img == O ? o_extents_ : r_extents_;
+  if (&img != O && &img != R) {  // another image (not asked for in a run): worked out each time
+    auto e = img.extent(va);
+    return e ? e : leaf_extent(img, va);
+  }
+  if (const std::optional<u64>* e = memo.find(va)) return *e;
   auto e = img.extent(va);
-  return e ? e : leaf_extent(img, va);
+  return memo.insert(va, e ? e : leaf_extent(img, va));
 }
-}  // namespace
 
 class EHContext {
  public:
@@ -84,7 +88,7 @@ class EHContext {
       if (o - ostart != r - rstart) probs.push_back({Category::Eh, "in-function handler offset differs"});
       return;
     }
-    auto oe = extent_or_leaf(*O, o), re = extent_or_leaf(*R, r);
+    auto oe = c->extent_or_leaf(*O, o), re = c->extent_or_leaf(*R, r);
     if (!O->pdata_at(o) != !R->pdata_at(r)) {
       probs.push_back({Category::Eh, "funclet " + hex(o) + ": .pdata presence differs"});
       return;
@@ -109,7 +113,7 @@ class EHContext {
     if (start <= va && va < end) return {'p', 0, i64(va - start)};
     for (size_t k = 0; k < funs.size(); ++k) {
       u64 f = funs[k];
-      auto fe = extent_or_leaf(img, f);
+      auto fe = c->extent_or_leaf(img, f);
       if (fe && *fe && f <= va && va < *fe) return {'f', i64(k), i64(va - f)};
     }
     return {'?', 0, 0};
