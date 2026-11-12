@@ -92,6 +92,12 @@ Findings alignment_properties() {
       same = again[k].tag == ops[k].tag && again[k].i1 == ops[k].i1 && again[k].i2 == ops[k].i2 &&
              again[k].j1 == ops[k].j1 && again[k].j2 == ops[k].j2;
     if (!same) return {{"alignment", "not deterministic (case " + std::to_string(n) + ")"}};
+    if (cost > a.size() + b.size()) {  // under the cost limit: a shortest script
+      size_t len = 0;
+      for (auto& o : ops)
+        if (o.tag != 'e') len += (o.i2 - o.i1) + (o.j2 - o.j1);
+      if (len != edit_distance(a, b)) return {{"alignment", "not a shortest script (case " + std::to_string(n) + ")"}};
+    }
     auto self = align(a, a, cost);
     if (!(a.empty() ? self.empty() : self.size() == 1 && self[0].tag == 'e'))
       return {{"alignment", "equal inputs differ (case " + std::to_string(n) + ")"}};
@@ -123,6 +129,9 @@ Findings alignment_cases() {
       // repeats only, no common prefix or suffix: Myers, a shortest script
       {"no unique element", {1, 2, 1, 2, 1}, {2, 1, 2, 1, 2}, "d0-1/0-0 e1-5/0-4 i5-5/4-5"},
       {"empty", {}, {1}, "i0-0/0-1"},
+      // a branch (9) twice on one side and once on the other, the code between the same: three instructions replaced
+      // by one (`setg; test; jz` by `jle`), the rest aligned, the single branch with the second
+      {"duplicate branch", {7, 8, 9, 3, 4, 5, 9, 6}, {10, 3, 4, 5, 9, 6}, "r0-3/0-1 e3-8/1-6"},
   };
   Findings bad;
   for (auto& c : cases) {
@@ -176,6 +185,44 @@ Findings instruction_diff() {
   Code a(O, o, o + ob.size()), b(O, o, o + ob.size());
   CodeDiff d = code_diff(a, b, {[](u64 t) { return Key::of_va(t); }, nullptr, name_of(names)}, true);
   if (d.differs || !d.lines.empty() || d.first) bad.push_back({"diff", "the same code differs"});
+  return bad;
+}
+
+// A condition computed into a register and tested (`setg; test; jz`) where the rebuilt function branches on it
+// (`jle`): those three replaced by the one, and the earlier branch to the same place the same although the original's
+// is a near branch (the code between is longer) and the rebuilt one's a short one.
+Findings branch_forms() {
+  Side os(0), rs(0x200);
+  // test ecx, ecx; jz near ret; cmp edx, 0; setg al; test al, al; jz ret; mov eax, 1; ret
+  Bytes ob("\x85\xc9\x0f\x84\x0f\x00\x00\x00\x83\xfa\x00\x0f\x9f\xc0\x84\xc0\x74\x05\xb8\x01\x00\x00\x00\xc3", 24);
+  // test ecx, ecx; jz ret; cmp edx, 0; jle ret; mov eax, 1; ret
+  Bytes rb("\x85\xc9\x74\x0a\x83\xfa\x00\x7e\x05\xb8\x01\x00\x00\x00\xc3", 15);
+  u64 o = os.reserve(TEXT, 0x20), r = rs.reserve(TEXT, 0x20);
+  os.write(o, ob);
+  rs.write(r, rb);
+  Image O = os.image(), R = rs.image();
+  Code oc(O, o, o + ob.size()), rc(R, r, r + rb.size());
+  NameMap names;
+  CodeDiff d = code_diff(oc, rc, {[](u64 t) { return Key::of_va(t); }, nullptr, name_of(names)}, true, 1);
+  std::vector<std::string> want = {"@2",           "  cmp edx, 0x0", "- setg al",     "- test al, al",
+                                   "- jz <+0x17>", "+ jle <+0xe>",   "  mov eax, 0x1"};
+  Findings bad;
+  if (d.lines != want) bad.push_back({"diff", join(d.lines, " | ")});
+  if (!d.first || d.first->first != 3 || d.first->second != 3) bad.push_back({"diff", "first difference not at setg"});
+  // Two flags tested, the two returns in the other order. A shortest script aligns either return with its own; the
+  // one aligning the return the first branch goes to keeps that branch the same: 6 lines changed, not 8.
+  // movzx eax, [rcx+0x62]; test al, al; jnz A; movzx eax, [rcx+0x63]; test al, al; jz B; A: movzx eax, al; ret;
+  // B: xor eax, eax; ret
+  Bytes ob2("\x0f\xb6\x41\x62\x84\xc0\x75\x08\x0f\xb6\x41\x63\x84\xc0\x74\x04\x0f\xb6\xc0\xc3\x33\xc0\xc3", 23);
+  // the same to the second jnz A; then xor eax, eax; ret; A: movzx eax, al; ret
+  Bytes rb2("\x0f\xb6\x41\x62\x84\xc0\x75\x0b\x0f\xb6\x41\x63\x84\xc0\x75\x03\x33\xc0\xc3\x0f\xb6\xc0\xc3", 23);
+  os.write(o, ob2);
+  rs.write(r, rb2);
+  Image O2 = os.image(), R2 = rs.image();
+  Code oc2(O2, o, o + ob2.size()), rc2(R2, r, r + rb2.size());
+  d = code_diff(oc2, rc2, {[](u64 t) { return Key::of_va(t); }, nullptr, name_of(names)}, true, 1);
+  size_t changed = std::count_if(d.lines.begin(), d.lines.end(), [](auto& l) { return l[0] == '-' || l[0] == '+'; });
+  if (changed != 6 || !d.first || d.first->first != 5) bad.push_back({"diff", join(d.lines, " | ")});
   return bad;
 }
 
@@ -328,6 +375,7 @@ void add_report_cases(Cases& cases) {
                    {"alignment: properties", nullptr, alignment_properties},
                    {"alignment: hand cases", nullptr, alignment_cases},
                    {"instruction diff", nullptr, instruction_diff},
+                   {"branch forms", nullptr, branch_forms},
                    {"report writer", nullptr, report_writer},
                    {"unit: JSON string escaping", nullptr, json_escaping},
                });

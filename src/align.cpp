@@ -34,9 +34,10 @@ class Aligner {
       if (s) blocks_.push_back({a1 - s, b1 - s, s});
       a1 -= s;
       b1 -= s;
-      if (a0 == a1 || b0 == b1 || anchored({a0, a1, b0, b1}, todo)) continue;
+      if (a0 == a1 || b0 == b1) continue;
       auto [x, y] = split(a0, a1, b0, b1);
-      if ((x || y) && (a0 + x < a1 || b0 + y < b1)) {  // else no progress: the part is replaced as a whole
+      if (!exact_ && anchored({a0, a1, b0, b1}, todo)) continue;  // too costly for Myers: patience splits it
+      if ((x || y) && (a0 + x < a1 || b0 + y < b1)) {             // else no progress: the part is replaced as a whole
         todo.push_back({a0, a0 + x, b0, b0 + y});
         todo.push_back({a0 + x, a1, b0 + y, b1});
       }
@@ -48,7 +49,8 @@ class Aligner {
  private:
   std::span<const u32> a_, b_;
   size_t max_cost_;
-  long budget_;  // Myers' steps left for the whole alignment
+  long budget_;        // Myers' steps left for the whole alignment
+  bool exact_ = true;  // the last split was the middle snake's (else where the search got furthest)
   std::vector<Block> blocks_;
   struct Count {
     u32 na = 0, nb = 0;
@@ -113,6 +115,7 @@ class Aligner {
   // split a[a0, a1) and b[b0, b1) (both not empty, their first and last elements different), relative to a0 and b0:
   // strictly inside, so both halves are smaller; {0, 0} once the budget is spent (the part is then replaced whole).
   std::pair<size_t, size_t> split(size_t a0, size_t a1, size_t b0, size_t b1) {
+    exact_ = false;
     if (budget_ <= 0) return {0, 0};
     long n = long(a1 - a0), m = long(b1 - b0);
     long max_d = (n + m + 1) / 2;
@@ -146,7 +149,7 @@ class Aligner {
           if (front) {
             long k2o = off + delta - k1;
             if (k2o >= 0 && k2o < len && v2_[size_t(k2o)] != -1 && x1 >= n - v2_[size_t(k2o)])
-              return {size_t(x1), size_t(y1)};
+              return exact_ = true, std::pair{size_t(x1), size_t(y1)};
           }
         }
       }
@@ -165,7 +168,7 @@ class Aligner {
           long k1o = off + delta - k2;
           if (k1o >= 0 && k1o < len && v1_[size_t(k1o)] != -1) {
             long x1 = v1_[size_t(k1o)], y1 = off + x1 - k1o;
-            if (x1 >= n - x2) return {size_t(x1), size_t(y1)};
+            if (x1 >= n - x2) return exact_ = true, std::pair{size_t(x1), size_t(y1)};
           }
         }
       }
@@ -177,6 +180,20 @@ class Aligner {
 };
 
 }  // namespace
+
+size_t edit_distance(std::span<const u32> a, std::span<const u32> b) {
+  long n = long(a.size()), m = long(b.size()), off = n + m + 1;
+  std::vector<long> v(size_t(2 * off + 1), 0);
+  for (long d = 0;; ++d)
+    for (long k = -d; k <= d; k += 2) {
+      long x = k == -d || (k != d && v[size_t(off + k - 1)] < v[size_t(off + k + 1)]) ? v[size_t(off + k + 1)]
+                                                                                      : v[size_t(off + k - 1)] + 1;
+      long y = x - k;
+      while (x < n && y < m && a[size_t(x)] == b[size_t(y)]) ++x, ++y;
+      v[size_t(off + k)] = x;
+      if (x >= n && y >= m) return size_t(d);
+    }
+}
 
 std::vector<Opcode> align(std::span<const u32> a, std::span<const u32> b, size_t max_cost) {
   std::vector<Block> blocks = Aligner(a, b, max_cost).run();

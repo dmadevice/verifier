@@ -303,7 +303,8 @@ int run(int argc, char** argv) {
   Config p = Config::load(a.config);
   Phases ph;
   Out out;
-  check_fast_path() = std::getenv("VERIFIER_CHECK_FAST") != nullptr;  // each fast answer checked by a full decode
+  check_fast_path() = std::getenv("VERIFIER_CHECK_FAST") != nullptr;   // each fast answer checked by a full decode
+  check_alignment() = std::getenv("VERIFIER_CHECK_ALIGN") != nullptr;  // each diff's script against the shortest
 
   i64 start = two_seconds_ago();  // files changed after this are too recent to trust their stamps
   // this verifier build: what the caches it alone can read are keyed by ("": unknown, nothing of it kept)

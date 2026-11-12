@@ -40,13 +40,14 @@ A function **MATCHes** when:
 Otherwise it is a **DIFF**, with the problems found (up to eight), a category, the first differing instruction
 and a unified instruction diff with targets shown by name. The diff aligns instructions as the comparison sees
 them: the same bytes outside their address fields, each field standing for the same thing (a string literal the
-original's bytes hold is the same string), and branches inside the function going to instructions in each other's
-place. A pair that reads the same is marked: `; encoding <bytes>` when only the bytes differ, `; target not aligned`
-when two branches to the same offset go to instructions that are not. Categories: `reorder`, `regalloc`, `immediate`,
-`inlining`, `unexplained` (the instruction streams differ), `encoding`, `undecodable`, `length` (same
-instructions, different bytes or size), `reference`, `data`, `vtable` (something referenced differs),
-`unwind`, `eh`. Other statuses: `MISSING` (no rebuilt symbol for the annotation), `AMBIGUOUS` (the name
-matches several symbols), `BADADDR` (no original function at the address), `LIBCODE` (see below).
+original's bytes hold is the same string), and branches inside the function, short or near, going to
+instructions in each other's place. A pair that reads the same is marked: `; encoding <bytes>` when only the
+bytes differ, `; target not aligned` when two branches to the same offset go to instructions that are not.
+Categories: `reorder`, `regalloc`, `immediate`, `inlining`, `unexplained` (the instruction streams differ),
+`encoding`, `undecodable`, `length` (same instructions, different bytes or size), `reference`, `data`, `vtable`
+(something referenced differs), `unwind`, `eh`. Other statuses: `MISSING` (no rebuilt symbol for the
+annotation), `AMBIGUOUS` (the name matches several symbols), `BADADDR` (no original function at the address),
+`LIBCODE` (see below).
 
 ## Annotations
 
@@ -237,7 +238,8 @@ reads the source files that changed and the map, and compares every annotated fu
 matches is mostly compared from its address fields, without a decode of its own, and a DIFF whose code and targets
 are as they were takes its report from `diff-cache.bin`; a DIFF's diff is otherwise made with text only for the
 lines it shows. Zero-filled data past a section's file data is not read. `VERIFIER_CHECK_DIFFS` makes every kept
-DIFF report again and stops on a difference.
+DIFF report again and stops on a difference; `VERIFIER_CHECK_ALIGN` names on stderr each diff whose alignment
+leaves more instructions unaligned than a shortest edit script (only parts past the cost limit may).
 A run without the name cache runs undname for every rebuilt name and takes several times as long.
 
 ## License

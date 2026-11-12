@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstdio>
 #include <optional>
 #include <unordered_map>
 
@@ -269,21 +270,24 @@ std::optional<Category> classify_mnemonics(const Code& a, const Code& b) {
 
 namespace {
 
-// a relative branch's offset in its bytes (after the prefixes: E8/E9 and 0F 8x take 4 bytes, EB, 7x and E0-E3 one;
-// it ends the instruction), {0, 0} for any other instruction
-std::pair<u8, u8> rel_operand(std::string_view b) {
+// a relative branch's prefixes, and its offset in its bytes (after the prefixes: E8/E9 and 0F 8x take 4 bytes, EB,
+// 7x and E0-E3 one; it ends the instruction); {0, 0, 0} for any other instruction
+struct RelOperand {
+  u8 prefixes, at, size;
+};
+RelOperand rel_operand(std::string_view b) {
   size_t p = 0;
   while (p < b.size() && (b[p] == '\x66' || b[p] == '\xf2' || b[p] == '\xf3' || b[p] == '\x2e' || b[p] == '\x3e' ||
                           (u8(b[p]) & 0xf0) == 0x40))
     ++p;
-  if (p >= b.size()) return {0, 0};
+  if (p >= b.size()) return {0, 0, 0};
   u8 op = u8(b[p]);
   u8 size = op == 0xe8 || op == 0xe9                                                 ? 4
             : op == 0xeb || (op >= 0x70 && op <= 0x7f) || (op >= 0xe0 && op <= 0xe3) ? 1
             : op == 0x0f && p + 1 < b.size() && (u8(b[p + 1]) & 0xf0) == 0x80        ? 4
                                                                                      : 0;
-  if (!size || b.size() < size) return {0, 0};
-  return {u8(b.size() - size), size};
+  if (!size || b.size() < size) return {0, 0, 0};
+  return {u8(p), u8(b.size() - size), size};
 }
 
 constexpr size_t NONE_AT = ~size_t(0);
@@ -308,11 +312,11 @@ i64 read_signed(std::string_view b, size_t at, size_t n) {
 constexpr i64 NO_TARGET = INT64_MIN;
 
 // Each instruction of both functions as a small int, equal exactly when the comparison would take the two as the same
-// instruction: the same bytes outside the address fields and the branch offset inside the function, the fields at the
-// same places, and each field standing for the same thing. A rebuilt address stands for the original one its name
-// resolves to, or else for one of the original function's own targets that the matching holds, or whose bytes are
-// the same literal's; nothing here guesses a new pair (Comparer::ref may, so it is not called). Branches inside the
-// function are left open: whether they agree depends on the alignment (CodeDiff::same_targets).
+// instruction: the same bytes outside the address fields, the fields at the same places, and each field standing for
+// the same thing. A rebuilt address stands for the original one its name resolves to, or else for one of the original
+// function's own targets that the matching holds, or whose bytes are the same literal's; nothing here guesses a new
+// pair (Comparer::ref may, so it is not called). A branch inside the function is its prefixes and mnemonic only (a
+// short and a near one are the same): whether two agree depends on the alignment (same_targets in code_diff).
 class Identities {
  public:
   Identities(const Code& oc, const Code& rc, const DiffContext& cx) : oc_(oc), rc_(rc), cx_(cx) {}
@@ -356,15 +360,19 @@ class Identities {
       auto fs = c.fields(l);
       // the bytes with the fields and an in-function branch offset zeroed, then the fields' places
       std::string_view b = c.bytes(l);
+      bool ext = std::any_of(fs.begin(), fs.end(), [](const Field& f) { return f.kind == F_EXT; });
+      if (auto [prefixes, at, n] = rel_operand(b); n && !ext) {
+        // a branch inside the function: its prefixes and mnemonic (a short and a near one align), its target apart
+        key_.assign(b.substr(0, prefixes));
+        key_ += 'J';
+        u16 m = u16(l.mnem);
+        key_.append(reinterpret_cast<const char*>(&m), 2);
+        ids.push_back(id_of(key_));
+        rel.push_back(i64(l.off) + i64(l.size) + read_signed(b, at, n));
+        continue;
+      }
       key_.assign(b);
       for (auto& f : fs) std::fill_n(key_.begin() + f.off, std::min<size_t>(f.size, key_.size() - f.off), '\0');
-      i64 target = NO_TARGET;
-      bool ext = std::any_of(fs.begin(), fs.end(), [](const Field& f) { return f.kind == F_EXT; });
-      auto [at, n] = rel_operand(b);
-      if (n && !ext) {
-        target = i64(l.off) + i64(l.size) + read_signed(b, at, n);
-        std::fill_n(key_.begin() + at, n, '\0');
-      }
       // a REX prefix that changes nothing (40) is an encoding difference only: aligned, then shown as one
       size_t rex = empty_rex(b);
       if (rex != NONE_AT) key_.erase(rex, 1);
@@ -374,10 +382,9 @@ class Identities {
         key_ += place(f.off);
         key_ += char(f.size);
       }
-      if (n && !ext) key_ += 'J';
       for (auto& f : fs) target_key(rebuilt, f);
       ids.push_back(id_of(key_));
-      rel.push_back(target);
+      rel.push_back(NO_TARGET);
     }
   }
 
@@ -472,6 +479,11 @@ class Identities {
 
 }  // namespace
 
+bool& check_alignment() {
+  static bool on = false;
+  return on;
+}
+
 std::string rebuilt_targets(const Code& oc, const Code& rc, const DiffContext& cx) {
   return Identities(oc, rc, cx).rebuilt_targets();
 }
@@ -485,13 +497,25 @@ CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool w
     ids.side(true, ib, rb);
   }
   auto ops = align(ia, ib);
+  auto cost = [](const std::vector<Opcode>& s) {
+    size_t n = 0;
+    for (auto& o : s)
+      if (o.tag != 'e') n += (o.i2 - o.i1) + (o.j2 - o.j1);
+    return n;
+  };
+  if (check_alignment())  // a script longer than the shortest is reported (VERIFIER_CHECK_ALIGN)
+    if (size_t n = cost(ops), best = edit_distance(ia, ib); n > best)
+      std::fprintf(stderr, "alignment longer than the shortest: %s %zu > %zu\n", hex(oc.start).c_str(), n, best);
   constexpr size_t NONE = ~size_t(0);
   // the original's instruction -> the rebuilt one in its place: aligned with it, or at the same place in a block
   // replaced by as many instructions (registers allocated otherwise, say)
-  std::vector<size_t> aligned(ia.size(), NONE);
-  for (auto& o : ops)
-    if (o.tag == 'e' || (o.tag == 'r' && o.i2 - o.i1 == o.j2 - o.j1))
-      for (size_t i = o.i1, j = o.j1; i < o.i2 && j < o.j2; ++i, ++j) aligned[i] = j;
+  std::vector<size_t> aligned;
+  auto place = [&](const std::vector<Opcode>& s) {
+    aligned.assign(ia.size(), NONE);
+    for (auto& o : s)
+      if (o.tag == 'e' || (o.tag == 'r' && o.i2 - o.i1 == o.j2 - o.j1))
+        for (size_t i = o.i1, j = o.j1; i < o.i2 && j < o.j2; ++i, ++j) aligned[i] = j;
+  };
   // the instruction at a function-relative offset, if one starts there
   auto at = [](const Code& c, i64 v) -> size_t {
     auto it = std::lower_bound(c.insns.begin(), c.insns.end(), v, [](const Lean& l, i64 x) { return i64(l.off) < x; });
@@ -503,6 +527,55 @@ CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool w
     size_t ti = at(oc, ra[i]), tj = at(rc, rb[j]);
     return (ti == NONE ? NONE : aligned[ti]) == tj;
   };
+  auto same = [&](size_t i, size_t j) {  // a branch by its target (a short and a near one read the same), else by size
+    return ra[i] != NO_TARGET ? same_targets(i, j) : oc.insns[i].size == rc.insns[j].size;
+  };
+  // the lines a script shows changed: its instructions not aligned, and two for each aligned pair that differs
+  auto shown = [&](const std::vector<Opcode>& s) {
+    place(s);
+    size_t n = cost(s);
+    for (auto& o : s)
+      if (o.tag == 'e')
+        for (size_t i = o.i1, j = o.j1; i < o.i2; ++i, ++j) n += same(i, j) ? 0 : 2;
+    return n;
+  };
+  // Branches align by their mnemonic, and a branch aligned with one whose target is not in its place shows as
+  // changed. Where some do, three more scripts are made (from the ends, where Myers breaks ties the other way, and
+  // both ways with each branch also standing for the instruction at its target) and the one showing the fewest
+  // changed lines is kept. Where none do, no script shows fewer: each shows at least as many as it has instructions
+  // not aligned, and Myers has the fewest of those. Only for small differences: there a line or two is much of the
+  // diff, and a large one would take most of the diff's time aligning again.
+  constexpr size_t AGAIN_UP_TO = 64;
+  if (size_t n = shown(ops); n > cost(ops) && cost(ops) <= AGAIN_UP_TO) {
+    u32 next = 0;
+    for (u32 x : ia) next = std::max(next, x);
+    for (u32 x : ib) next = std::max(next, x);
+    std::unordered_map<u64, u32> refined;
+    auto by_target = [&](const Code& c, const std::vector<u32>& ids, const std::vector<i64>& rel) {
+      std::vector<u32> out = ids;
+      for (size_t k = 0; k < ids.size(); ++k) {
+        if (rel[k] == NO_TARGET) continue;
+        size_t t = at(c, rel[k]);
+        u64 key = u64(ids[k]) << 32 | (t == NONE ? 0 : ids[t]);  // ids are numbered from 1
+        out[k] = refined.try_emplace(key, next + 1 + u32(refined.size())).first->second;
+      }
+      return out;
+    };
+    auto backwards = [](std::vector<u32> a, std::vector<u32> b) {
+      std::reverse(a.begin(), a.end());
+      std::reverse(b.begin(), b.end());
+      std::vector<Opcode> s = align(a, b), out;
+      for (auto it = s.rbegin(); it != s.rend(); ++it)
+        out.push_back({it->tag, a.size() - it->i2, a.size() - it->i1, b.size() - it->j2, b.size() - it->j1});
+      return out;
+    };
+    std::vector<u32> ta = by_target(oc, ia, ra), tb = by_target(rc, ib, rb);
+    std::vector<Opcode> best = std::move(ops);
+    for (auto& s : {backwards(ia, ib), align(ta, tb), backwards(ta, tb)})
+      if (size_t k = shown(s); k < n) n = k, best = s;
+    ops = std::move(best);
+    place(ops);
+  }
   // a line: '-' and ' ' show the original's instruction i, '+' the rebuilt one j; `at` is the original's index where it
   // is; `other`: the instruction on the other side it pairs with (NONE: none)
   struct Entry {
@@ -514,7 +587,7 @@ CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool w
   for (auto& o : ops) {
     if (o.tag == 'e') {
       for (size_t i = o.i1, j = o.j1; i < o.i2; ++i, ++j) {
-        if (same_targets(i, j) && oc.insns[i].size == rc.insns[j].size) {
+        if (same(i, j)) {
           entries.push_back({' ', i, j, i, NONE});
         } else {
           entries.push_back({'-', i, j, i, j});
@@ -575,7 +648,7 @@ CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool w
     size_t i = e.mark == '-' ? e.i : e.other, j = e.mark == '+' ? e.j : e.other;
     std::string_view x = oc.bytes(oc.insns[i]), y = rc.bytes(rc.insns[j]);
     if (oc.insns[i].mnem != rc.insns[j].mnem || otext(i, j) != rtext(j)) return std::string();
-    if (ra[i] != NO_TARGET && rb[j] != NO_TARGET && x.size() == y.size()) return std::string("  ; target not aligned");
+    if (ra[i] != NO_TARGET && rb[j] != NO_TARGET) return std::string("  ; target not aligned");
     if (x == y) return std::string();
     return "  ; encoding " + hex_bytes(e.mark == '-' ? x : y);
   };

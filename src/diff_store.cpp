@@ -11,7 +11,7 @@ namespace verifier {
 namespace {
 
 // the file: header, padding to 8; the index (u64 count, then Index records sorted by key); the entries
-constexpr std::string_view MAGIC = "verifier-diffs 2\n";
+constexpr std::string_view MAGIC = "verifier-diffs 3\n";
 
 // two 64-bit lanes over words; strings by length and their bytes in 8-byte words
 class KeyHash {

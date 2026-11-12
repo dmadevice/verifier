@@ -93,6 +93,9 @@ struct CodeDiff {
 };
 CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context = 2,
                    size_t limit = 200);
+// the alignment's self-check (VERIFIER_CHECK_ALIGN): a diff whose script is longer than the shortest is reported on
+// stderr
+bool& check_alignment();
 // everything the diff reads of the rebuilt function's address fields beyond their values, in order, as one string:
 // what each resolves to, and what it stands for in the alignment (for a literal, its bytes, which decide that)
 std::string rebuilt_targets(const Code& oc, const Code& rc, const DiffContext& cx);
