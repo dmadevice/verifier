@@ -212,22 +212,29 @@ bool Comparer::same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<
 }
 
 std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
-  Bytes a(O->bytes(o_t, n)), b(R->bytes(r_t, n));
   std::vector<i64> ptrs;
-  for (i64 p = i64(r_t) - 7; p < i64(r_t) + n; ++p) {
-    if (R->has_reloc(u64(p))) {
-      if (!O->has_reloc(u64(i64(o_t) + (p - i64(r_t)))))
-        return Problem{Category::Data,
-                       std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
-      ptrs.push_back(p - i64(r_t));
+  // the rebuilt pointers that overlap the bytes read, in order
+  const std::vector<u64>& rel = R->reloc_sorted;
+  for (size_t i = R->reloc_lower_bound(r_t - 7); i < rel.size() && rel[i] < r_t + u64(n); ++i) {
+    i64 off = i64(rel[i] - r_t);
+    if (!O->has_reloc(u64(i64(o_t) + off)))
+      return Problem{Category::Data,
+                     std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
+    ptrs.push_back(off);
+  }
+  bool same;
+  if (ptrs.empty()) {
+    same = O->bytes(o_t, n) == R->bytes(r_t, n);
+  } else {
+    Bytes a(O->bytes(o_t, n)), b(R->bytes(r_t, n));
+    for (i64 off : ptrs) {
+      i64 lo = std::max<i64>(off, 0), hi = std::min<i64>(off + 8, n);
+      mask(a, lo, hi);
+      mask(b, lo, hi);
     }
+    same = a == b;
   }
-  for (i64 off : ptrs) {
-    i64 lo = std::max<i64>(off, 0), hi = std::min<i64>(off + 8, n);
-    mask(a, lo, hi);
-    mask(b, lo, hi);
-  }
-  if (a != b) return Problem{Category::Data, std::to_string(n) + " bytes at " + hex(o_t) + " differ"};
+  if (!same) return Problem{Category::Data, std::to_string(n) + " bytes at " + hex(o_t) + " differ"};
   for (i64 off : ptrs) {
     u64 o_p = O->u64_at(u64(i64(o_t) + off)), r_p = R->u64_at(u64(i64(r_t) + off));
     if (infer_data(o_p, r_p)) continue;
