@@ -335,6 +335,8 @@ std::optional<u64> Pairing::end_of_previous(u64 t) const {
 std::vector<u64> Pairing::alternates(u64 t) const {
   auto names = reb.symbols.names(t);
   if (names.size() < 2) return {};
+  // worked out once per address (vtable slots and calls meet the same folded functions again and again)
+  if (auto it = alternates_.find(t); it != alternates_.end()) return it->second;
   std::set<u64> vas;
   for (auto& n : names)
     if (auto va = named(n)) vas.insert(*va);
@@ -343,7 +345,7 @@ std::vector<u64> Pairing::alternates(u64 t) const {
   for (auto it = std::lower_bound(reb_to_origs_.begin(), reb_to_origs_.end(), std::pair<u64, u64>{t, 0});
        it != reb_to_origs_.end() && it->first == t; ++it)
     vas.insert(it->second);
-  return std::vector<u64>(vas.begin(), vas.end());
+  return alternates_.emplace(t, std::vector<u64>(vas.begin(), vas.end())).first->second;
 }
 
 std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {

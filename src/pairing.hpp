@@ -86,6 +86,7 @@ class Pairing : public ComparerContext {
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
   mutable std::unordered_map<u64, Key> resolved_;      // resolve_symbol's answers
+  mutable std::unordered_map<u64, std::vector<u64>> alternates_;  // alternates' answers
   std::unordered_map<u64, std::vector<u64>> refs_of_;  // orig_refs' answers
 };
 
