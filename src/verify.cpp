@@ -221,10 +221,30 @@ struct Evaluated {
   std::vector<Outcome> results;
   std::vector<Result> libcode;  // the LIBCODE results
   std::string lines;            // the results' stdout lines
-  std::string report;           // "{ "results": [...]" when there is a report; the totals are added after
+};
+
+// The --json report, written to its file as the results are made (buffered), the totals at the end
+class ReportFile {
+ public:
+  explicit ReportFile(const std::optional<std::string>& path) {
+    if (path) f_.open(*path, std::ios::binary | std::ios::trunc);
+  }
+  bool on() const { return f_.is_open(); }
+  std::string& text() { return buf_; }  // appended to; written out once it is large
+  void written() {
+    if (buf_.size() >= (1 << 20)) flush();
+  }
+  void flush() {
+    f_.write(buf_.data(), std::streamsize(buf_.size()));
+    buf_.clear();
+  }
+
+ private:
+  std::ofstream f_;
+  std::string buf_;
 };
 Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb, Pairing& pairing,
-                       Comparer& cmp, const Args& a, const Config& p, Out& out) {
+                       Comparer& cmp, const Args& a, const Config& p, Out& out, ReportFile& report) {
   std::optional<u64> show;
   if (a.show) show = parse_hex(*a.show);
   std::vector<const Annotation*> order;
@@ -233,26 +253,20 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
   std::stable_sort(order.begin(), order.end(), [](auto* x, auto* y) { return x->va < y->va; });
   Evaluated ev;
   ev.results.reserve(order.size());
-  if (a.json) {
-    // room for the report at once (megabytes, else grown by doubling and copied each time): the last run's report is
-    // about its size
-    std::error_code ec;
-    u64 last = std::filesystem::file_size(*a.json, ec);
-    if (!ec) ev.report.reserve(last + last / 8);
-    ev.report = "{\n  \"results\": ";
-  }
+  if (report.on()) report.text() = "{\n  \"results\": ";
   for (auto* ann : order) {
     Result r = evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out, true);
     ev.lines += result_line(r, p.module);
     ev.lines += '\n';
-    if (a.json) {
-      ev.report += ev.results.empty() ? "[\n    " : ",\n    ";
-      write_result(ev.report, r, 2);
+    if (report.on()) {
+      report.text() += ev.results.empty() ? "[\n    " : ",\n    ";
+      write_result(report.text(), r, 2);
+      report.written();
     }
     ev.results.push_back({r.va, ann->kind, r.status, r.category, r.name});
     if (r.status == Status::LibCode) ev.libcode.push_back(std::move(r));
   }
-  if (a.json) ev.report += ev.results.empty() ? "[]" : "\n  ]";
+  if (report.on()) report.text() += ev.results.empty() ? "[]" : "\n  ]";
   return ev;
 }
 
@@ -269,8 +283,9 @@ void print_warnings(const std::vector<GlobalRoot>& globals, const std::vector<Ig
         "within the next three lines");
 }
 
-// the report's totals, and the file written
-void finish_report(std::string& report, const Totals& totals, const std::string& path) {
+// the report's totals, and the file finished
+void finish_report(ReportFile& file, const Totals& totals) {
+  std::string& report = file.text();
   for (auto& [k, v] : totals.fields.obj) {
     report += ",\n  ";
     json::put_quoted(report, k);
@@ -278,7 +293,7 @@ void finish_report(std::string& report, const Totals& totals, const std::string&
     json::put_value(report, v, 1);
   }
   report += "\n}\n";
-  std::ofstream(path, std::ios::binary) << report;
+  file.flush();
 }
 
 }  // namespace
@@ -331,7 +346,8 @@ int run(int argc, char** argv) {
   explore_all(anns, orig, reb, pairing, cmp, globals);
   ph.mark("explore+solve");
 
-  Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, a, p, out);
+  ReportFile report(a.json);
+  Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, a, p, out, report);
   ph.mark("evaluate");
   if (std::getenv("VERIFIER_TIMING")) {
     auto st = cmp.m.stats();
@@ -348,8 +364,8 @@ int run(int argc, char** argv) {
   // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run
   // undname for them again)
   if (a.update || name_cache.has_new()) name_cache.save();
-  if (a.json) {
-    finish_report(ev.report, totals, *a.json);
+  if (report.on()) {
+    finish_report(report, totals);
     ph.mark("json");
   }
   int rc = totals.libcode.empty() ? 0 : 1;
