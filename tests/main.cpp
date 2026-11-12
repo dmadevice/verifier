@@ -21,8 +21,6 @@ int failures = 0;
 std::string fixtures_path = VERIFIER_FIXTURES;
 }  // namespace
 
-std::string self_path;
-
 const Value& fixtures() {
   static const Value doc = json::parse(read_file(fixtures_path));
   return doc;
@@ -49,9 +47,6 @@ bool verdict(const char* want, const Findings& probs) {
 }
 
 int main(int argc, char** argv) {
-  self_path = argv[0];
-  // a second process writes a code store: its mnemonics numbered otherwise than the tests' (see code_store_case)
-  if (argc == 3 && std::string(argv[1]) == "--write-code-store") return write_code_store(argv[2]);
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "-v")

@@ -1,7 +1,5 @@
 #include "annotations.hpp"
 
-#include "content_hash.hpp"
-#include "source_cache.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -44,11 +42,9 @@ std::optional<std::string> sig_flag(const AnnotationFlags& flags) {
 
 namespace {
 
-// list_files, appending to out (a link to a directory is a file): on Windows the sizes and times come from the listing
-// itself (FindFirstFileEx gives every entry's), elsewhere from a stat each
-void walk(const std::string& root, std::vector<ListedFile>& out) {
-  std::vector<ListedFile> files;  // by name, until joined to root
-  std::vector<std::string> dirs;
+// list_files, appending to out (a link to a directory is a file)
+void walk(const std::string& root, std::vector<std::string>& out) {
+  std::vector<std::string> files, dirs;  // by name, until joined to root
 #ifdef _WIN32
   WIN32_FIND_DATAW d;
   HANDLE h = FindFirstFileExW((std::filesystem::path(root) / L"*").c_str(), FindExInfoBasic, &d, FindExSearchNameMatch,
@@ -58,13 +54,7 @@ void walk(const std::string& root, std::vector<ListedFile>& out) {
     if (!wcscmp(d.cFileName, L".") || !wcscmp(d.cFileName, L"..")) continue;
     std::string name = std::filesystem::path(d.cFileName).string();
     bool link = (d.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && d.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
-    if ((d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !link) {
-      dirs.push_back(std::move(name));
-      continue;
-    }
-    // the file clock's ticks are FILETIME's (100 ns since 1601)
-    files.push_back({std::move(name), (u64(d.nFileSizeHigh) << 32) | d.nFileSizeLow,
-                     i64((u64(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime)});
+    ((d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !link ? dirs : files).push_back(std::move(name));
   } while (FindNextFileW(h, &d));
   FindClose(h);
 #else
@@ -73,32 +63,20 @@ void walk(const std::string& root, std::vector<ListedFile>& out) {
   if (!fs::is_directory(root, ec)) return;
   for (auto it = fs::directory_iterator(root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
     std::error_code e2;
-    std::string name = it->path().filename().string();
-    if (it->is_directory(e2) && !it->is_symlink(e2)) {
-      dirs.push_back(std::move(name));
-      continue;
-    }
-    ListedFile f{std::move(name)};
-    f.size = it->file_size(e2);
-    if (e2) f.size = u64(-1);
-    auto time = it->last_write_time(e2);
-    f.time = e2 ? std::numeric_limits<i64>::max() : i64(time.time_since_epoch().count());  // unknown: recent
-    files.push_back(std::move(f));
+    bool dir = it->is_directory(e2) && !it->is_symlink(e2);
+    (dir ? dirs : files).push_back(it->path().filename().string());
   }
 #endif
-  std::sort(files.begin(), files.end(), [](auto& x, auto& y) { return x.path < y.path; });
+  std::sort(files.begin(), files.end());
   std::sort(dirs.begin(), dirs.end());
-  for (auto& f : files) {
-    f.path = path_join(root, f.path);
-    out.push_back(std::move(f));
-  }
+  for (auto& f : files) out.push_back(path_join(root, f));
   for (auto& sub : dirs) walk(path_join(root, sub), out);
 }
 
 }  // namespace
 
-std::vector<ListedFile> list_files(const std::string& root) {
-  std::vector<ListedFile> out;
+std::vector<std::string> list_files(const std::string& root) {
+  std::vector<std::string> out;
   walk(root, out);
   return out;
 }
@@ -212,43 +190,16 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
 }  // namespace
 
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
-                                          std::vector<Ignored>* ignored,
-                                          const std::function<void(const ListedFile&, std::string_view)>& seen,
-                                          SourceCache* cache,
-                                          const std::function<void(const ListedFile&, const std::string&)>& hashed) {
+                                          std::vector<Ignored>* ignored) {
   std::vector<Annotation> out;
   for (auto& root : roots) {
-    for (auto& file : list_files(root)) {
-      const std::string& path = file.path;
+    for (auto& path : list_files(root)) {
       bool source = ends_with(path, ".cpp") || ends_with(path, ".h") || ends_with(path, ".c") ||
                     ends_with(path, ".hpp") || ends_with(path, ".inl");
-      if (!source && !seen && !hashed) continue;
-      if (const SourceCache::Entry* e = cache ? cache->find(file) : nullptr) {  // as the cache has it: not read
-        if (hashed) hashed(file, e->hash);
-        std::string_view kept_path = keep_text(path);
-        for (auto& a : e->anns) out.push_back({a.kind, a.va, a.name, a.flags, kept_path, a.line});
-        if (ignored)
-          for (auto& ig : e->ignored) ignored->push_back({path, ig.line, ig.text});
-        cache->keep(file, *e);
-        continue;
-      }
+      if (!source) continue;
       std::string data = read_file(path);
-      if (seen) seen(file, data);
-      std::string hash = hashed || cache ? content_hash(data) : std::string();
-      if (hashed) hashed(file, hash);
-      SourceCache::Entry e{hash, {}, {}};
-      if (source && data.find(module) != std::string::npos) {  // else no annotation of this module here
-        std::vector<Annotation> anns;
-        std::vector<Ignored> ign;
-        parse_file(data, path, keep_text(path), module, anns, &ign);
-        for (auto& a : anns) out.push_back(a);
-        if (ignored) ignored->insert(ignored->end(), ign.begin(), ign.end());
-        if (cache) {
-          for (auto& a : anns) e.anns.push_back({a.kind, a.va, a.name, a.flags, a.line});
-          for (auto& ig : ign) e.ignored.push_back({ig.line, ig.text});
-        }
-      }
-      if (cache) cache->keep(file, e);
+      if (data.find(module) == std::string::npos) continue;  // no annotation of this module here
+      parse_file(data, path, keep_text(path), module, out, ignored);
     }
   }
   return out;
@@ -261,9 +212,8 @@ void check_duplicates(const std::vector<Annotation>& anns) {
     bool folded = a.flags.folded;
     auto it = seen.find(a.va);
     if (it != seen.end() && !(folded && it->second.second)) {
-      std::fprintf(stderr, "duplicate annotation %s: %s and %s:%d (mark /OPT:ICF folds FOLDED)\n", hex(a.va).c_str(),
-                   it->second.first.c_str(), std::string(a.path).c_str(), a.line);
-      std::exit(1);
+      throw RunError(1, "duplicate annotation " + hex(a.va) + ": " + it->second.first + " and " + std::string(a.path) +
+                            ":" + std::to_string(a.line) + " (mark /OPT:ICF folds FOLDED)\n");
     }
     seen[a.va] = {std::string(a.path) + ":" + std::to_string(a.line), folded};
   }

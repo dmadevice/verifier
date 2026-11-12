@@ -13,19 +13,15 @@
 #include <vector>
 
 #include "annotations.hpp"
-#include "code_store.hpp"
 #include "compare.hpp"
-#include "content_hash.hpp"
 #include "inputs.hpp"
 #include "json.hpp"
 #include "name_cache.hpp"
 #include "names.hpp"
 #include "pairing.hpp"
-#include "replay.hpp"
 #include "report.hpp"
 #include "result.hpp"
 #include "sha256.hpp"
-#include "source_cache.hpp"
 #include "verify.hpp"
 
 namespace verifier::test {
@@ -54,7 +50,6 @@ struct Case {
 using Cases = std::vector<Case>;
 
 const Value& fixtures();         // tests/data/fixtures.json, read once
-extern std::string self_path;    // this program (a case runs a second copy of it)
 
 // each test file's cases (main runs them in this order)
 void add_names_cases(Cases&);
@@ -67,7 +62,6 @@ void add_util_cases(Cases&);
 void run_fixture_cases(const Value& doc);  // reported as they run
 void report(const std::string& name, const char* want, const Findings& probs, bool ok, std::string note = "");
 bool verdict(const char* want, const Findings& probs);
-int write_code_store(const std::string& path);  // cache_test.cpp: the second process's part
 
 inline Findings bad_if(bool bad, const std::string& cat, const std::string& why) {
   return bad ? Findings{{cat, why}} : Findings{};

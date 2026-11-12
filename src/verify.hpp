@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "args.hpp"
-#include "diff_store.hpp"
 #include "json.hpp"
 #include "pairing.hpp"
 #include "report.hpp"
@@ -32,7 +31,7 @@ struct GlobalDiff {
 };
 std::vector<GlobalDiff> check_globals(const std::vector<GlobalRoot>& roots, Comparer& cmp);  // judged (after solve)
 
-// the command line: exits the process when it has run (without freeing what it built); returns early only for a replay
+// the command line: the exit status (errors that end the run are thrown, RunError with their status)
 int run(int argc, char** argv);
 
 }  // namespace verifier

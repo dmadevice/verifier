@@ -15,7 +15,6 @@ std::string_view status_name(Status s) {
 }
 
 void Out::write(const std::string& s) {
-  text_ += s;
   std::fwrite(s.data(), 1, s.size(), stdout);
 }
 void Out::print(const std::string& line) { write(line + "\n"); }
@@ -100,7 +99,7 @@ std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig,
 }
 
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                const std::string& root, bool show, Out& out, bool want_diff, DiffStore* diffs) {
+                const std::string& root, bool show, Out& out, bool want_diff) {
   u64 ova = ann.va;
   Result rec;
   rec.va = ova;
@@ -161,10 +160,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     for (auto& l : c.insns) v.push_back(l.off);
     return v;
   };
-  // a DIFF's category and diff, kept between runs (a function of the tokens): read from the store when it has them
-  std::optional<DiffStore::Entry> kept;
-  if (diffs && !same && !probs.empty() && want_diff) kept = diffs->get(offsets(oc), offsets(rc), ot, rt, cmp.names);
-  if (!probs.empty()) rec.category = same ? probs[0].category : kept ? kept->category : classify(ot, rt);
+  if (!probs.empty()) rec.category = same ? probs[0].category : classify(ot, rt);
   rec.osize = i64(oc.code.size());  // padding after the last ret is not code, whichever side's extent reaches over it
   rec.rsize = i64(rc.code.size());
   rec.status = probs.empty() ? Status::Match : Status::Diff;
@@ -177,7 +173,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
       break;
     }
     rec.has_diff = true;
-    if (want_diff) rec.diff = kept ? std::move(kept->diff) : insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
+    if (want_diff) rec.diff = insn_diff(offsets(oc), offsets(rc), ot, rt, cmp.names);
   }
   if (show) {
     out.print("--- " + lk.qname + "  orig " + std::to_string(rec.osize) + "B | rebuilt " + std::to_string(rec.rsize) +

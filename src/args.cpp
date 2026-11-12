@@ -10,12 +10,11 @@ namespace verifier {
 namespace {
 
 [[noreturn]] void usage(const std::string& err) {
-  std::fprintf(stderr,
-               "usage: verifier [--config FILE] --rebuilt REBUILT --map MAP --src SRC [SRC ...] [--matched MATCHED]\n"
-               "                  [--check] [--update] [--json JSON] [--show SHOW]\n"
-               "verifier: error: %s\n",
-               err.c_str());
-  std::exit(2);
+  throw RunError(2, std::string("usage: verifier [--config FILE] --rebuilt REBUILT --map MAP --src SRC [SRC ...] "
+                                "[--matched MATCHED]\n"
+                                "                  [--check] [--update] [--json JSON] [--show SHOW]\n"
+                                "verifier: error: ") +
+                        err + "\n");
 }
 
 }  // namespace

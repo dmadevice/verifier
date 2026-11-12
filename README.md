@@ -112,14 +112,11 @@ With a `cache_dir`, runs keep there what the next run can use again:
   original is checked against `original_sha256` when the snapshot is made). While one of them changed within
   two seconds of the run, they are read directly and the snapshot is left as it is.
 - `undname-cache.bin`: the undecorated names, with the qualified names and signatures worked out from them. A
-  run that had to run undname saves them, this build's names first, then as many of other builds' names.
-- `code-original.bin`: the original's decoded functions, each used while its bytes and relocations are as kept.
-- `sources-cache.bin`: each source file's annotations and content hash, used while the file keeps its size and
-  modification time (a file changed within two seconds of the run is read again).
-- `diff-cache.bin`: each DIFF's category and instruction diff, keyed by the two instruction streams as compared.
+  run that had to run undname saves them, this build's names first, then as many of other builds' names. The
+  names belong to the verifier build that wrote them: another build works its own out afresh.
 
-The last four belong to the verifier build that wrote them: another build starts them afresh. The directory can
-be deleted at any time; the next run rebuilds what it needs.
+Nothing else is kept between runs: the sources are read, and every compared function decoded and compared, each
+time. The directory can be deleted at any time; the next run rebuilds what it needs.
 
 ## Usage
 
@@ -135,19 +132,17 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs --json ou
 - `--matched FILE`: the regression list, functions that must keep matching. `--check` exits 1 when one no
   longer matches (or on `LIBCODE`); `--update` adds the new matches to it (and refuses while something
   regressed).
-- A run keeps its output, exit status and its report's content hash beside the rebuilt binary
-  (`verifier-last.txt`); the next run with identical inputs (arguments, binaries, map, sources, configuration
-  and every input file) replays it instantly, as long as the `--json` file is still the report that run wrote
-  (otherwise it runs, and writes the report). `--update` and `--show` runs neither keep nor replay one. The inputs are compared by size and
-  modification time first (the configuration by its contents), and by their contents when those differ or
-  when an input changed within two seconds of the run.
+
+Exit status: 0, or with `--check`/`--update` 1 when the gate fails or there is `LIBCODE`; 1 for duplicate
+annotations or an original that is not the configured `original_sha256`; 2 for bad arguments, configuration or
+inputs.
 
 Output: one line per annotated function (status, address, original/rebuilt size, category, name; for a DIFF
 the first differing instruction or problem), warnings for read-only `GLOBAL`s whose bytes are not the
 original's, then the totals: matches, categories, coverage of the original's functions and bytes (library
 code, thunks and EH funclets excluded) and the linked-library line.
 
-Set `VERIFIER_TIMING=1` to print each phase's time and memory, and what the cache directory supplied, on stderr.
+Set `VERIFIER_TIMING=1` to print each phase's time and memory, and the matching's size, on stderr.
 
 ## Building
 
@@ -170,48 +165,44 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 60 cases in code: pairing (a guessed function or table that fails, guesses
+exact problems it must report, and 54 cases in code: pairing (a guessed function or table that fails, guesses
 kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items export, literals against globals, tables cut short, tables that
-point at each other), name handling, the annotation parser, the instruction diff, the replay key and record,
-hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache
-directory's code, diff and sources stores. `ctest` also runs fadec's own decoder tests.
+point at each other), name handling, the annotation parser, the instruction diff,
+hashing, the report's JSON escaping, file reading, line splitting, the name table, the name cache file and the
+snapshot key. `ctest` also runs fadec's own decoder tests.
 
 ## How it works
 
 A run, in the order `verify.cpp`'s `run` takes it:
 
-1. **Replay** (`replay.cpp`): when nothing it read has changed since the last run, that run's output, report and
-   exit status are given again.
-2. **Original** (`inputs.cpp`, `pe.cpp`): the image with its exports (functions, vtables, data items, library
+1. **Original** (`inputs.cpp`, `pe.cpp`): the image with its exports (functions, vtables, data items, library
    attribution), kept between runs as a snapshot.
-3. **Annotations** (`annotations.cpp`, kept between runs by `source_cache.cpp`): every annotation in the source
-   trees.
-4. **Rebuilt** (`inputs.cpp`, `pe.cpp`): the image and its map. Each symbol gets its undecorated name, qualified
+2. **Annotations** (`annotations.cpp`): every annotation in the source trees.
+3. **Rebuilt** (`inputs.cpp`, `pe.cpp`): the image and its map. Each symbol gets its undecorated name, qualified
    name and signature (`names.cpp`, `undname.cpp`, kept between runs by `name_cache.cpp`).
-5. **Pairing** (`pairing.cpp`): which rebuilt symbol each annotation names, and what every other rebuilt address
+4. **Pairing** (`pairing.cpp`): which rebuilt symbol each annotation names, and what every other rebuilt address
    stands for in the original (by name, as a literal, by containing symbol). Local statics are paired here, by
    votes from the code that references them.
-6. **Comparison** (`compare.cpp`, `compare_refs.cpp`, `compare_eh.cpp`, decoding in `x64.cpp` and
-   `code_store.cpp`): each annotated function against its original. This covers the instruction bytes with
-   address fields set aside, then what each address field refers to, then unwind and EH data. Where it has to
+5. **Comparison** (`compare.cpp`, `compare_refs.cpp`, `compare_eh.cpp`, decoding in `x64.cpp`): each annotated
+   function against its original. This covers the instruction bytes with address fields set aside, then what each address field refers to, then unwind and EH data. Where it has to
    guess (an unannotated function, vtable or table standing for an original one, a local static's place, a build
    hash in a name, a shared FuncInfo), the matching (`matching.cpp`) decides, for all functions at once: every
    annotated function and GLOBAL is explored first with each guess assumed, the guesses that hold together are
    kept by fixed rules, and then each function is judged against them. The results do not depend on the order
    the functions are compared in.
-7. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the symbolised
-   instruction diff (`report.cpp`, kept between runs by `diff_store.cpp`), its stdout line and its report entry.
-8. **Summary and gate** (`verify.cpp`): coverage, the regression gate against the matched list, and the replay
-   record.
+6. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the symbolised
+   instruction diff (`report.cpp`), its stdout line and its report entry.
+7. **Summary and gate** (`verify.cpp`): coverage and the regression gate against the matched list.
 
 The comparison asks the pairing what it needs through `ComparerContext` (`compare.hpp`), never through the
 pairing's tables directly. The tests answer the same questions with small fakes.
 
 ## Performance
 
-On a 12.6 MB binary with 6,400 annotated functions, a run takes about 0.20 seconds and 81 MB on one core with
-the cache directory warm (about 0.30 seconds and 89 MB when only the snapshot and the name cache are), and a
-replay of unchanged inputs about 10 ms.
+A run is single-threaded. With the cache directory warm it maps the original's snapshot, reads the sources and
+the map, and decodes and compares every annotated function; most of its time is the comparison and the DIFFs'
+instruction diffs. A run without the name cache runs undname for every rebuilt name and takes several times as
+long.
 
 ## License
 

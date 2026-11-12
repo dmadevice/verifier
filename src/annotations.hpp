@@ -1,6 +1,5 @@
 // Source annotations: `// FUNCTION: <module> 0x<va>` and friends, read from the source trees.
 #pragma once
-#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -41,22 +40,12 @@ struct Ignored {
 
 std::optional<std::string> sig_flag(const AnnotationFlags& flags);  // the parameter list, if any
 
-// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name), with their
-// sizes and modification times (on Windows from the directory listing, without opening each file)
-struct ListedFile {
-  std::string path;
-  u64 size = 0;
-  i64 time = 0;  // the file clock's ticks
-};
-std::vector<ListedFile> list_files(const std::string& root);
+// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name)
+std::vector<std::string> list_files(const std::string& root);
 
-class SourceCache;  // source_cache.hpp: each file's annotations kept between runs
-// The annotations in the files under roots. `seen`, when given, gets every file as list_files gives it and its
-// contents, in that order, the files that cannot hold an annotation included.
-std::vector<Annotation> parse_annotations(
-    const std::vector<std::string>& roots, const std::string& module, std::vector<Ignored>* ignored,
-    const std::function<void(const ListedFile&, std::string_view)>& seen = {}, SourceCache* cache = nullptr,
-    const std::function<void(const ListedFile&, const std::string&)>& hashed = {});
+// The annotations in the source files under roots, in list_files order
+std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
+                                          std::vector<Ignored>* ignored);
 // exits (message on stderr, code 1) when two annotations claim one address without both saying FOLDED
 void check_duplicates(const std::vector<Annotation>& anns);
 

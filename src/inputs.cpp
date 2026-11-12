@@ -124,8 +124,7 @@ std::span<const std::string_view> Symbols::names(u64 va) const {
 
 Original::Original(const Config& p, const std::function<std::string(const std::string&)>& hash_file) : config_(&p) {
   if (!file_exists(p.original)) {
-    std::fprintf(stderr, "verifier: no original binary %s\n", p.original.c_str());
-    std::exit(2);
+    throw RunError(2, "verifier: no original binary " + p.original + "\n");
   }
   digest = p.original_sha256;
   // the image laid out and the tables from the text exports, which rarely change: a snapshot in the cache, mapped. A
@@ -135,8 +134,7 @@ Original::Original(const Config& p, const std::function<std::string(const std::s
   std::string snapshot = key.empty() ? std::string() : p.cache_file("original-snapshot.bin");
   if (!snapshot.empty() && load_snapshot(snapshot, key)) return;
   if (!digest.empty() && hash_file(p.original) != digest) {
-    std::fprintf(stderr, "original image hash mismatch: %s is not %s\n", p.original.c_str(), digest.c_str());
-    std::exit(1);
+    throw RunError(1, "original image hash mismatch: " + p.original + " is not " + digest + "\n");
   }
   img = Image::load(p.original);
   load_exports();
@@ -437,16 +435,12 @@ bool Original::in_padding(u64 va) const {
 
 // -- Rebuilt -------------------------------------------------------------------------------------------------
 
-Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc,
-                 const std::function<void(const std::string&, std::string_view)>& read)
-    : names_(&nc) {
-  img = Image::load(path,
-                    read ? [&](std::string_view data) { read(path, data); } : std::function<void(std::string_view)>());
+Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache& nc) : names_(&nc) {
+  img = Image::load(path);
   std::vector<std::pair<u64, std::string_view>> syms;  // (address, decorated name) in map order
   std::vector<NameIds> infos;                          // infos[i]: syms[i]'s
   {
     MappedFile map_file(map_path);
-    if (read) read(map_path, map_file.view());
     syms = parse_map(map_file.view());
     std::vector<std::string_view> decs;
     decs.reserve(syms.size());

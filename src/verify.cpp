@@ -10,10 +10,7 @@
 #include <set>
 #include <stdexcept>
 
-#include "content_hash.hpp"
-#include "replay.hpp"
 #include "sha256.hpp"
-#include "source_cache.hpp"
 #include "timing.hpp"
 
 namespace verifier {
@@ -189,111 +186,6 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
 
 namespace {
 
-// A run's arguments, configuration and phase timer, and its replay record's bookkeeping: the files it hashes (each
-// once), and the record's command, stamps and key, worked out only when the record needs them
-class RunState {
- public:
-  RunState(int argc, char** argv)
-      : a(parse_args(argc, argv)),
-        p(Config::load(a.config)),
-        args_(argv + 1, argv + argc),
-        exe_(self_exe()),
-        start_(two_seconds_ago()) {
-    // every run but --update (which writes the regression list and the name cache) and --show (a look at one function)
-    // keeps a record; its key holds the arguments, so a record is only replayed for the same command
-    if (!(a.update || a.show)) last_ = path_join(dirname(abspath(a.rebuilt)), LAST_RUN);
-  }
-  Args a;
-  Config p;
-  Phases ph;
-  bool keeps_record() const { return !last_.empty(); }
-  i64 start() const { return start_; }
-
-  // content hashes, each file's once ("" for an absent file); the verifier's own (the replay key, and the key of the
-  // cache files only this build can read), and where those files go (nowhere without a cache directory or when this
-  // program's path is unknown)
-  const std::string& hash_if_present(const std::string& f) {
-    auto it = hashes_.find(f);
-    if (it == hashes_.end()) it = hashes_.emplace(f, content_hash_file_if_present(f)).first;
-    return it->second;
-  }
-  std::string hash(const std::string& f) {
-    std::string h = hash_if_present(f);
-    if (h.empty()) throw std::runtime_error("cannot read " + f);
-    return h;
-  }
-  std::string self_hash() { return exe_.empty() ? std::string() : hash(exe_); }
-  std::string build_cache(const char* name) const { return exe_.empty() ? std::string() : p.cache_file(name); }
-
-  // the last run's output and exit status when its record replays: the same command and inputs (by the stamps, else by
-  // the image's hash and the key), and its report still the --json file
-  std::optional<int> replay() {
-    if (last_.empty()) return std::nullopt;
-    command_ = command_key(args_, p);
-    image_stamp_ = file_stamp(a.rebuilt);
-    Last rec;
-    auto walk_key = [&] { return key_ = key_of(source_files(a)); };
-    if (!load_last(
-            last_, command_, image_stamp_, [&] { return stamps_now(); }, [&] { return hash_if_present(a.rebuilt); },
-            walk_key, rec) ||
-        !(a.json ? !rec.report_hash.empty() && content_hash_file_if_present(*a.json) == rec.report_hash
-                 : rec.report_hash.empty()))
-      return std::nullopt;
-    std::fputs("verifier inputs unchanged since the last check: its results follow\n", stdout);
-    std::fwrite(rec.out.data(), 1, rec.out.size(), stdout);
-    std::fflush(stdout);
-    // the same contents under new stamps (a file rewritten as it was): the record takes them, for the next run
-    if (!rec.by_stamps && !stamps_now().empty())
-      save_last(last_, command_, image_stamp_, stamps_, hash_if_present(a.rebuilt), key_, rec.out, rec.report_hash,
-                rec.rc);
-    return rec.rc;
-  }
-
-  // an input's bytes as the run reads them: its hash for the record's key, worked out while they are at hand
-  std::function<void(const std::string&, std::string_view)> read() {
-    if (last_.empty() || !key_.empty()) return nullptr;
-    return [this](const std::string& f, std::string_view data) { hashes_.try_emplace(f, content_hash(data)); };
-  }
-
-  // each source file as the annotations are read: listed for the record's stamps, and its hash for its key
-  std::function<void(const ListedFile&, const std::string&)> hashed() {
-    if (last_.empty()) return nullptr;
-    return [this](const ListedFile& f, const std::string& h) {
-      listing_.push_back(f);
-      if (key_.empty()) hashes_.emplace(f.path, h);
-    };
-  }
-
-  // the record of this run (its stamps from the sources as they were read, against the run's start)
-  void save_record(const Out& out, const std::string& report, int rc) {
-    if (last_.empty()) return;
-    if (key_.empty()) {
-      std::vector<std::string> sources;
-      for (auto& f : listing_) sources.push_back(f.path);
-      key_ = key_of(sources);
-    }
-    save_last(last_, command_, image_stamp_, stamp_key(a, p, exe_, listing_, start_), hash_if_present(a.rebuilt), key_,
-              out.text(), a.json ? content_hash(report) : std::string(), rc);
-  }
-
- private:
-  std::vector<std::string> args_;
-  std::string exe_, last_;
-  i64 start_;
-  std::unordered_map<std::string, std::string> hashes_;
-  std::string command_, image_stamp_, stamps_, key_;
-  bool stamped_ = false;
-  std::vector<ListedFile> listing_;
-  std::string key_of(const std::vector<std::string>& sources) {
-    return run_key(a, p, self_hash(), sources, [this](const std::string& f) { return hash_if_present(f); });
-  }
-  const std::string& stamps_now() {
-    if (!stamped_) stamps_ = stamp_key(a, p, exe_);
-    stamped_ = true;
-    return stamps_;
-  }
-};
-
 // a file's SHA-256 (the original's configured hash, the name cache's key); throws when it cannot be read
 std::string sha256_of(const std::string& f) {
   std::string h = sha256_file_if_present(f);
@@ -332,48 +224,36 @@ struct Evaluated {
   std::string report;           // "{ "results": [...]" when there is a report; the totals are added after
 };
 Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb, Pairing& pairing,
-                       Comparer& cmp, DiffStore& diffs, const RunState& s, Out& out) {
+                       Comparer& cmp, const Args& a, const Config& p, Out& out) {
   std::optional<u64> show;
-  if (s.a.show) show = parse_hex(*s.a.show);
+  if (a.show) show = parse_hex(*a.show);
   std::vector<const Annotation*> order;
   for (auto& ann : anns)
     if (is_paired(ann.kind)) order.push_back(&ann);
   std::stable_sort(order.begin(), order.end(), [](auto* x, auto* y) { return x->va < y->va; });
   Evaluated ev;
   ev.results.reserve(order.size());
-  if (s.a.json) {
+  if (a.json) {
     // room for the report at once (megabytes, else grown by doubling and copied each time): the last run's report is
     // about its size
     std::error_code ec;
-    u64 last = std::filesystem::file_size(*s.a.json, ec);
+    u64 last = std::filesystem::file_size(*a.json, ec);
     if (!ec) ev.report.reserve(last + last / 8);
     ev.report = "{\n  \"results\": ";
   }
   for (auto* ann : order) {
-    Result r = evaluate(*ann, orig, reb, pairing, cmp, s.p.root, show && *show == ann->va, out, true, &diffs);
-    ev.lines += result_line(r, s.p.module);
+    Result r = evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out, true);
+    ev.lines += result_line(r, p.module);
     ev.lines += '\n';
-    if (s.a.json) {
+    if (a.json) {
       ev.report += ev.results.empty() ? "[\n    " : ",\n    ";
       write_result(ev.report, r, 2);
     }
     ev.results.push_back({r.va, ann->kind, r.status, r.category, r.name});
     if (r.status == Status::LibCode) ev.libcode.push_back(std::move(r));
   }
-  if (s.a.json) ev.report += ev.results.empty() ? "[]" : "\n  ]";
+  if (a.json) ev.report += ev.results.empty() ? "[]" : "\n  ]";
   return ev;
-}
-
-// VERIFIER_TIMING: how much was decoded, and what the cache directory supplied
-void print_cache_stats(const CodeCache& orig_cache, const CodeCache& rebuilt_cache, const CodeStore& orig_store,
-                       const DiffStore& diffs) {
-  if (!std::getenv("VERIFIER_TIMING")) return;
-  auto o = orig_cache.stats(), r = rebuilt_cache.stats();
-  std::fprintf(stderr, "decoded: orig %zu functions %zu insns, rebuilt %zu functions %zu insns; sizeof(Insn) %zu\n",
-               o.functions, o.insns, r.functions, r.insns, sizeof(Insn));
-  std::fprintf(stderr, "original functions from the code store: %zu (decoded %zu)\n", orig_store.stats().hits,
-               orig_store.stats().misses);
-  std::fprintf(stderr, "DIFF reports from the diff store: %zu (made %zu)\n", diffs.stats().hits, diffs.stats().misses);
 }
 
 // stdout after the results' lines: GLOBALs whose bytes differ, and annotations that name nothing
@@ -404,90 +284,65 @@ void finish_report(std::string& report, const Totals& totals, const std::string&
 }  // namespace
 
 int run(int argc, char** argv) {
-  RunState s(argc, argv);
-  if (auto rc = s.replay()) return *rc;
-  if (s.keeps_record()) s.ph.mark("replay key");
-  const Args& a = s.a;
-  const Config& p = s.p;
+  Args a = parse_args(argc, argv);
+  Config p = Config::load(a.config);
+  Phases ph;
   Out out;
 
   Original orig(p, sha256_of);
-  s.ph.mark("original");
+  ph.mark("original");
 
-  // each source file's annotations kept between runs (with a cache directory): unchanged files are not read again
-  // (the cache is freed once the annotations are read)
   std::vector<Ignored> ignored;
-  std::vector<Annotation> anns;
-  {
-    SourceCache sources(s.build_cache("sources-cache.bin"), "verifier " + s.self_hash() + " module " + p.module,
-                        s.start());
-    anns = parse_annotations(a.src, p.module, &ignored, nullptr, &sources, s.hashed());
-    sources.save();
-    if (std::getenv("VERIFIER_TIMING"))
-      std::fprintf(stderr, "source files from the sources cache: %zu (read %zu)\n", sources.stats().hits,
-                   sources.stats().misses);
-  }
+  std::vector<Annotation> anns = parse_annotations(a.src, p.module, &ignored);
   check_duplicates(anns);
-  s.ph.mark("annotations");
+  ph.mark("annotations");
 
   // keyed by undname and by this verifier: the qualified names, signatures and owners kept with the undecorated
   // names are worked out by names.cpp, so another verifier build may give others
-  NameCache name_cache(p.names_cache(), "verifier names 2 " + sha256_of(p.undname) + " " + s.self_hash(), p.undname);
-  Rebuilt reb(a.rebuilt, a.map, name_cache, s.read());
-  s.ph.mark("rebuilt+names");
+  std::string exe = self_exe();
+  NameCache name_cache(p.names_cache(),
+                       "verifier names 2 " + sha256_of(p.undname) + " " + (exe.empty() ? std::string() : sha256_of(exe)),
+                       p.undname);
+  Rebuilt reb(a.rebuilt, a.map, name_cache);
+  ph.mark("rebuilt+names");
 
   pick_destructors(anns, orig, reb);
   Pairing pairing(orig, reb, anns);
-  // the original's decoded functions kept between runs: the original does not change, so they are all used again (the
-  // decoder, the verifier itself, is part of the key); DIFFs' categories and diffs, keyed by the verifier and the
-  // original's names (the snapshot's key: not kept when that is not known)
-  CodeStore orig_store(s.build_cache("code-original.bin"), orig.img, s.self_hash());
-  CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
-  DiffStore diff_store(orig.cache_key().empty() ? std::string() : s.build_cache("diff-cache.bin"),
-                       "verifier " + s.self_hash() + " names " + orig.cache_key());
-  s.ph.mark("pairing");
+  CodeCache orig_cache(&orig.img), rebuilt_cache(&reb.img);
+  ph.mark("pairing");
   Comparer& cmp = pairing.comparer(orig_cache, rebuilt_cache);
-  s.ph.mark("prebind votes");
+  ph.mark("prebind votes");
   auto globals = global_roots(
       anns, [&](const std::string& n) { return reb.lookup(n).vas; }, [&](u64 rva) { return pairing.orig_of(rva); },
       orig.img, reb.img);
   explore_all(anns, orig, reb, pairing, cmp, globals);
-  s.ph.mark("explore+solve");
+  ph.mark("explore+solve");
 
-  Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, diff_store, s, out);
-  s.ph.mark("evaluate");
+  Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, a, p, out);
+  ph.mark("evaluate");
   if (std::getenv("VERIFIER_TIMING")) {
     auto st = cmp.m.stats();
     std::fprintf(stderr, "matching: %zu nodes, %zu guesses (%zu hold), %zu roots compared again\n", st.nodes,
                  st.candidates, st.accepted, st.rejudged);
   }
-  print_cache_stats(orig_cache, rebuilt_cache, orig_store, diff_store);
-  orig_store.save();
-  diff_store.save();
-  s.ph.mark("code and diff stores");
 
   out.write(ev.lines);
   std::string().swap(ev.lines);
   print_warnings(globals, ignored, cmp, p.root, out);
   Totals totals = summarize(ev.results, ev.libcode, orig, out, p.module);
-  s.ph.mark("globals+summary");
+  ph.mark("globals+summary");
 
   // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run
   // undname for them again)
   if (a.update || name_cache.has_new()) name_cache.save();
   if (a.json) {
     finish_report(ev.report, totals, *a.json);
-    s.ph.mark("json");
+    ph.mark("json");
   }
   int rc = totals.libcode.empty() ? 0 : 1;
   if (a.matched && regression_gate(*a.matched, totals.matched, ev.results, a.update, out)) rc = 1;
   rc = (a.check || a.update) ? rc : 0;
-  std::fflush(stdout);
-  s.save_record(out, ev.report, rc);
-  s.ph.mark("replay record");
-  // everything is written: leave without freeing the run's structures, which takes a tenth of a second for nothing
-  std::fflush(nullptr);
-  std::_Exit(rc);
+  return rc;
 }
 
 }  // namespace verifier

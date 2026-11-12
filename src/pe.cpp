@@ -161,10 +161,9 @@ Plan plan_layout(std::string_view data, const Headers& h) {
 
 }  // namespace
 
-Image Image::load(const std::string& path, const std::function<void(std::string_view)>& read) {
+Image Image::load(const std::string& path) {
   MappedFile file(path);
   std::string_view data = file.view();
-  if (read) read(data);
   Headers h = read_headers(data, path);
   Plan plan = plan_layout(data, h);
   auto mem = std::make_shared<ZeroBuffer>(plan.cap);

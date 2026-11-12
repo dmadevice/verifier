@@ -654,6 +654,12 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   trim_padding();
 }
 
+std::shared_ptr<const Code> CodeCache::code(u64 start, u64 end) {
+  auto it = live_.find({start, end});
+  if (it != live_.end()) return it->second;
+  return live_.emplace(std::make_pair(start, end), std::make_shared<const Code>(*img_, start, end)).first->second;
+}
+
 bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::span<const Field> fb) {
   if (a.size != b.size || fa.size() != fb.size()) return false;
   for (size_t z = 0; z < fa.size(); ++z)

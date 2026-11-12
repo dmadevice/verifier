@@ -12,8 +12,7 @@ namespace verifier {
 namespace {
 
 [[noreturn]] void fail(const std::string& why) {
-  std::fprintf(stderr, "verifier: %s\n", why.c_str());
-  std::exit(2);
+  throw RunError(2, "verifier: " + why + "\n");
 }
 
 }  // namespace

@@ -37,20 +37,6 @@ Findings sha256_paths() {
   return bad;
 }
 
-Findings content_hashes() {
-  Findings bad;
-  // XXH64's published values (the 39-byte input runs through the 32-byte stripes)
-  const std::pair<const char*, u64> known[] = {{"", 0xEF46DB3751D8E999ull},
-                                               {"a", 0xD24EC4F1A98C6E5Bull},
-                                               {"abc", 0x44BC2CF5AD770999ull},
-                                               {"Nobody inspects the spammish repetition", 0xFBCEA83C8A378BF1ull}};
-  for (auto& [text, h] : known)
-    if (xxh64(text, 0) != h) bad.push_back({"content hash", std::string("xxh64 of \"") + text + "\""});
-  if (content_hash("abc").size() != 32 || content_hash("abc") == content_hash("abd"))
-    bad.push_back({"content hash", "abc"});
-  return bad;
-}
-
 // a file's contents read (below 1 MB) or mapped, each the bytes written; absent files and directories are absent
 Findings file_contents() {
   namespace fs = std::filesystem;
@@ -193,7 +179,6 @@ Findings line_splitting() {
 void add_util_cases(Cases& cases) {
   cases.insert(cases.end(), {
       {"unit: SHA-256 paths agree", nullptr, sha256_paths},
-      {"unit: content hash", nullptr, content_hashes},
       {"unit: file contents", nullptr, file_contents},
       {"unit: line splitting", nullptr, line_splitting},
       {"unit: name table", nullptr, name_table},

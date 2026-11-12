@@ -6,21 +6,16 @@
 #include <string_view>
 #include <vector>
 
-#include "diff_store.hpp"
 #include "pairing.hpp"
 #include "report.hpp"
 
 namespace verifier {
 
-// stdout, also kept for the replay
+// stdout
 class Out {
  public:
   void print(const std::string& line);  // line + "\n"
   void write(const std::string& s);
-  const std::string& text() const { return text_; }
-
- private:
-  std::string text_;
 };
 
 // What a compared annotation came to
@@ -65,7 +60,7 @@ std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig,
                                     const Pairing& pairing);
 // an annotation's result: its functions judged (after the comparer has explored every root and solved)
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                const std::string& root, bool show, Out& out, bool want_diff = true, DiffStore* diffs = nullptr);
+                const std::string& root, bool show, Out& out, bool want_diff = true);
 std::string result_line(const Result& r, const std::string& module);
 
 // a source path as the report gives it: relative to the project root
