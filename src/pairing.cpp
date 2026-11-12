@@ -16,6 +16,14 @@ std::string paired_key(const Annotation& a) {
   return a.name + '\0' + (sig ? "1" + *sig : "0");
 }
 
+// paired_key(a) == key, without making it
+bool is_key_of(std::string_view key, const Annotation& a) {
+  const std::string& n = a.name;
+  if (key.size() < n.size() + 2 || key.compare(0, n.size(), n) != 0 || key[n.size()] != '\0') return false;
+  std::string_view rest = key.substr(n.size() + 1);
+  return a.flags.sig.empty() ? rest == "0" : rest[0] == '1' && rest.substr(1) == a.flags.sig;
+}
+
 // an original vftable name of a class with several bases, `??_7<class>@@6B@` or `??_7<class>@@6B@_<n>`: the part up to
 // `@@6B`, or "" for any other name
 std::string orig_mi_vftable(std::string_view n) {
@@ -56,7 +64,10 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
     }
     if (is_paired(a.kind)) {
       std::string pk = paired_key(a);
-      if (!paired_.count(pk)) paired_.emplace(std::move(pk), Paired{std::move(lk), reb.overloads_of(a.name)});
+      auto it = paired_.find(pk);
+      if (it == paired_.end())
+        it = paired_.emplace(std::move(pk), Paired{std::move(lk), reb.overloads_of(a.name)}).first;
+      paired_by_ann_.insert(u64(reinterpret_cast<uintptr_t>(&a)), &*it);
     }
   }
   auto distinct = [](auto& v) {
@@ -85,6 +96,9 @@ std::optional<u64> Pairing::orig_of(u64 rva) const {
 }
 
 const Pairing::Paired* Pairing::paired(const Annotation& a) const {
+  // the annotation pairing was made with (checked: another one may be where it was)
+  if (auto* p = paired_by_ann_.find(u64(reinterpret_cast<uintptr_t>(&a))); p && is_key_of((*p)->first, a))
+    return &(*p)->second;
   auto it = paired_.find(paired_key(a));
   return it == paired_.end() ? nullptr : &it->second;
 }
@@ -274,11 +288,28 @@ std::vector<u64> Pairing::orig_refs(u64 f) {
   return refs_of_.emplace(f, std::vector<u64>(s.begin(), s.end())).first->second;
 }
 
-Key Pairing::resolve_symbol(u64 t) const {
+Key Pairing::resolve_symbol(u64 t) const { return resolved(t).symbol; }
+
+const Pairing::Resolved& Pairing::resolved(u64 t) const {
   // a function of the address alone once the pairing is made (its tables are not changed after): each address is
   // worked out once for the run (a few thousand addresses take most of the calls: shared callees, RTTI)
-  if (auto it = resolved_.find(t); it != resolved_.end()) return it->second;
-  return resolved_.emplace(t, resolve_symbol_uncached(t)).first->second;
+  if (const Resolved* r = resolved_.find(t)) return *r;
+  Resolved r;
+  r.symbol = resolve_symbol_uncached(t);
+  r.rest = r.symbol;
+  if (r.symbol.kind == Key::UNRESOLVED) {
+    r.local = reb.local_base(t);
+    if (!reb.symbols.contains(t)) {
+      if (auto base = reb.containing(t)) {
+        Key b = resolved(*base).symbol;  // a symbol's own entry: no further step
+        if (b.kind == Key::VA)
+          r.rest = annotated_between(b.va, b.va + t - *base)
+                       ? Key::named(Key::UNRESOLVED, std::string(reb.symbols.names(*base)[0]) + "+" + hex(t - *base))
+                       : Key::of_va(b.va + t - *base);
+      }
+    }
+  }
+  return resolved_.insert(t, std::move(r));
 }
 
 Key Pairing::resolve_symbol_uncached(u64 t) const {
@@ -303,24 +334,10 @@ Key Pairing::resolve_symbol_uncached(u64 t) const {
 }
 
 Key Pairing::resolve(u64 t) const {
-  Key r = resolve_symbol(t);
-  if (r.kind == Key::UNRESOLVED) {
-    auto at = reb.local_base(t);
-    if (at && matching_) {
-      if (auto b = matching_->local_of(at->first)) return Key::of_va(*b + at->second);
-    }
-  }
-  if (r.kind != Key::UNRESOLVED || reb.symbols.contains(t)) return r;
-  auto base = reb.containing(t);
-  if (base) {
-    Key b = resolve_symbol(*base);
-    if (b.kind == Key::VA) {
-      if (annotated_between(b.va, b.va + t - *base))
-        return Key::named(Key::UNRESOLVED, std::string(reb.symbols.names(*base)[0]) + "+" + hex(t - *base));
-      return Key::of_va(b.va + t - *base);
-    }
-  }
-  return r;
+  const Resolved& r = resolved(t);
+  if (r.local && matching_)
+    if (auto b = matching_->local_of(r.local->first)) return Key::of_va(*b + r.local->second);
+  return r.rest;
 }
 
 bool Pairing::annotated_between(u64 lo, u64 hi) const {
@@ -359,8 +376,7 @@ std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
   Key k = resolve_symbol(*base);
   // typeid(x) == y compares the name inside the descriptor, so its address is an offset into one
   bool literal = k.kind == Key::CONST || k.kind == Key::STR || k.kind == Key::TD;
-  if (literal && i64(t - *base) < literal_size(reb.img, *base, k))
-    return std::make_pair(*base, k);
+  if (literal && i64(t - *base) < literal_size(reb.img, *base, k)) return std::make_pair(*base, k);
   return std::nullopt;
 }
 

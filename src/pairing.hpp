@@ -81,14 +81,24 @@ class Pairing : public ComparerContext {
   // stands for
   SvViewMap<u64> vftables_;
   std::unordered_map<std::string, Paired> paired_;  // by paired_key()
+  // the same entries, by the address of the annotation each was made for
+  U64Map<const std::pair<const std::string, Paired>*> paired_by_ann_;
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   const Matching* matching_ = nullptr;
   std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
-  mutable std::unordered_map<u64, Key> resolved_;      // resolve_symbol's answers
+  // what resolve() answers for an address, worked out once (all but the local statics the matching places, which
+  // change as it goes)
+  struct Resolved {
+    Key symbol;                                // resolve_symbol's answer
+    std::optional<std::pair<u64, u64>> local;  // a local static's (base, offset), when the symbol is unresolved
+    Key rest;                                  // the answer when the matching places no local static there
+  };
+  const Resolved& resolved(u64 t) const;
+  mutable U64Map<Resolved> resolved_;
   mutable std::unordered_map<u64, std::vector<u64>> alternates_;  // alternates' answers
-  std::unordered_map<u64, std::vector<u64>> refs_of_;  // orig_refs' answers
+  std::unordered_map<u64, std::vector<u64>> refs_of_;             // orig_refs' answers
 };
 
 }  // namespace verifier

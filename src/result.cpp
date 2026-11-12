@@ -7,8 +7,6 @@
 
 namespace verifier {
 
-
-
 std::string_view status_name(Status s) {
   constexpr std::string_view names[] = {"MATCH", "DIFF", "MISSING", "AMBIGUOUS", "BADADDR", "LIBCODE"};
   return names[size_t(s)];
@@ -38,10 +36,17 @@ std::string head_chars(const std::string& s, size_t n) {
 // a source path as the report gives it (relative to the root); many annotations share a file, and many files a
 // directory (relpath's work is the directory's)
 const std::string& where_of(std::string_view path, const std::string& root) {
-  static std::unordered_map<std::string, std::string> memo, dirs;
-  std::string key = root + '\0' + std::string(path);
-  auto it = memo.find(key);
+  static std::string memo_root;  // the root the memos are for (a run has one)
+  static SvMap<std::string> memo;
+  static std::unordered_map<std::string, std::string> dirs;
+  if (root != memo_root) {
+    memo.clear();
+    dirs.clear();
+    memo_root = root;
+  }
+  auto it = memo.find(path);
   if (it != memo.end()) return it->second;
+  std::string key(path);
   std::string p(path), dir = dirname(p), base = basename(p), rel;
 #ifdef _WIN32
   bool by_dir = false;  // another drive than the root's: relpath gives the path as it is
@@ -49,9 +54,8 @@ const std::string& where_of(std::string_view path, const std::string& root) {
   bool by_dir = !base.empty() && base != "." && base != "..";
 #endif
   if (by_dir) {
-    std::string dkey = root + '\0' + dir;
-    auto d = dirs.find(dkey);
-    if (d == dirs.end()) d = dirs.emplace(std::move(dkey), relpath(dir.empty() ? "." : dir, root)).first;
+    auto d = dirs.find(dir);
+    if (d == dirs.end()) d = dirs.emplace(dir, relpath(dir.empty() ? "." : dir, root)).first;
     rel = d->second == "." ? base : path_join(d->second, base);
   } else {
     rel = relpath(p, root);
@@ -96,14 +100,16 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.kind = ann.kind;
   rec.src = where_of(ann.path, root) + ":" + std::to_string(ann.line);
   // pairing has looked the name up already (the same key: a compared annotation's name, its parameter list, code)
-  Lookup lk;
+  Lookup own;
+  const Lookup* lkp = &own;
   if (const Pairing::Paired* pd = pairing.paired(ann)) {
-    lk = pd->lookup;
+    lkp = &pd->lookup;
     rec.overloads = pd->overloads;
   } else {
-    lk = reb.lookup(ann.name, sig_flag(ann.flags), true);
+    own = reb.lookup(ann.name, sig_flag(ann.flags), true);
     rec.overloads = reb.overloads_of(ann.name);
   }
+  const Lookup& lk = *lkp;
   if (!orig.functions.contains(ova)) {
     rec.status = Status::BadAddr;
     return rec;

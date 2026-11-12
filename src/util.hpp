@@ -158,6 +158,47 @@ class NameTable {
   void reindex(size_t at_least);
 };
 
+// u64 -> V, flat: the values in the order inserted, and open addressing over their keys. A value found stays where it
+// is until the next insert.
+template <class V>
+class U64Map {
+ public:
+  const V* find(u64 k) const {
+    if (slots_.empty()) return nullptr;
+    for (size_t i = slot(k);; i = (i + 1) & (slots_.size() - 1)) {
+      if (!slots_[i].at) return nullptr;
+      if (slots_[i].key == k) return &vals_[slots_[i].at - 1];
+    }
+  }
+  const V& insert(u64 k, V v) {  // k not in the map
+    if (2 * (vals_.size() + 1) > slots_.size()) grow();
+    vals_.push_back(std::move(v));
+    place(k, u32(vals_.size()));
+    return vals_.back();
+  }
+  size_t size() const { return vals_.size(); }
+
+ private:
+  struct Slot {
+    u64 key = 0;
+    u32 at = 0;  // the value's index + 1 (0: empty)
+  };
+  std::vector<Slot> slots_;
+  std::vector<V> vals_;
+  size_t slot(u64 k) const { return size_t((k * 0x9E3779B97F4A7C15ull) >> 20) & (slots_.size() - 1); }
+  void place(u64 k, u32 at) {
+    size_t i = slot(k);
+    while (slots_[i].at) i = (i + 1) & (slots_.size() - 1);
+    slots_[i] = {k, at};
+  }
+  void grow() {
+    std::vector<Slot> old(std::max<size_t>(64, 2 * slots_.size()));
+    old.swap(slots_);
+    for (const Slot& s : old)
+      if (s.at) place(s.key, s.at);
+  }
+};
+
 inline u32 le32(const char* p) {
   u32 v;
   std::memcpy(&v, p, 4);

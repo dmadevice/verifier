@@ -135,7 +135,7 @@ DiffReport DiffStore::get(const Code& oc, const Code& rc, const DiffContext& cx,
     return e;
   };
   if (auto u = used_.find(k); u != used_.end())
-    if (auto e = kept(u->second.blob())) return *e;
+    if (auto e = kept(u->second.blob())) return std::move(*e);
   const Index* it = std::lower_bound(index_, index_ + nindex_, k, [](const Index& x, const std::pair<u64, u64>& y) {
     return std::make_pair(x.k0, x.k1) < y;
   });
@@ -144,7 +144,7 @@ DiffReport DiffStore::get(const Code& oc, const Code& rc, const DiffContext& cx,
     if (auto e = kept(b)) {
       ++stats_.hits;
       used_.emplace(k, Used{std::string(), b});
-      return *e;
+      return std::move(*e);
     }
   }
   ++stats_.misses;
