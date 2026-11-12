@@ -29,9 +29,10 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
 
 // The snapshot: its header (format and key), the string table (u64 length, then the text), then the fields as u64s,
 // a string as (offset, length) in the table, which holds each distinct string once; then the image's headers
-// (u64 length, then the bytes), where the laid-out image starts (page-aligned) and its size, and the image. Only the
+// (u64 length, then the bytes), where the file's data lies in the image (a count, then each part's start and end), where
+// the laid-out image starts (page-aligned) and its size, and the image. Only the
 // table and the image are used in place once read.
-constexpr std::string_view SNAPSHOT_MAGIC = "verifier-snapshot 5\n";
+constexpr std::string_view SNAPSHOT_MAGIC = "verifier-snapshot 6\n";
 
 struct StringTable {
   std::string text;
@@ -272,6 +273,11 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
   f.out += w.out;
   f.put(u64(img.headers.size()));
   f.out += img.headers;
+  f.put(u64(img.file_data.size()));
+  for (auto& [lo, hi] : img.file_data) {
+    f.put(lo);
+    f.put(hi);
+  }
   u64 at = (f.out.size() + 16 + 4095) / 4096 * 4096;
   f.put(at);
   f.put(u64(img.img.size()));
@@ -360,10 +366,19 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
     return false;  // not sorted and distinct
   if (s() != "end" || !r.ok() || bad) return false;
   std::string_view headers = r.take(u());
+  std::vector<std::pair<u64, u64>> file_data(count(16));
+  for (auto& [lo, hi] : file_data) {
+    lo = u();
+    hi = u();
+  }
   u64 at = u(), size = u();
   if (!r.ok() || at % 4096 || at < r.at() || at > data.size() || data.size() - at != size) return false;
+  for (size_t i = 0; i < file_data.size(); ++i)  // sorted, disjoint, in the image
+    if (file_data[i].first >= file_data[i].second || file_data[i].second > size ||
+        (i && file_data[i - 1].second > file_data[i].first))
+      return false;
   try {
-    o.img = Image::laid_out(headers, data.substr(at), o.snapshot_);
+    o.img = Image::laid_out(headers, data.substr(at), std::move(file_data), o.snapshot_);
   } catch (...) { return false; }
   o.digest = std::move(digest);
   o.config_ = config_;

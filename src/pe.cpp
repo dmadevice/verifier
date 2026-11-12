@@ -159,6 +159,32 @@ Plan plan_layout(std::string_view data, const Headers& h) {
   return Plan{std::move(steps), size, cap};
 }
 
+// where the plan leaves the file's bytes in the image (a later step overwrites an earlier one's part)
+std::vector<std::pair<u64, u64>> file_parts(const Plan& plan) {
+  std::vector<std::pair<u64, u64>> parts, next;
+  for (auto& st : plan.steps) {
+    u64 lo = st.at, hi = u64(st.at) + st.n;
+    next.clear();
+    for (auto& [a, b] : parts) {
+      if (a < lo) next.emplace_back(a, std::min(b, lo));
+      if (b > hi) next.emplace_back(std::max(a, hi), b);
+    }
+    if (!st.zero && lo < hi) next.emplace_back(lo, hi);
+    std::sort(next.begin(), next.end());
+    parts.swap(next);
+  }
+  std::vector<std::pair<u64, u64>> out;  // within the image, touching parts joined
+  for (auto [a, b] : parts) {
+    b = std::min<u64>(b, plan.size);
+    if (a >= b) continue;
+    if (!out.empty() && out.back().second >= a)
+      out.back().second = std::max(out.back().second, b);
+    else
+      out.emplace_back(a, b);
+  }
+  return out;
+}
+
 }  // namespace
 
 Image Image::load(const std::string& path) {
@@ -176,6 +202,7 @@ Image Image::load(const std::string& path) {
   Image im;
   im.base = h.base;
   im.img = std::string_view(mem->data(), plan.size);
+  im.file_data = file_parts(plan);
   im.mem_ = std::move(mem);
   im.headers = std::string(data.substr(0, std::min(h.header_end, data.size())));
   read_tables(im, data, h);
@@ -183,11 +210,13 @@ Image Image::load(const std::string& path) {
   return im;
 }
 
-Image Image::laid_out(std::string_view headers, std::string_view img, std::shared_ptr<const void> owner) {
+Image Image::laid_out(std::string_view headers, std::string_view img, std::vector<std::pair<u64, u64>> file_data,
+                      std::shared_ptr<const void> owner) {
   Headers h = read_headers(headers, "laid-out image");
   Image im;
   im.base = h.base;
   im.img = img;
+  im.file_data = std::move(file_data);
   im.mem_ = std::move(owner);
   im.headers = std::string(headers);
   read_tables(im, headers, h);
@@ -203,6 +232,7 @@ Image Image::from_parts(u64 base, std::string mem, std::vector<Section> sections
   auto buf = std::make_shared<ZeroBuffer>(mem.size());
   if (!mem.empty()) std::memcpy(buf->data(), mem.data(), mem.size());
   im.img = std::string_view(buf->data(), mem.size());
+  if (!mem.empty()) im.file_data = {{0, mem.size()}};
   im.mem_ = std::move(buf);
   im.sections = std::move(sections);
   for (auto& [b, e] : pdata) im.pdata.push_back({b, e.first, e.second});
@@ -245,6 +275,23 @@ std::string_view Image::bytes(u64 va, i64 n) const {
   u64 r = va - base;
   if (r >= img.size()) return {};
   return std::string_view(img).substr(size_t(r), size_t(n));
+}
+
+i64 Image::initialized_size(u64 va, i64 n) const {
+  if (va < base || n <= 0) return 0;
+  u64 r = va - base, e = r + u64(n);
+  // the last part starting before the end: no part after it reaches into the range
+  auto it = std::lower_bound(file_data.begin(), file_data.end(), e, [](auto& p, u64 x) { return p.first < x; });
+  if (it == file_data.begin()) return 0;
+  --it;
+  return it->second > r ? i64(std::min(it->second, e) - r) : 0;
+}
+
+Bytes Image::read(u64 va, i64 n) const {
+  std::string_view v = bytes(va, n);
+  Bytes out(v.substr(0, size_t(initialized_size(va, i64(v.size())))));
+  out.resize(v.size(), '\0');
+  return out;
 }
 
 namespace {

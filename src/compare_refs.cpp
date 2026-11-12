@@ -8,6 +8,11 @@ namespace verifier {
 
 namespace {
 
+// the n bytes at va up to the last that is not zero (those after the file's data are not read)
+std::string_view initialized(const Image& img, u64 va, i64 n) {
+  return rstrip_char(img.bytes(va, img.initialized_size(va, n)), '\0');
+}
+
 // zero buf[lo, hi) (the part inside the buffer)
 void mask(Bytes& buf, i64 lo, i64 hi) {
   lo = std::clamp<i64>(lo, 0, i64(buf.size()));
@@ -51,15 +56,16 @@ bool Comparer::bind_local(u64 o_t, u64 r_t) {
 // a folded read-only static's further original: its bytes are the first original's and the rebuilt static's
 bool Comparer::folded_extra(u64 base, u64 o_primary, u64 o_base) {
   if (O->writable(o_base) || R->writable(base)) return false;
-  i64 n = i64(rstrip_char(R->bytes(base, i64(ctx->span(base))), '\0').size());
+  i64 n = i64(initialized(*R, base, i64(ctx->span(base))).size());
   if (!n) n = 1;
-  return O->bytes(o_base, n) == O->bytes(o_primary, n) && O->bytes(o_primary, n) == R->bytes(base, n);
+  Bytes primary = O->read(o_primary, n);
+  return O->read(o_base, n) == primary && primary == R->bytes(base, n);
 }
 
 bool static_fits(const Image& O, const Image& R, u64 o_base, u64 base, u64 span) {
   if (!O.flags(o_base)) return true;
-  i64 n = i64(rstrip_char(R.bytes(base, i64(span)), '\0').size());
-  Bytes a(O.bytes(o_base, n)), b(R.bytes(base, n));
+  i64 n = i64(initialized(R, base, i64(span)).size());
+  Bytes a = O.read(o_base, n), b(R.bytes(base, n));
   size_t lo = R.reloc_lower_bound(base), hi = R.reloc_lower_bound(base + u64(n));
   for (size_t k = lo; k < hi; ++k) {
     u64 off = R.reloc_sorted[k] - base;
@@ -246,8 +252,7 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
 
 std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   u64 n = ctx->span(r_t);
-  Bytes all(R->bytes(r_t, i64(n)));
-  i64 want = i64(rstrip_char(all, '\0').size());
+  i64 want = i64(initialized(*R, r_t, i64(n)).size());
   size_t lo = R->reloc_lower_bound(r_t), hi = R->reloc_lower_bound(r_t + n);
   std::vector<i64> ptrs;
   for (size_t i = lo; i < hi; ++i) ptrs.push_back(i64(R->reloc_sorted[i] - r_t));
@@ -261,14 +266,17 @@ std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   std::vector<i64> kept;
   for (i64 off : ptrs)
     if (off < size) kept.push_back(off);
-  Bytes a(O->bytes(o_t, size)), b(R->bytes(r_t, size));
+  // past where either side's file data ends both are zeros: compared up to there
+  size_t on = O->bytes(o_t, size).size(), rn = R->bytes(r_t, size).size();
+  i64 m = std::max(O->initialized_size(o_t, i64(on)), R->initialized_size(r_t, i64(rn)));
+  Bytes a = O->read(o_t, std::min<i64>(i64(on), m)), b = R->read(r_t, std::min<i64>(i64(rn), m));
   for (i64 off : kept) {
     mask(a, off, off + 8);
     mask(b, off, off + 8);
   }
   std::optional<Problem> res;
   std::string what = (O->writable(o_t) || R->writable(r_t)) ? "initial data" : "read-only data";
-  if (a != b) res = Problem{Category::Data, what + " at " + hex(o_t) + " differs"};
+  if (on != rn || a != b) res = Problem{Category::Data, what + " at " + hex(o_t) + " differs"};
   if (!res) {
     // a pointer only in the original: its relocations in the range are more than the rebuilt pointers kept
     size_t o_lo = O->reloc_lower_bound(o_t), o_hi = O->reloc_lower_bound(o_t + u64(size));
@@ -302,9 +310,8 @@ bool Comparer::infer_data(u64 o_t, u64 r_t) {
   if (!ctx->symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t))
     return false;
   if (!O->flags(o_t)) return false;
-  auto rb = R->bytes(r_t, i64(ctx->span(r_t)));
   // all zeros: nothing to tell this object from any other zero-filled one
-  if (rb.find_first_not_of('\0') == std::string_view::npos) return false;
+  if (initialized(*R, r_t, i64(ctx->span(r_t))).empty()) return false;
   if (!m.assume(Kind::Data, o_t, r_t)) return false;
   if (m.mode() == Matching::Mode::Explore) rodata(o_t, r_t);
   return true;

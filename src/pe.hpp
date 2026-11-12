@@ -45,8 +45,9 @@ class Image {
  public:
   static Image load(const std::string& path);
   // an image already laid out at its virtual addresses (Image::img of a load), with the file's headers
-  // (Image::headers); `owner` keeps both alive
-  static Image laid_out(std::string_view headers, std::string_view img, std::shared_ptr<const void> owner);
+  // (Image::headers) and where the file's data lies (Image::file_data); `owner` keeps both alive
+  static Image laid_out(std::string_view headers, std::string_view img, std::vector<std::pair<u64, u64>> file_data,
+                        std::shared_ptr<const void> owner);
   static Image from_parts(u64 base, std::string mem, std::vector<Section> sections,
                           std::map<u64, std::pair<u64, u32>> pdata, std::vector<u64> relocs,
                           std::unordered_map<u64, Import> imports);
@@ -54,6 +55,9 @@ class Image {
   u64 base = 0;
   std::string_view img;  // the memory-mapped image (offset = VA - base)
   std::string headers;   // the file's headers, to the end of the section table
+  // where the file's bytes are laid out, as image offsets [lo, hi) (sorted, disjoint): the rest of the image is zeros
+  // (a section's virtual size past its raw data), which are not read where they can be known (initialized_size)
+  std::vector<std::pair<u64, u64>> file_data;
   std::vector<Section> sections;
   std::vector<PData> pdata;                         // by begin, one per begin (the first entry wins)
   std::vector<u64> reloc_sorted;                    // the 64-bit relocation sites, sorted, distinct
@@ -63,6 +67,8 @@ class Image {
   const PData* pdata_at(u64 begin) const;           // the entry beginning at `begin`, or nullptr
   std::vector<u64> pdata_in(u64 lo, u64 hi) const;  // the begins in [lo, hi)
   std::string_view bytes(u64 va, i64 n) const;      // short (or empty) past the end of the image
+  i64 initialized_size(u64 va, i64 n) const;        // [va, va + n) holds only zeros past this many bytes
+  Bytes read(u64 va, i64 n) const;                  // bytes(va, n), the zeros past the file's data not read
   u32 u32_at(u64 va) const;
   i32 i32_at(u64 va) const;
   u64 u64_at(u64 va) const;

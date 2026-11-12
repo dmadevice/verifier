@@ -171,9 +171,15 @@ Findings file_layout() {
   if (im.base != 0x180000000 || im.img.size() != 0x2200 || im.sections.size() != 2 ||
       im.bytes(0x180001000, 1) != file.substr(0x200, 1) || im.bytes(0x180000300, 1) != Bytes(1, '\0'))
     bad.push_back({"layout", "the image is not laid out at its virtual addresses"});
+  // the file's bytes in the headers and at each section's start; zeros between them, which are known without reading
+  std::vector<std::pair<u64, u64>> parts{{0, 0x200}, {0x1000, 0x1200}, {0x2000, 0x2200}};
+  if (im.file_data != parts || im.initialized_size(0x180001100, 0x800) != 0x100 ||
+      im.initialized_size(0x180001200, 0xe00) != 0 || im.initialized_size(0x180001f00, 0x200) != 0x200 ||
+      im.read(0x180001100, 0x200) != im.bytes(0x180001100, 0x200) || im.read(0x180002100, 0x400).size() != 0x100)
+    bad.push_back({"layout", "where the file's data lies"});
   auto buf = std::make_shared<Bytes>(im.img);
-  Image same = Image::laid_out(im.headers, *buf, buf);
-  if (same.img != im.img || same.sections.size() != 2 || same.base != im.base)
+  Image same = Image::laid_out(im.headers, *buf, im.file_data, buf);
+  if (same.img != im.img || same.sections.size() != 2 || same.base != im.base || same.file_data != im.file_data)
     bad.push_back({"layout", "a copy differs"});
   std::error_code ec;
   fs::remove_all(d, ec);
