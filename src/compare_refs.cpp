@@ -305,7 +305,8 @@ bool Comparer::infer_data(u64 o_t, u64 r_t) {
     return false;
   if (!O->flags(o_t)) return false;
   auto rb = R->bytes(r_t, i64(ctx->span(r_t)));
-  if (rb.find_first_not_of('\0') == std::string_view::npos) return false;  // zero-filled (strip(b"\0") is empty)
+  // all zeros: nothing to tell this object from any other zero-filled one
+  if (rb.find_first_not_of('\0') == std::string_view::npos) return false;
   return journal.speculate([&] {
     data_r.set(r_t, o_t);
     data_o.set(o_t, r_t);

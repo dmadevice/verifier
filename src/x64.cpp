@@ -834,26 +834,14 @@ std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base) {
   };
   // nothing loads __ImageBase: no register holds it anywhere (an empty vector says so for every instruction)
   if (std::none_of(insns.begin(), insns.end(), loads_base)) return {};
+  // each instruction's effect: the registers it writes (a call: the volatile ones too), and the one it loads
+  // __ImageBase into
   std::vector<u32> kill(n), gen(n);
-  bool any_gen = false;
   for (size_t k = 0; k < n; ++k) {
     const Insn& ins = insns[k];
-    u32 kl = ins.wmask;
-    if (ins.group(GRP_CALL)) kl |= VOLATILE;
-    u32 g = 0;
-    if (ins.type == FDI_LEA && ins.ops.size() == 2 && ins.ops[1].type == OP_MEM) {
-      const Operand& m = ins.ops[1];
-      if (m.base() == reg_rip() && !m.index && u64(i64(ins.address + ins.size) + m.disp()) == base) {
-        int x = gpr_index(ins.ops[0].reg);
-        if (x >= 0) g = 1u << x;
-      }
-    }
-    kill[k] = kl;
-    gen[k] = g;
-    any_gen |= g != 0;
+    kill[k] = ins.wmask | (ins.group(GRP_CALL) ? VOLATILE : 0);
+    if (int x = loads_base(ins) ? gpr_index(ins.ops[0].reg) : -1; x >= 0) gen[k] = 1u << x;
   }
-  // nothing loads __ImageBase: no register holds it anywhere (an empty vector says so for every instruction)
-  if (!any_gen) return {};
   auto index_of = [&](u64 a) -> long {  // instructions are in address order
     auto it = std::lower_bound(insns.begin(), insns.end(), a, [](const Insn& i, u64 x) { return i.address < x; });
     return it != insns.end() && it->address == a ? long(it - insns.begin()) : -1;
