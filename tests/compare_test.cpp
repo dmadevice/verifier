@@ -293,11 +293,9 @@ void add_compare_cases(Cases& cases) {
       {"table cycle, the other first", "data", [] { return table_cycle(false); }},
       {"malformed unwind chain ends", nullptr, malformed_unwind},
       {"table past 4 KB, the same", nullptr, [] { return long_table(true); }},
-      // not compared past the first 4 KB of the span (MAX_DATA_COMPARE): a gap
-      {"table past 4 KB, differs late (gap)", nullptr, [] { return long_table(false); }},
+      {"table past 4 KB, differs late", "data", [] { return long_table(false); }},
       {"image-relative table, the same", nullptr, [] { return image_relative_table(true); }},
-      // only the bytes of one access compared: a gap
-      {"image-relative table, a later entry differs (gap)", nullptr, [] { return image_relative_table(false); }},
+      {"image-relative table, a later entry differs", "data", [] { return image_relative_table(false); }},
   });
 }
 

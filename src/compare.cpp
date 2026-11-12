@@ -194,7 +194,9 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
                                            hex_signed(fb[z].value)});
         continue;
       }
-      auto p = ref(u64(fa[z].value), u64(fb[z].value), fa[z].access);
+      // an indexed read can be of any part of the object: compared as the whole object, its address taken
+      int access = fa[z].indexed || fb[z].indexed ? 0 : fa[z].access;
+      auto p = ref(u64(fa[z].value), u64(fb[z].value), access);
       if (p) probs.push_back({p->category, "@" + std::to_string(k) + ": " + p->detail});
     }
   }

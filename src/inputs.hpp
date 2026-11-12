@@ -142,7 +142,7 @@ class Rebuilt {
   virtual Lookup lookup(const std::string& key, const std::optional<std::string>& sig = std::nullopt,
                         bool code = false) const;
   virtual u64 extent(u64 va) const;  // a function's end: its .pdata chain, else the next symbol (padding trimmed)
-  virtual u64 span(u64 t) const;     // bytes to the next symbol, at most MAX_DATA_COMPARE
+  virtual u64 span(u64 t) const;     // bytes to the next symbol, or to the end of the section
   // (local static, offset into it) for an address inside a local static
   virtual std::optional<std::pair<u64, u64>> local_base(u64 t) const;
   std::vector<std::string> overloads_of(const std::string& key) const;

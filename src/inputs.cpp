@@ -604,16 +604,20 @@ u64 Rebuilt::extent(u64 va) const {
 
 u64 Rebuilt::span(u64 t) const {
   auto nxt = next_symbol(t);
-  u64 end = nxt ? *nxt : t + MAX_DATA_COMPARE;
+  // to the next symbol, within t's section (to its end when no symbol follows in it)
+  u64 sec_end = t + MAX_DATA_COMPARE;
+  for (auto& s : img.sections)
+    if (s.lo <= t && t < s.hi) sec_end = s.hi;
+  u64 end = nxt && *nxt < sec_end ? *nxt : sec_end;
   // a vftable's RTTI locator slot, the 8 bytes before its symbol, belongs to the vftable, not to the object before
-  if (nxt && *nxt - 8 > t) {
+  if (nxt && *nxt == end && *nxt - 8 > t) {
     for (std::string_view n : symbols.names(*nxt))
       if (n.starts_with("??_7")) {
         end = *nxt - 8;
         break;
       }
   }
-  return std::min<u64>(end - t, MAX_DATA_COMPARE);
+  return end - t;
 }
 
 std::optional<std::pair<u64, u64>> Rebuilt::local_base(u64 t) const {

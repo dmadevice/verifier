@@ -111,7 +111,10 @@ inline bool is_address(FieldKind k) { return k == F_RIP || k == F_IMG || k == F_
 #pragma pack(push, 4)
 struct Field {
   i64 value;             // target VA (function-relative table offset for F_TBL)
-  u16 access;            // the memory operand's size (0: not one)
+  u16 access : 15;       // the memory operand's size (0: not one)
+  // F_IMG: a register other than __ImageBase's adds to the address (an index into the object): what is read is
+  // anywhere in the object, not the `access` bytes at its start
+  u16 indexed : 1 = 0;
   u8 off : 4, size : 4;  // where in the instruction (at most 15 bytes long), and how many bytes (at most 8)
   FieldKind kind;
   bool operator<(const Field& o) const;

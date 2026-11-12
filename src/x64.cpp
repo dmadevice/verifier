@@ -780,8 +780,8 @@ std::vector<OutsideTable> Code::outside_tables() const {
 
 void Code::add_fields(const Insn& ins, u32 image_base) {
   size_t first = field_list.size();
-  auto add = [&](int off, int size, FieldKind kind, i64 value, int access) {
-    field_list.push_back(Field{value, u16(access), u8(off), u8(size), kind});
+  auto add = [&](int off, int size, FieldKind kind, i64 value, int access, bool indexed = false) {
+    field_list.push_back(Field{value, u16(access), u16(indexed), u8(off), u8(size), kind});
   };
   i64 frva = i64(start - img->base);
   if (ins.branches()) {
@@ -789,14 +789,18 @@ void Code::add_fields(const Insn& ins, u32 image_base) {
       if (op.type == OP_IMM && !(i64(start) <= op.imm() && op.imm() < i64(end)) && ins.imm_size)
         add(ins.imm_offset, ins.imm_size, F_EXT, op.imm(), 0);
   }
-  // [__ImageBase register + disp] (or as the index) addressing a part of the image
+  // [__ImageBase register + disp] (or as the index) addressing a part of the image; `indexed` when another register
+  // adds to the address
+  bool indexed = false;
   auto image_relative = [&](const Operand& op) {
     if (!image_base) return false;
     u32 regs = 0;
+    indexed = false;
     for (u16 r : {op.base(), op.index})
       if (r) {
         int g = gpr_index(r);
         if (g >= 0) regs |= 1u << g;
+        if (g < 0 || !(image_base >> g & 1)) indexed = true;
       }
     return (image_base & regs) && op.disp() > 0 && img->flags(img->base + u64(op.disp())).has_value();
   };
@@ -808,7 +812,7 @@ void Code::add_fields(const Insn& ins, u32 image_base) {
     } else if (op.index && tables.count(op.disp() - frva)) {
       add(ins.disp_offset, ins.disp_size, F_TBL, op.disp() - frva, 0);
     } else if (image_relative(op)) {
-      add(ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.disp(), size);
+      add(ins.disp_offset, ins.disp_size, F_IMG, i64(img->base) + op.disp(), size, indexed);
     }
   }
   if (relocated) {
