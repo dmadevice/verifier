@@ -4,6 +4,8 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "util.hpp"
@@ -38,11 +40,55 @@ struct Ignored {
 
 std::optional<std::string> sig_flag(const AnnotationFlags& flags);  // the parameter list, if any
 
-// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name)
-std::vector<std::string> list_files(const std::string& root);
+// The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name), with their
+// sizes and modification times (on Windows from the directory listing, without opening each file)
+struct ListedFile {
+  std::string path;
+  u64 size = 0;
+  i64 time = 0;  // the file clock's ticks
+};
+std::vector<ListedFile> list_files(const std::string& root);
 
-// The annotations in the source files under roots, in list_files order
+// Each source file's annotations kept in the cache directory between runs, by path: a file whose size and modification
+// time are as they were, and that is older than `recent` (a change in the same tick of the file clock could leave both
+// as they were), is not read again. Keyed by the module and the parser (the verifier build).
+class SourceCache {
+ public:
+  struct Entry {
+    struct Ann {
+      Kind kind;
+      u64 va;
+      std::string name;
+      AnnotationFlags flags;
+      int line;
+    };
+    struct Ign {
+      int line;
+      std::string text;
+    };
+    std::vector<Ann> anns;
+    std::vector<Ign> ignored;
+  };
+  SourceCache(std::string path, std::string key, i64 recent);  // path empty: nothing kept
+  const Entry* find(const ListedFile& f) const;                // the file's entry when it can be used
+  void keep(const ListedFile& f, Entry e);                     // this run's entry for the file
+  void save();                                                 // when an entry changed or the files listed differ
+
+ private:
+  std::string path_, key_;
+  i64 recent_;
+  struct Stored {
+    u64 size;
+    i64 time;
+    Entry e;
+  };
+  std::unordered_map<std::string, Stored> old_;
+  std::vector<std::pair<ListedFile, Entry>> new_;
+  bool changed_ = false;
+};
+
+// The annotations in the source files under roots, in list_files order (with a cache: unchanged files are not read)
 std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots, const std::string& module,
-                                          std::vector<Ignored>* ignored);
+                                          std::vector<Ignored>* ignored, SourceCache* cache = nullptr);
 
 }  // namespace verifier

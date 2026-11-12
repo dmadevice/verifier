@@ -289,20 +289,29 @@ int run(int argc, char** argv) {
   Phases ph;
   Out out;
 
+  i64 start = two_seconds_ago();  // files changed after this are too recent to trust their stamps
+  // this verifier build: what the caches it alone can read are keyed by ("": unknown, nothing of it kept)
+  std::string exe = self_exe();
+  std::string self = exe.empty() ? std::string() : sha256_of(exe);
+
   Original orig(p, sha256_of);
   ph.mark("original");
 
+  // each source file's annotations kept between runs: unchanged files are not read again
   std::vector<Ignored> ignored;
-  std::vector<Annotation> anns = parse_annotations(a.src, p.module, &ignored);
+  std::vector<Annotation> anns;
+  {
+    SourceCache sources(self.empty() ? std::string() : p.cache_file("sources-cache.bin"),
+                        "verifier " + self + " module " + p.module, start);
+    anns = parse_annotations(a.src, p.module, &ignored, &sources);
+    sources.save();
+  }
   check_duplicates(anns);
   ph.mark("annotations");
 
   // keyed by undname and by this verifier: the qualified names, signatures and owners kept with the undecorated
   // names are worked out by names.cpp, so another verifier build may give others
-  std::string exe = self_exe();
-  NameCache name_cache(
-      p.names_cache(),
-      "verifier names 2 " + sha256_of(p.undname) + " " + (exe.empty() ? std::string() : sha256_of(exe)), p.undname);
+  NameCache name_cache(p.names_cache(), "verifier names 2 " + sha256_of(p.undname) + " " + self, p.undname);
   Rebuilt reb(a.rebuilt, a.map, name_cache);
   ph.mark("rebuilt+names");
 

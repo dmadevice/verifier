@@ -18,6 +18,52 @@ namespace verifier::test {
 
 namespace {
 
+// the sources cache: a file whose size and time are as they were is not read again (here: rewritten with the same size
+// and time, its old annotations come back); another time reads it again; a file changed within two seconds is read
+// every time and not kept
+Findings sources_cache() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-sources-" + unique_suffix());
+  fs::create_directories(d / "src");
+  std::string file = (d / "src" / "a.cpp").string(), cache = (d / "sources.bin").string();
+  auto write = [&](const char* addr) {
+    std::ofstream(file, std::ios::binary) << "// FUNCTION: MOD 0x" << addr << "\nvoid Get() {}\n// FUNCTION: MOD 0x99\n";
+  };
+  auto hour_ago = fs::file_time_type::clock::now() - std::chrono::hours(1);
+  auto run = [&](i64 recent) {
+    SourceCache c(cache, "key", recent);
+    std::vector<Ignored> ign;
+    auto anns = parse_annotations({(d / "src").string()}, "MOD", &ign, &c);
+    c.save();
+    return std::make_pair(anns.size() == 1 ? anns[0].va : 0, ign.size());
+  };
+  Findings bad;
+  write("10");
+  fs::last_write_time(file, hour_ago);
+  if (run(two_seconds_ago()) != std::make_pair(u64(0x10), size_t(1))) bad.push_back({"sources", "first read"});
+  write("20");  // same size
+  fs::last_write_time(file, hour_ago);
+  if (run(two_seconds_ago()).first != 0x10) bad.push_back({"sources", "an unchanged stamp read again"});
+  fs::last_write_time(file, hour_ago + std::chrono::seconds(1));
+  if (run(two_seconds_ago()).first != 0x20) bad.push_back({"sources", "a new time not read again"});
+  // the run started before the file's time: read, and not kept for the next run
+  write("30");
+  fs::last_write_time(file, hour_ago);
+  i64 before = i64(hour_ago.time_since_epoch().count()) - 1;
+  if (run(before).first != 0x30) bad.push_back({"sources", "a recent file not read"});
+  write("40");
+  fs::last_write_time(file, hour_ago);
+  if (run(two_seconds_ago()).first != 0x40) bad.push_back({"sources", "a recent file kept"});
+  {
+    SourceCache other(cache, "another key", two_seconds_ago());
+    if (other.find(ListedFile{file, fs::file_size(file), i64(hour_ago.time_since_epoch().count())}))
+      bad.push_back({"sources", "another key's entries used"});
+  }
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 // the original's snapshot key: none while an input is younger than two seconds (the snapshot is neither used nor
 // written), and the configured hash part of it
 Findings snapshot_key() {
@@ -159,6 +205,7 @@ void add_cache_cases(Cases& cases) {
   cases.insert(cases.end(), {
                                 {"name cache file", nullptr, name_cache},
                                 {"snapshot key", nullptr, snapshot_key},
+                                {"sources cache", nullptr, sources_cache},
                             });
 }
 

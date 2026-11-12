@@ -30,6 +30,10 @@ class BinWriter {
     static_assert(std::is_trivially_copyable_v<T>);
     out.append(reinterpret_cast<const char*>(p), n * sizeof(T));
   }
+  void str(std::string_view s) {  // u32 length, then the bytes
+    put(u32(s.size()));
+    out += s;
+  }
   std::string out;
 };
 
@@ -44,6 +48,11 @@ class BinReader {
     if (ok_) std::memcpy(&v, b.data(), sizeof v);
     return ok_;
   }
+  bool str(std::string& s) {
+    u32 n = 0;
+    if (get(n)) s.assign(take(n));
+    return ok_;
+  }
   std::string_view take(size_t n) {  // the next n bytes, as a view of the file
     if (!ok_ || in_.size() - p_ < n) {
       ok_ = false;
@@ -54,6 +63,7 @@ class BinReader {
     return v;
   }
   bool ok() const { return ok_; }
+  bool done() const { return p_ == in_.size(); }
   size_t at() const { return p_; }                 // the position in the file
   size_t left() const { return in_.size() - p_; }  // the bytes after it
 
