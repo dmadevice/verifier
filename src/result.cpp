@@ -87,7 +87,7 @@ std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig,
 }
 
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                const std::string& root, bool show, Out& out, bool want_diff) {
+                const std::string& root, bool show, Out& out, bool want_diff, DiffStore* diffs) {
   u64 ova = ann.va;
   Result rec;
   rec.va = ova;
@@ -143,22 +143,38 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.status = probs.empty() ? Status::Match : Status::Diff;
   rec.unresolved.assign(unresolved.begin(), unresolved.end());
   for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].text());
-  Toks ot, rt;  // the instructions as tokens, when the category or the listing needs their operands
+  Toks ot, rt;  // the instructions as tokens, for the listing
+  if (show) {
+    ot = symbolise(oc, by_va(), false);
+    rt = symbolise(rc, resolve, true);
+    for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
+  }
   if (!probs.empty() || show) {
-    std::optional<Category> cat = classify_mnemonics(oc, rc);
-    if (!cat || show) {
-      ot = symbolise(oc, by_va(), false);
-      rt = symbolise(rc, resolve, true);
-      for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) const_by_value(ot[k], rt[k], orig.img);
-    }
-    if (!probs.empty()) rec.category = cat ? *cat : ot == rt ? probs[0].category : classify(ot, rt);
-    CodeDiff d = code_diff(oc, rc, {resolve, &cmp.m, cmp.names}, want_diff);
-    if (d.differs) {
-      if (d.first)
-        rec.first_diff = Result::FirstDiff{i64(d.first->first), oc.insn(oc.insns[d.first->first]).text(),
-                                           rc.insn(rc.insns[d.first->second]).text()};
+    DiffContext cx{resolve, &cmp.m, cmp.names};
+    // the category the instructions give and the diff: functions of the code and its targets, kept between runs
+    auto make = [&] {
+      DiffReport e;
+      e.category = classify_mnemonics(oc, rc);
+      if (!e.category) {  // the same mnemonics in order: the operands decide, as tokens
+        Toks a = symbolise(oc, by_va(), false), b = symbolise(rc, resolve, true);
+        for (size_t k = 0; k < std::min(a.size(), b.size()); ++k) const_by_value(a[k], b[k], orig.img);
+        if (!(a == b)) e.category = classify(a, b);
+      }
+      e.diff = code_diff(oc, rc, cx, want_diff);
+      if (e.diff.first) {
+        e.first_orig = oc.insn(oc.insns[e.diff.first->first]).text();
+        e.first_rebuilt = rc.insn(rc.insns[e.diff.first->second]).text();
+      }
+      return e;
+    };
+    DiffReport e = diffs && want_diff && !show ? diffs->get(oc, rc, cx, make) : make();
+    if (!probs.empty()) rec.category = e.category ? *e.category : probs[0].category;
+    if (e.diff.differs) {
+      if (e.diff.first)
+        rec.first_diff =
+            Result::FirstDiff{i64(e.diff.first->first), std::move(e.first_orig), std::move(e.first_rebuilt)};
       rec.has_diff = true;
-      rec.diff = std::move(d.lines);
+      rec.diff = std::move(e.diff.lines);
     }
   }
   if (show) {

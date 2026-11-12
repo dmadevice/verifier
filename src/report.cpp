@@ -321,13 +321,21 @@ class Identities {
         targets_.push_back(u64(f.value));
     std::sort(targets_.begin(), targets_.end());
     targets_.erase(std::unique(targets_.begin(), targets_.end()), targets_.end());
-    size_t cap = 16;
-    while (cap < 2 * (oc.insns.size() + rc.insns.size())) cap *= 2;
-    slots_.assign(cap, Slot{});
+  }
+  // what each of the rebuilt function's fields stands for, as the ids take it, in order
+  std::string rebuilt_targets() {
+    key_.clear();
+    for (auto& f : rc_.field_list) target_key(true, f);
+    return key_;
   }
   // ids, and per instruction the in-function branch target (function-relative, NO_TARGET for none)
   void side(bool rebuilt, std::vector<u32>& ids, std::vector<i64>& rel) {
     const Code& c = rebuilt ? rc_ : oc_;
+    if (slots_.empty()) {
+      size_t cap = 16;
+      while (cap < 2 * (oc_.insns.size() + rc_.insns.size())) cap *= 2;
+      slots_.assign(cap, Slot{});
+    }
     ids.reserve(c.insns.size());
     rel.reserve(c.insns.size());
     for (auto& l : c.insns) {
@@ -437,6 +445,10 @@ class Identities {
 };
 
 }  // namespace
+
+std::string rebuilt_targets(const Code& oc, const Code& rc, const DiffContext& cx) {
+  return Identities(oc, rc, cx).rebuilt_targets();
+}
 
 CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context, size_t limit) {
   std::vector<u32> ia, ib;

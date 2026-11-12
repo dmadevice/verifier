@@ -125,9 +125,12 @@ With a `cache_dir`, runs keep there what the next run can use again:
   functions it does not hold.
 - `sources-cache.bin`: each source file's annotations, used while the file keeps its size and modification time
   (a file changed within two seconds of the run is read again and not kept).
+- `diff-cache.bin`: each DIFF's category from its instructions, instruction diff and first difference, kept with
+  the snapshot's key and found again by a hash of everything else they read (both functions' places and bytes, the
+  rebuilt one's address fields and what each stands for); a run keeps the entries it used.
 
-The name cache, the decoded code and the sources cache belong to the verifier build that wrote them: another build
-starts them afresh. The directory can be deleted at any time; the next run rebuilds what it needs.
+The name cache, the decoded code, the sources cache and the DIFF reports belong to the verifier build that wrote
+them: another build starts them afresh. The directory can be deleted at any time; the next run rebuilds what it needs.
 
 ## Usage
 
@@ -231,8 +234,10 @@ pairing's tables directly. The tests answer the same questions with small fakes.
 
 A run is single-threaded. With the cache directory warm it maps the original's snapshot and decoded functions,
 reads the source files that changed and the map, and compares every annotated function. A rebuilt function that
-matches is mostly compared from its address fields, without a decode of its own; most of the time then goes to
-the DIFFs (their decode and instruction diffs; text is made only for the lines a diff shows). Zero-filled data past a section's file data is not read.
+matches is mostly compared from its address fields, without a decode of its own, and a DIFF whose code and targets
+are as they were takes its report from `diff-cache.bin`; a DIFF's diff is otherwise made with text only for the
+lines it shows. Zero-filled data past a section's file data is not read. `VERIFIER_CHECK_DIFFS` makes every kept
+DIFF report again and stops on a difference.
 A run without the name cache runs undname for every rebuilt name and takes several times as long.
 
 ## License

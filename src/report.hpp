@@ -84,8 +84,8 @@ struct DiffContext {
 // The instruction diff of two functions: their instructions aligned as the comparison sees them (the same bytes
 // outside the address fields, each field standing for the same thing; see Identities in report.cpp), as a unified
 // diff of `context` lines around each change, `@N` heading each hunk (N: the original's instruction there), at most
-// `limit` lines and then a count of the rest. A replaced pair that reads the same differs in encoding only, and says
-// so with its bytes.
+// `limit` lines and then a count of the rest. A pair that reads the same says why it differs: its encoding (with its
+// bytes), or branch targets not in each other's place.
 struct CodeDiff {
   bool differs = false;                            // some instruction is not aligned with an equal one
   std::optional<std::pair<size_t, size_t>> first;  // the first difference: (original, rebuilt) instruction
@@ -93,5 +93,7 @@ struct CodeDiff {
 };
 CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context = 2,
                    size_t limit = 200);
+// what each of the rebuilt function's address fields stands for in the diff's alignment, in order, as one string
+std::string rebuilt_targets(const Code& oc, const Code& rc, const DiffContext& cx);
 
 }  // namespace verifier

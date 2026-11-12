@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "diff_store.hpp"
 #include "pairing.hpp"
 #include "policy.hpp"
 #include "report.hpp"
@@ -61,7 +62,7 @@ std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig,
                                     const Pairing& pairing);
 // an annotation's result: its functions judged (after the comparer has explored every root and solved)
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
-                const std::string& root, bool show, Out& out, bool want_diff = true);
+                const std::string& root, bool show, Out& out, bool want_diff = true, DiffStore* diffs = nullptr);
 std::string result_line(const Result& r, const std::string& module);
 
 // a source path as the report gives it: relative to the project root

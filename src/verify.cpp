@@ -244,7 +244,7 @@ class ReportFile {
   std::string buf_;
 };
 Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb, Pairing& pairing,
-                       Comparer& cmp, const Args& a, const Config& p, Out& out, ReportFile& report) {
+                       Comparer& cmp, const Args& a, const Config& p, Out& out, ReportFile& report, DiffStore& diffs) {
   std::optional<u64> show;
   if (a.show) show = parse_hex(*a.show);
   std::vector<const Annotation*> order;
@@ -255,7 +255,7 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
   ev.results.reserve(order.size());
   if (report.on()) report.text() = "{\n  \"results\": ";
   for (auto* ann : order) {
-    Result r = evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out, true);
+    Result r = evaluate(*ann, orig, reb, pairing, cmp, p.root, show && *show == ann->va, out, true, &diffs);
     ev.lines += result_line(r, p.module);
     ev.lines += '\n';
     if (report.on()) {
@@ -351,7 +351,11 @@ int run(int argc, char** argv) {
   ph.mark("explore+solve");
 
   ReportFile report(a.json);
-  Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, a, p, out, report);
+  // DIFF reports kept between runs: keyed by the original's inputs and this verifier (see diff_store.hpp)
+  DiffStore diffs(orig.cache_key().empty() || self.empty() ? std::string() : p.cache_file("diff-cache.bin"),
+                  orig.cache_key() + "verifier " + self);
+  diffs.check = std::getenv("VERIFIER_CHECK_DIFFS") != nullptr;  // each kept report checked against one made
+  Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, a, p, out, report, diffs);
   ph.mark("evaluate");
   if (std::getenv("VERIFIER_TIMING")) {
     auto st = cmp.m.stats();
@@ -361,6 +365,8 @@ int run(int argc, char** argv) {
     for (size_t i = 0; i < size_t(FastPath::Count); ++i)
       fast += std::string(i ? ", " : "") + fast_path_name(FastPath(i)) + " " + std::to_string(fast_path_counts()[i]);
     std::fprintf(stderr, "fast path: %s\n", fast.c_str());
+    std::fprintf(stderr, "DIFF reports from the diff store: %zu (made %zu)\n", diffs.stats().hits,
+                 diffs.stats().misses);
   }
 
   out.write(ev.lines);
@@ -374,6 +380,7 @@ int run(int argc, char** argv) {
   if (a.update || name_cache.has_new()) name_cache.save();
   orig_cache.clear();  // the functions read from the store let it be replaced
   orig_store.save();
+  diffs.save();
   if (report.on()) {
     finish_report(report, totals);
     ph.mark("json");

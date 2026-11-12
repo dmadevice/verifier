@@ -258,6 +258,53 @@ Findings code_store() {
   return bad;
 }
 
+// The DIFF reports kept between runs: found again for the same code and targets, made again when a rebuilt byte or
+// what a target resolves to changes, checked against one made when asked, and not used under another key.
+Findings diff_store() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-diffs-" + unique_suffix());
+  std::string file = (d / "diffs.bin").string();
+  Side os(0), rs(0x200);
+  u64 of = os.put(TEXT, Bytes("\xc3", 1)), rf = rs.put(TEXT, Bytes("\xc3", 1));
+  u64 o = os.reserve(TEXT, 0x10), r = rs.reserve(TEXT, 0x10);
+  Bytes ob = Bytes("\x53", 1) + call(o + 1, of) + Bytes("\x5b\xc3", 2);
+  os.write(o, ob);
+  Image O = os.image();
+  NameMap names{{of, "Callee"}};
+  Findings bad;
+  size_t made = 0;
+  auto report = [&](const Image& R, Key callee, const std::string& key, bool check = false) {
+    Code oc(O, o, o + ob.size()), rc(R, r, r + ob.size() + 1);
+    DiffContext cx{[&](u64 t) { return t == rf ? callee : Key::named(Key::UNRESOLVED, "x"); }, nullptr, name_of(names)};
+    DiffStore store(file, key);
+    store.check = check;
+    DiffReport e = store.get(oc, rc, cx, [&] {
+      ++made;
+      DiffReport x;
+      x.diff = code_diff(oc, rc, cx, true);
+      return x;
+    });
+    store.save();
+    return e;
+  };
+  rs.write(r, Bytes("\x40\x53", 2) + call(r + 2, rf) + Bytes("\x5b\xc3", 2));
+  Image R = rs.image();
+  DiffReport first = report(R, Key::of_va(of), "key");
+  DiffReport again = report(R, Key::of_va(of), "key", true);
+  if (made != 2 || !(again == first) || first.diff.lines.empty())
+    bad.push_back({"diffs", "not found again (" + std::to_string(made) + " made)"});
+  report(R, Key::named(Key::UNRESOLVED, "Other"), "key");
+  if (made != 3) bad.push_back({"diffs", "kept although the callee resolves otherwise"});
+  rs.write(r, Bytes("\x40\x51", 2));
+  report(rs.image(), Key::of_va(of), "key");
+  if (made != 4) bad.push_back({"diffs", "kept although a byte changed"});
+  report(R, Key::of_va(of), "other key");
+  if (made != 5) bad.push_back({"diffs", "another key's used"});
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 }  // namespace
 
 void add_cache_cases(Cases& cases) {
@@ -266,6 +313,7 @@ void add_cache_cases(Cases& cases) {
                                 {"snapshot key", nullptr, snapshot_key},
                                 {"sources cache", nullptr, sources_cache},
                                 {"original code store", nullptr, code_store},
+                                {"DIFF report store", nullptr, diff_store},
                             });
 }
 
