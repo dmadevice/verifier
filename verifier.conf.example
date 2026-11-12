@@ -26,6 +26,6 @@ data_names = analysis/names.jsonl
 undname = C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/bin/Hostx64/x64/undname.exe
 
 # where caches are kept (optional): the undecorated-name cache (written by any run that had to run undname, and by
-# --update), a snapshot of the original (rewritten whenever it or one of its exports changes) and each source file's
-# annotations
+# --update), a snapshot of the original (rewritten whenever it or one of its exports changes), the original's
+# functions as decoded, and each source file's annotations
 cache_dir = .verifier

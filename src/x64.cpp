@@ -790,10 +790,9 @@ std::optional<std::vector<Field>> same_code_fields(const Code& o, const Image& i
   return got;
 }
 
-std::shared_ptr<const Code> CodeCache::code(u64 start, u64 end) {
-  auto it = live_.find({start, end});
-  if (it != live_.end()) return it->second;
-  return live_.emplace(std::make_pair(start, end), std::make_shared<const Code>(*img_, start, end)).first->second;
+Code::Code(const Image& im, u64 s, u64 e, Undecoded) : img(&im), start(s), end(e) {
+  code = decoded_from_ = im.bytes(s, i64(e) - i64(s));
+  relocated = im.reloc_lower_bound(e) > im.reloc_lower_bound(s);
 }
 
 bool same_layout(const Lean& a, std::span<const Field> fa, const Lean& b, std::span<const Field> fb) {

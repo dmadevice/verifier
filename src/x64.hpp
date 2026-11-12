@@ -190,6 +190,9 @@ class Code {
   std::vector<OutsideTable> outside_tables() const;
 
  private:
+  friend class CodeStore;  // keeps decoded functions between runs, and makes them again without a decode
+  struct Undecoded {};
+  Code(const Image& img, u64 start, u64 end, Undecoded);  // only the place and bytes set
   std::string_view decoded_from_;  // the bytes the instructions were decoded from (`code` before trimming)
   size_t reloc_at_ = 0;            // add_fields: the first relocation not before the instruction
   void add_fields(const Insn& ins, u32 image_base);
@@ -213,19 +216,6 @@ bool& check_fast_path();
 enum class FastPath { Taken, Shape, Length, Tail, Bytes, Target, Reloc, Count };
 const char* fast_path_name(FastPath p);
 std::vector<u64>& fast_path_counts();  // by FastPath
-
-// The decoded functions a run holds, by (start, end): decoded when first asked for, released when a comparison no
-// longer needs them
-class CodeCache {
- public:
-  explicit CodeCache(const Image* img) : img_(img) {}
-  std::shared_ptr<const Code> code(u64 start, u64 end);
-  void release(u64 start, u64 end) { live_.erase({start, end}); }
-
- private:
-  const Image* img_;
-  std::map<std::pair<u64, u64>, std::shared_ptr<const Code>> live_;
-};
 
 // per instruction, the GPRs (bit per gpr_index) that hold __ImageBase on entry; empty when none ever does
 std::vector<u32> image_base_regs(const std::vector<Insn>& insns, u64 base);

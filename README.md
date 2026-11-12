@@ -116,12 +116,14 @@ With a `cache_dir`, runs keep there what the next run can use again:
   two seconds of the run, they are read directly and the snapshot is left as it is.
 - `undname-cache.bin`: the undecorated names, with the qualified names and signatures worked out from them. A
   run that had to run undname saves them, this build's names first, then as many of other builds' names.
-
+- `original-code.bin`: the original's functions as runs decoded them (instructions, address fields, switch
+  tables), read back instead of decoded again; kept with the snapshot's key, and added to when a run decodes
+  functions it does not hold.
 - `sources-cache.bin`: each source file's annotations, used while the file keeps its size and modification time
   (a file changed within two seconds of the run is read again and not kept).
 
-The name cache and the sources cache belong to the verifier build that wrote them: another build starts them
-afresh. The directory can be deleted at any time; the next run rebuilds what it needs.
+The name cache, the decoded code and the sources cache belong to the verifier build that wrote them: another build
+starts them afresh. The directory can be deleted at any time; the next run rebuilds what it needs.
 
 ## Usage
 
@@ -170,12 +172,13 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 56 cases in code: pairing (a guessed function or table that fails, guesses
+exact problems it must report, and 58 cases in code: pairing (a guessed function or table that fails, guesses
 kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items
 export, literals against globals, tables cut short, tables that point at each other), each record of the EH
 handler data, name handling, the annotation parser, the exports in any key order, the instruction diff, hashing,
-the report's JSON escaping, file reading, line splitting, the name table, the name cache file and the snapshot
-key. `ctest` also runs fadec's own decoder tests.
+the report's JSON escaping, file reading, line splitting, the name table, the name cache file, the snapshot
+key, the sources cache and the stored decoded code. The comparison cases run a second time with every
+`same_code_fields` answer checked against a full decode. `ctest` also runs fadec's own decoder tests.
 
 ## Code layout
 
@@ -185,7 +188,7 @@ key. `ctest` also runs fadec's own decoder tests.
   the classifier), `names.cpp`, `undname.cpp`.
 - The inputs: `inputs.cpp` (the original with its exports, the rebuild with its map), `annotations.cpp`,
   `pairing.cpp` (what each rebuilt address stands for), `config.cpp`, `args.cpp`, and the caches
-  (`name_cache.cpp`, the snapshot in `inputs.cpp`).
+  (`name_cache.cpp`, the snapshot in `inputs.cpp`, the decoded code in `code_store.cpp`).
 - The project policy, `policy.cpp`: which annotation kinds are compared and counted, `FOLDED`, `LIBCODE`.
 - The run and its output: `verify.cpp`, `result.cpp`.
 
@@ -203,7 +206,9 @@ A run, in the order `verify.cpp`'s `run` takes it:
    votes from the code that references them.
 5. **Comparison** (`compare.cpp`, `compare_refs.cpp`, `compare_eh.cpp`, decoding in `x64.cpp`): each annotated
    function against its original. This covers the instruction bytes with address fields set aside, then what
-   each address field refers to, then unwind and EH data. The EH and RTTI records (FuncInfo and its tables, SEH
+   each address field refers to, then unwind and EH data. A rebuilt function whose bytes are the original's outside
+   the address fields, and decode the same way, is not decoded: its fields are read at the original's places
+   (`same_code_fields`; `VERIFIER_CHECK_FAST=1` checks each such answer against a full decode). The EH and RTTI records (FuncInfo and its tables, SEH
    scope tables, the RTTI hierarchy, ThrowInfo) are described once as layouts (`layouts.cpp`) and compared
    generically; `__CxxFrameHandler4`'s compressed FuncInfo is not described yet and reported as not verifiable.
    Where it has to guess (an unannotated function, vtable or table standing for an original one, a local static's place, a build

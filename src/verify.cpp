@@ -333,7 +333,10 @@ int run(int argc, char** argv) {
 
   pick_destructors(anns, orig, reb);
   Pairing pairing(orig, reb, anns);
-  CodeCache orig_cache(&orig.img), rebuilt_cache(&reb.img);
+  // the original's functions decoded by earlier runs: keyed by the original's inputs and this verifier (its decoder)
+  CodeStore orig_store(orig.cache_key().empty() || self.empty() ? std::string() : p.cache_file("original-code.bin"),
+                       orig.cache_key() + "verifier " + self);
+  CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
   ph.mark("pairing");
   pairing.use_caches(orig_cache, rebuilt_cache);
   Comparer cmp(
@@ -369,6 +372,7 @@ int run(int argc, char** argv) {
   // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run
   // undname for them again)
   if (a.update || name_cache.has_new()) name_cache.save();
+  orig_store.save();
   if (report.on()) {
     finish_report(report, totals);
     ph.mark("json");

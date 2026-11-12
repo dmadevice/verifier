@@ -27,7 +27,9 @@ Key key_of(const std::string& kind, const Value& v) {
   return Key::named(kinds.at(kind), v.as_str());
 }
 
-Image side_image(const Value& s) {
+}  // namespace
+
+Image fixture_image(const Value& s) {
   Bytes mem(END, '\0');
   for (auto& c : s["mem"].arr) {
     Bytes b = unhex(c.arr[1].as_str());
@@ -44,6 +46,8 @@ Image side_image(const Value& s) {
   return Image::from_parts(BASE, mem, sections(), pdata, relocs, imports);
 }
 
+namespace {
+
 std::vector<u64> u64s(const Value* v) {
   std::vector<u64> out;
   if (v)
@@ -53,7 +57,7 @@ std::vector<u64> u64s(const Value* v) {
 
 // one comparison, the hooks answering from the case's mapping
 Findings replay(const Value& c) {
-  Image O = side_image(c["orig"]), R = side_image(c["rebuilt"]);
+  Image O = fixture_image(c["orig"]), R = fixture_image(c["rebuilt"]);
   const Value& m = c["mapping"];
   auto keys = std::make_shared<std::map<u64, Key>>();
   for (auto& k : m["keys"].arr) (*keys)[u64(k.arr[0].as_int())] = key_of(k.arr[1].as_str(), k.arr[2]);

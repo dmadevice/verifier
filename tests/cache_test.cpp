@@ -199,6 +199,64 @@ Findings name_cache() {
   return bad;
 }
 
+// what a decoded function holds, as text (a stored one must give the same)
+std::string code_text(const Code& c) {
+  std::string s = std::to_string(c.code.size()) + " " + std::to_string(c.cut) + " " +
+                  std::to_string(c.resume.value_or(-1)) + " " + std::to_string(c.complete) + " " +
+                  std::to_string(c.shape.known) + std::to_string(c.shape.ends_in_jump) + " " +
+                  std::to_string(c.shape.reach) + ";";
+  for (auto& [t, size] : c.tables) s += " t" + std::to_string(t) + ":" + std::to_string(size);
+  for (i64 d : c.shape.indexed) s += " i" + std::to_string(d);
+  for (auto& l : c.insns) {
+    s += "; " + std::to_string(l.off) + " " + std::to_string(l.size) + " " + std::to_string(l.addressed) + " " +
+         c.mnemonic(l).str() + " (" + c.insn(l).text() + ")";
+    for (auto& f : c.fields(l))
+      s += " " + std::to_string(f.kind) + "@" + std::to_string(f.off) + "/" + std::to_string(f.size) + "=" +
+           hex_signed(f.value) + "," + std::to_string(f.access) + "," + std::to_string(f.indexed);
+  }
+  return s;
+}
+
+// the original's decoded functions kept between runs: each fixture case's function read back as decoded; another key,
+// or a damaged file, gives nothing back
+Findings code_store() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-code-" + unique_suffix());
+  std::string file = (d / "code.bin").string();
+  Findings bad;
+  size_t kept = 0;
+  for (auto& c : fixtures()["cases"].arr) {
+    Image img = fixture_image(c["orig"]);
+    u64 start = u64(c["ofn"].arr[0].as_int()), end = u64(c["ofn"].arr[1].as_int());
+    std::string name = c["name"].as_str();
+    std::string decoded = code_text(Code(img, start, end));
+    std::error_code ec;
+    fs::remove(file, ec);  // the cases' images differ at the same addresses: one store each
+    {
+      CodeStore store(file, "key");
+      CodeCache cache(&img, &store);
+      cache.code(start, end);
+      store.save();
+    }
+    CodeStore store(file, "key");
+    auto back = store.find(img, start, end);
+    if (!back || code_text(*back) != decoded) bad.push_back({"code", name + ": not as decoded"});
+    kept += back != nullptr;
+    if (CodeStore(file, "other key").find(img, start, end)) bad.push_back({"code", name + ": another key's used"});
+  }
+  if (!kept) bad.push_back({"code", "nothing kept"});
+  // cut short: not used at all
+  std::string data = read_file(file);
+  std::ofstream(file, std::ios::binary | std::ios::trunc) << data.substr(0, data.size() - 3);
+  Image img = fixture_image(fixtures()["cases"].arr.back()["orig"]);
+  auto& last = fixtures()["cases"].arr.back()["ofn"].arr;
+  if (CodeStore(file, "key").find(img, u64(last[0].as_int()), u64(last[1].as_int())))
+    bad.push_back({"code", "a damaged file used"});
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 }  // namespace
 
 void add_cache_cases(Cases& cases) {
@@ -206,6 +264,7 @@ void add_cache_cases(Cases& cases) {
                                 {"name cache file", nullptr, name_cache},
                                 {"snapshot key", nullptr, snapshot_key},
                                 {"sources cache", nullptr, sources_cache},
+                                {"original code store", nullptr, code_store},
                             });
 }
 
