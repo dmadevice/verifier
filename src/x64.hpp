@@ -194,6 +194,7 @@ class Code {
 
  private:
   friend class CodeStore;  // keeps decoded functions between runs, and makes them again without a decode
+  friend class RebuiltStore;
   struct Undecoded {};
   Code(const Image& img, u64 start, u64 end, Undecoded);  // only the place and bytes set
   std::vector<Lean> lean_;                                // the instructions, when held here
@@ -213,7 +214,9 @@ class Code {
 // orig's fields, relocations at the same places, and no field value that changes how the code decodes (a branch target
 // inside the function or out, a switch table, __ImageBase). A full decode of it (Code) then gives orig's instructions,
 // fields at the same places with these values, and the same length. nullopt when that cannot be shown: decode it.
-std::optional<std::vector<Field>> same_code_fields(const Code& orig, const Image& img, u64 start, u64 end);
+// `counted`: the answer counted in fast_path_counts (the comparison's own questions are, the rebuilt store's not).
+std::optional<std::vector<Field>> same_code_fields(const Code& orig, const Image& img, u64 start, u64 end,
+                                                   bool counted = true);
 
 // The self-check of same_code_fields (VERIFIER_CHECK_FAST): with it on, each answer is checked against a full decode,
 // and a difference throws.

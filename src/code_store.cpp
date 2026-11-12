@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
+#include <string_view>
 
 namespace verifier {
 
@@ -199,13 +201,213 @@ void CodeStore::save() {
   added_.out.clear();
 }
 
+namespace {
+
+// The rebuilt store's file: its header; the mnemonics as in the original's; then each function: its key (the name's
+// hash and the size), the kept head (below), its instructions, fields and the shape's indexed displacements, then its
+// name and bytes.
+constexpr std::string_view REBUILT_MAGIC = "verifier-rebuilt-code 1\n";
+
+u64 rebuilt_key(std::string_view name, u64 size) { return u64(std::hash<std::string_view>()(name)) * 31 + size; }
+
+// a kept function as read: the parts of Code it gives
+struct Kept {
+  u64 key = 0;
+  i64 cut = 0, reach = 0;
+  u8 ends_in_jump = 0;
+  u32 ninsns = 0, nfields = 0, nindexed = 0;
+  std::vector<Lean> insns;
+  std::vector<Field> fields;
+  std::vector<i64> indexed;
+  std::string name, code;
+};
+
+void put_kept(BinWriter& w, const Kept& k) {
+  w.put(k.key);
+  w.put(k.cut);
+  w.put(k.reach);
+  w.put(k.ends_in_jump);
+  w.put(u32(k.insns.size()));
+  w.put(u32(k.fields.size()));
+  w.put(u32(k.indexed.size()));
+  w.array(k.insns.data(), k.insns.size());
+  w.array(k.fields.data(), k.fields.size());
+  w.array(k.indexed.data(), k.indexed.size());
+  w.str(k.name);
+  w.str(k.code);
+}
+
+// false: a damaged record, or a mnemonic the table does not have
+bool get_kept(BinReader& r, Kept& k, const std::vector<u16>& mnems) {
+  r.get(k.key);
+  r.get(k.cut);
+  r.get(k.reach);
+  r.get(k.ends_in_jump);
+  r.get(k.ninsns);
+  r.get(k.nfields);
+  r.get(k.nindexed);
+  auto array = [&](auto& v, u32 n) {
+    std::string_view b = r.take(size_t(n) * sizeof(v[0]));
+    if (!r.ok()) return;
+    v.resize(n);
+    if (n) std::memcpy(v.data(), b.data(), b.size());
+  };
+  array(k.insns, k.ninsns);
+  array(k.fields, k.nfields);
+  array(k.indexed, k.nindexed);
+  r.str(k.name);
+  r.str(k.code);
+  if (!r.ok()) return false;
+  for (Lean& l : k.insns) {
+    if (l.mnem >= mnems.size()) return false;
+    l.mnem = mnems[l.mnem];
+  }
+  return true;
+}
+
+}  // namespace
+
+RebuiltStore::RebuiltStore(std::string path, std::string key) : path_(std::move(path)), key_(std::move(key)) {
+  if (path_.empty()) return;
+  std::string head = cache_header(REBUILT_MAGIC, key_);
+  file_ = open_cache_file(path_, head);
+  if (!file_) return;
+  BinReader r(file_->view(), head.size());
+  u32 n = 0;
+  r.get(n);
+  for (u32 i = 0; r.ok() && i < n; ++i) {
+    std::string s;
+    if (r.str(s)) mnems_.push_back(Mnem(s).id());
+  }
+  while (r.ok() && !r.done()) {  // each record's key, the rest skipped
+    size_t at = r.at();
+    Kept k;
+    r.get(k.key);
+    r.get(k.cut);
+    r.get(k.reach);
+    r.get(k.ends_in_jump);
+    r.get(k.ninsns);
+    r.get(k.nfields);
+    r.get(k.nindexed);
+    r.take(size_t(k.ninsns) * sizeof(Lean) + size_t(k.nfields) * sizeof(Field) + size_t(k.nindexed) * sizeof(i64));
+    for (int s = 0; s < 2; ++s) {  // the name and the bytes
+      u32 len = 0;
+      r.get(len);
+      r.take(len);
+    }
+    index_.push_back({k.key, at});
+  }
+  if (!r.ok()) {  // a damaged file is not used
+    index_.clear();
+    file_.reset();
+    return;
+  }
+  std::sort(index_.begin(), index_.end());
+  used_.assign(index_.size(), false);
+}
+
+std::shared_ptr<const Code> RebuiltStore::find(const Image& img, u64 start, u64 end, std::string_view name) {
+  if (!file_ || name.empty()) return ++missed, nullptr;
+  u64 key = rebuilt_key(name, end - start);
+  for (auto it = std::lower_bound(index_.begin(), index_.end(), Record{key, 0}); it != index_.end() && it->key == key;
+       ++it) {
+    BinReader r(file_->view(), it->at);
+    Kept k;
+    if (!get_kept(r, k, mnems_) || k.name != name) continue;
+    // the kept function, with its own bytes, at this place
+    Code kept(img, start, end, Code::Undecoded{});
+    kept.code = k.code;
+    kept.insns = k.insns;
+    kept.field_list = k.fields;
+    kept.cut = k.cut;
+    kept.complete = true;
+    kept.shape = {true, k.ends_in_jump != 0, k.reach, k.indexed};
+    auto fields = same_code_fields(kept, img, start, end, false);
+    if (!fields || kept.code.size() > size_t(end - start)) continue;
+    std::shared_ptr<Code> c(new Code(img, start, end, Code::Undecoded{}));
+    c->code = c->code.substr(0, k.code.size());
+    c->lean_ = std::move(k.insns);
+    c->fields_ = std::move(*fields);
+    c->insns = c->lean_;
+    c->field_list = c->fields_;
+    c->cut = k.cut;
+    c->complete = true;
+    c->shape = std::move(kept.shape);
+    if (check_fast_path()) {
+      Code full(img, start, end);
+      auto same_lean = [](const Lean& a, const Lean& b) {
+        return a.off == b.off && a.field == b.field && a.mnem == b.mnem && a.size == b.size && a.nfields == b.nfields &&
+               a.addressed == b.addressed;
+      };
+      auto same_field = [](const Field& a, const Field& b) {
+        return a.value == b.value && a.access == b.access && a.indexed == b.indexed && a.off == b.off &&
+               a.size == b.size && a.kind == b.kind;
+      };
+      bool same = full.code == c->code && full.cut == c->cut && full.complete && !full.resume && full.tables.empty() &&
+                  full.relocated == c->relocated && full.shape.known &&
+                  full.shape.ends_in_jump == c->shape.ends_in_jump && full.shape.reach == c->shape.reach &&
+                  full.shape.indexed == c->shape.indexed &&
+                  std::equal(full.insns.begin(), full.insns.end(), c->insns.begin(), c->insns.end(), same_lean) &&
+                  std::equal(full.field_list.begin(), full.field_list.end(), c->field_list.begin(), c->field_list.end(),
+                             same_field);
+      if (!same) throw std::logic_error("rebuilt store: a kept function differs from a decode at " + hex(start));
+    }
+    if (!used_[size_t(it - index_.begin())]) {
+      used_[size_t(it - index_.begin())] = true;
+      Kept again = std::move(k);
+      again.insns.assign(c->insns.begin(), c->insns.end());  // numbered as this run numbers them
+      put_kept(kept_, again);
+    }
+    ++found;
+    return c;
+  }
+  ++missed;
+  return nullptr;
+}
+
+void RebuiltStore::add(const Code& c, std::string_view name) {
+  if (path_.empty() || name.empty() || !c.shape.known || c.resume || !c.tables.empty()) return;
+  if (!added_.insert({c.start, c.end}).second) return;
+  Kept k;
+  k.key = rebuilt_key(name, c.end - c.start);
+  k.cut = c.cut;
+  k.reach = c.shape.reach;
+  k.ends_in_jump = c.shape.ends_in_jump;
+  k.insns.assign(c.insns.begin(), c.insns.end());
+  k.fields.assign(c.field_list.begin(), c.field_list.end());
+  k.indexed = c.shape.indexed;
+  k.name = name;
+  k.code = c.code;
+  put_kept(kept_, k);
+}
+
+void RebuiltStore::save() {
+  if (path_.empty() || (added_.empty() && std::find(used_.begin(), used_.end(), false) == used_.end())) return;
+  BinWriter w;
+  w.out = cache_header(REBUILT_MAGIC, key_);
+  w.put(u32(Mnem::count()));
+  for (size_t i = 0; i < Mnem::count(); ++i) w.str(Mnem::from_id(u16(i)).str());
+  w.out += kept_.out;
+  file_.reset();
+  index_.clear();
+  write_cache_file(path_, w.out);
+}
+
 std::shared_ptr<const Code> CodeCache::code(u64 start, u64 end) {
   auto it = live_.find({start, end});
   if (it != live_.end()) return it->second;
-  std::shared_ptr<const Code> c = store_ ? store_->find(*img_, start, end) : nullptr;
+  std::shared_ptr<const Code> c;
+  std::string_view name;
+  if (store_) {
+    c = store_->find(*img_, start, end);
+  } else if (rebuilt_store_) {
+    name = name_of_(start);
+    c = rebuilt_store_->find(*img_, start, end, name);
+  }
   if (!c) {
     c = std::make_shared<const Code>(*img_, start, end);
     if (store_) store_->add(*c);
+    if (rebuilt_store_) rebuilt_store_->add(*c, name);
   }
   return live_.emplace(std::make_pair(start, end), std::move(c)).first->second;
 }

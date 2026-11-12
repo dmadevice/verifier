@@ -124,14 +124,17 @@ With a `cache_dir`, runs keep there what the next run can use again:
 - `original-code.bin`: the original's functions as runs decoded them (instructions, address fields, switch
   tables), read back instead of decoded again; kept with the snapshot's key, and added to when a run decodes
   functions it does not hold.
+- `rebuilt-code.bin`: the rebuilt functions runs decoded, found again by name and size wherever the next link puts
+  them and used only where the bytes outside their address fields and their relocations are as they were (the
+  fields are then read from the bytes); a run keeps the functions it used or decoded.
 - `sources-cache.bin`: each source file's annotations, used while the file keeps its size and modification time
   (a file changed within two seconds of the run is read again and not kept).
 - `diff-cache.bin`: each DIFF's category from its instructions, instruction diff and first difference, kept with
   the snapshot's key and found again by a hash of everything else they read (both functions' places and bytes, the
   rebuilt one's address fields and what each stands for); a run keeps the entries it used.
 
-The name cache, the decoded code, the sources cache and the DIFF reports belong to the verifier build that wrote
-them: another build starts them afresh. The directory can be deleted at any time; the next run rebuilds what it needs.
+The name cache, both images' decoded code, the sources cache and the DIFF reports belong to the verifier build
+that wrote them: another build starts them afresh. The directory can be deleted at any time; the next run rebuilds what it needs.
 
 ## Usage
 
@@ -216,7 +219,8 @@ A run, in the order `verify.cpp`'s `run` takes it:
    function against its original. This covers the instruction bytes with address fields set aside, then what
    each address field refers to, then unwind and EH data. A rebuilt function whose bytes are the original's outside
    the address fields, and decode the same way, is not decoded: its fields are read at the original's places
-   (`same_code_fields`; `VERIFIER_CHECK_FAST=1` checks each such answer against a full decode). The EH and RTTI
+   (`same_code_fields`; `VERIFIER_CHECK_FAST=1` checks each such answer, and each function made from
+   `rebuilt-code.bin` the same way, against a full decode). The EH and RTTI
    records (FuncInfo and its tables, SEH scope tables, the RTTI hierarchy, ThrowInfo) are described once as layouts
    (`layouts.cpp`) and compared generically; `__CxxFrameHandler4`'s compressed FuncInfo is not described yet and
    reported as not verifiable. Where it has to guess (an unannotated function, vtable or table standing for an

@@ -337,7 +337,14 @@ int run(int argc, char** argv) {
   // the original's functions decoded by earlier runs: keyed by the original's inputs and this verifier (its decoder)
   CodeStore orig_store(orig.cache_key().empty() || self.empty() ? std::string() : p.cache_file("original-code.bin"),
                        orig.cache_key() + "verifier " + self);
-  CodeCache orig_cache(&orig.img, &orig_store), rebuilt_cache(&reb.img);
+  // the rebuilt functions decoded by earlier runs, found again by name and used where their bytes decode the same:
+  // keyed by this verifier (its decoder)
+  RebuiltStore rebuilt_store(self.empty() ? std::string() : p.cache_file("rebuilt-code.bin"), "verifier " + self);
+  CodeCache orig_cache(&orig.img, &orig_store);
+  CodeCache rebuilt_cache(&reb.img, &rebuilt_store, [&](u64 va) {
+    auto names = reb.symbols.names(va);
+    return names.empty() ? std::string_view() : names[0];
+  });
   ph.mark("pairing");
   pairing.use_caches(orig_cache, rebuilt_cache);
   Comparer cmp(
@@ -368,6 +375,8 @@ int run(int argc, char** argv) {
     std::fprintf(stderr, "fast path: %s\n", fast.c_str());
     std::fprintf(stderr, "DIFF reports from the diff store: %zu (made %zu)\n", diffs.stats().hits,
                  diffs.stats().misses);
+    std::fprintf(stderr, "rebuilt functions from the rebuilt store: %zu (decoded %zu)\n", rebuilt_store.found,
+                 rebuilt_store.missed);
   }
 
   out.write(ev.lines);
@@ -381,6 +390,7 @@ int run(int argc, char** argv) {
   if (a.update || name_cache.has_new()) name_cache.save();
   orig_cache.clear();  // the functions read from the store let it be replaced
   orig_store.save();
+  rebuilt_store.save();
   diffs.save();
   if (report.on()) {
     finish_report(report, totals);

@@ -714,9 +714,10 @@ std::vector<u64>& fast_path_counts() {
 
 namespace {
 
-std::optional<std::vector<Field>> unchecked_same_code_fields(const Code& o, const Image& img, u64 start, u64 end) {
+std::optional<std::vector<Field>> unchecked_same_code_fields(const Code& o, const Image& img, u64 start, u64 end,
+                                                             bool counted) {
   auto answer = [&](FastPath why, std::optional<std::vector<Field>> fields = std::nullopt) {
-    ++fast_path_counts()[size_t(why)];
+    if (counted) ++fast_path_counts()[size_t(why)];
     return fields;
   };
   const Code::Shape& sh = o.shape;
@@ -770,8 +771,8 @@ std::optional<std::vector<Field>> unchecked_same_code_fields(const Code& o, cons
 
 }  // namespace
 
-std::optional<std::vector<Field>> same_code_fields(const Code& o, const Image& img, u64 start, u64 end) {
-  auto got = unchecked_same_code_fields(o, img, start, end);
+std::optional<std::vector<Field>> same_code_fields(const Code& o, const Image& img, u64 start, u64 end, bool counted) {
+  auto got = unchecked_same_code_fields(o, img, start, end, counted);
   if (got && check_fast_path()) {
     Code full(img, start, end);
     bool same = full.complete && full.tables.empty() && !full.resume && full.cut == o.cut &&

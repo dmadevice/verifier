@@ -258,6 +258,52 @@ Findings code_store() {
   return bad;
 }
 
+// The rebuilt functions kept between runs: found again by name where another link put the function and its callee
+// (made as a decode makes it), and not used for other bytes, another name or another key
+Findings rebuilt_store() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-rebuilt-" + unique_suffix());
+  std::string file = (d / "rebuilt.bin").string();
+  // push reg; call callee; test eax, eax; jz end; mov eax, 1; end: pop reg; ret
+  auto body = [](u64 at, u64 callee, char reg) {
+    return Bytes(1, reg) + call(at + 1, callee) + Bytes("\x85\xc0\x74\x05\xb8\x01\x00\x00\x00", 9) +
+           Bytes(1, char(reg + 8)) + Bytes("\xc3", 1);
+  };
+  u64 size = body(0, 0, '\x53').size();
+  auto image = [&](u64 pad, char reg, u64& f) {
+    Side s(0);
+    u64 callee = s.put(TEXT, Bytes("\xc3", 1));
+    if (pad) s.put(TEXT, Bytes(size_t(pad), '\xcc'));  // the function moves away from its callee
+    f = s.reserve(TEXT, 0x20);
+    s.write(f, body(f, callee, reg));
+    return s.image();
+  };
+  Findings bad;
+  u64 fa, fb, fc;
+  Image A = image(0, '\x53', fa), B = image(0x40, '\x53', fb), C = image(0x40, '\x56', fc);
+  {
+    RebuiltStore store(file, "key");
+    CodeCache cache(&A, &store, [](u64) { return std::string_view("F"); });
+    cache.code(fa, fa + size);
+    store.save();
+  }
+  std::string want = code_text(Code(B, fb, fb + size));
+  auto back = RebuiltStore(file, "key").find(B, fb, fb + size, "F");
+  if (!back || code_text(*back) != want) bad.push_back({"rebuilt", "moved: not found, or not as decoded"});
+  if (fa == fb) bad.push_back({"rebuilt", "the function did not move"});
+  if (RebuiltStore(file, "key").find(C, fc, fc + size, "F")) bad.push_back({"rebuilt", "other bytes used"});
+  if (RebuiltStore(file, "key").find(B, fb, fb + size, "G")) bad.push_back({"rebuilt", "another name used"});
+  if (RebuiltStore(file, "other").find(B, fb, fb + size, "F")) bad.push_back({"rebuilt", "another key used"});
+  check_fast_path() = true;  // found again with the self-check on: the same as a decode, no throw
+  try {
+    if (!RebuiltStore(file, "key").find(B, fb, fb + size, "F")) bad.push_back({"rebuilt", "not found when checked"});
+  } catch (const std::exception& e) { bad.push_back({"rebuilt", e.what()}); }
+  check_fast_path() = false;
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 // The DIFF reports kept between runs: found again for the same code and targets, made again when a rebuilt byte or
 // what a target resolves to changes, checked against one made when asked, and not used under another key.
 Findings diff_store() {
@@ -313,6 +359,7 @@ void add_cache_cases(Cases& cases) {
                                 {"snapshot key", nullptr, snapshot_key},
                                 {"sources cache", nullptr, sources_cache},
                                 {"original code store", nullptr, code_store},
+                                {"rebuilt code store", nullptr, rebuilt_store},
                                 {"DIFF report store", nullptr, diff_store},
                             });
 }
