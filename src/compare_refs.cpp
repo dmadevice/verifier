@@ -273,6 +273,13 @@ std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   std::string what = (O->writable(o_t) || R->writable(r_t)) ? "initial data" : "read-only data";
   if (a != b) res = Problem{"data", what + " at " + hex(o_t) + " differs"};
   if (!res) {
+    // a pointer only in the original: its relocations in the range are more than the rebuilt pointers kept
+    size_t o_lo = O->reloc_lower_bound(o_t), o_hi = O->reloc_lower_bound(o_t + u64(size));
+    if (o_hi - o_lo > kept.size())
+      res = Problem{"data", what + " at " + hex(o_t) + ": +" + hex(O->reloc_sorted[o_lo] - o_t) +
+                                " or after is a pointer only in the original"};
+  }
+  if (!res) {
     for (i64 off : kept) {
       if (!O->has_reloc(o_t + u64(off))) {
         res = Problem{"data", what + " at " + hex(o_t) + ": +" + hex(u64(off)) + " is a pointer only in the rebuild"};

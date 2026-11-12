@@ -1175,6 +1175,27 @@ Problems short_table(bool rebuilt_short) {
   return c.function(of, of + 8, rf, rf + 8);
 }
 
+// a pointer only in the original: the rebuilt table holds the same eight bytes as a plain number
+Problems pointer_only_in_original() {
+  Side o(0), r(0x240);
+  u64 ot = o.reserve(RDATA, 16), rt = r.reserve(RDATA, 16);
+  u64 v = BASE + DATA;
+  o.write(ot, le64b(v));
+  r.write(rt, le64b(v));
+  o.relocs.push_back(ot);
+  u64 of = o.reserve(TEXT, 16), rf = r.reserve(TEXT, 16);
+  o.write(of, lea_rcx(of, ot) + "\xc3");
+  r.write(rf, lea_rcx(rf, rt) + "\xc3");
+  Image O = o.image(), R = r.image();
+  struct Spans : ComparerContext {
+    u64 span(u64) const override { return 16; }
+  } spans;
+  Comparer c(
+      &O, &R, [&](u64 t) { return t == rt ? Key::of_va(ot) : Key::named(Key::UNRESOLVED, hex(t)); }, nullptr, nullptr,
+      &spans);
+  return c.function(of, of + 8, rf, rf + 8);
+}
+
 // tables that point at each other: A = {&B, &C}, B = {&A}, and C differs. B was found consistent while A was assumed
 // to be, so A's failure takes B's success back: a function taking B's address differs whichever is compared first
 Problems table_cycle(bool a_first) {
@@ -2197,6 +2218,7 @@ int main(int argc, char** argv) {
       {"string vs writable global", "reference", [] { return literal_vs_global(true); }},
       {"rebuilt table cut short", "data", [] { return short_table(true); }},
       {"original table cut short", "data", [] { return short_table(false); }},
+      {"pointer only in the original", "data", pointer_only_in_original},
       {"table cycle, the failing table first", "data", [] { return table_cycle(true); }},
       {"table cycle, the other first", "data", [] { return table_cycle(false); }},
       {"ignored annotations reported", nullptr, ignored_annotations},
