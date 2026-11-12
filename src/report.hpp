@@ -93,7 +93,8 @@ struct CodeDiff {
 };
 CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context = 2,
                    size_t limit = 200);
-// what each of the rebuilt function's address fields stands for in the diff's alignment, in order, as one string
+// everything the diff reads of the rebuilt function's address fields beyond their values, in order, as one string:
+// what each resolves to, and what it stands for in the alignment (for a literal, its bytes, which decide that)
 std::string rebuilt_targets(const Code& oc, const Code& rc, const DiffContext& cx);
 
 }  // namespace verifier

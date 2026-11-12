@@ -57,21 +57,7 @@ std::pair<u64, u64> entry_key(const Code& oc, const Code& rc, const DiffContext&
   h.add(rc.end);
   h.add(rc.code);
   h.add(std::string_view(reinterpret_cast<const char*>(rc.field_list.data()), rc.field_list.size_bytes()));
-  h.add(rebuilt_targets(oc, rc, cx));
-  // what the tokens show of each target: what its name resolves to, a compiler constant's bytes
-  for (auto& f : rc.field_list) {
-    if (f.kind == F_TBL) continue;
-    u64 t = u64(f.value);
-    if (auto it = rc.img->imports.find(t); it != rc.img->imports.end()) {
-      h.add(imp_str(&it->second));
-      continue;
-    }
-    Key k = cx.resolve(t);
-    h.add(u64(k.kind));
-    h.add(k.va);
-    h.add(k.name);
-    if (k.kind == Key::CONST) h.add(rc.img->bytes(t, 32));
-  }
+  h.add(rebuilt_targets(oc, rc, cx));  // what each field resolves to, and stands for in the alignment
   return h.done();
 }
 

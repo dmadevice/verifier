@@ -315,17 +315,31 @@ constexpr i64 NO_TARGET = INT64_MIN;
 // function are left open: whether they agree depends on the alignment (CodeDiff::same_targets).
 class Identities {
  public:
-  Identities(const Code& oc, const Code& rc, const DiffContext& cx) : oc_(oc), rc_(rc), cx_(cx) {
-    for (auto& f : oc.field_list)
-      if (f.kind != F_TBL && !oc.img->imports.count(u64(f.value)) && u64(f.value) != oc.img->base)
-        targets_.push_back(u64(f.value));
-    std::sort(targets_.begin(), targets_.end());
-    targets_.erase(std::unique(targets_.begin(), targets_.end()), targets_.end());
-  }
-  // what each of the rebuilt function's fields stands for, as the ids take it, in order
+  Identities(const Code& oc, const Code& rc, const DiffContext& cx) : oc_(oc), rc_(rc), cx_(cx) {}
+  // What the diff reads of each of the rebuilt function's fields, in order, given the original function: what its name
+  // resolves to, and a literal's bytes (what it stands for follows from them and the original's bytes) or else what
+  // it stands for.
   std::string rebuilt_targets() {
     key_.clear();
-    for (auto& f : rc_.field_list) target_key(true, f);
+    for (auto& f : rc_.field_list) {
+      u64 t = u64(f.value);
+      if (f.kind == F_TBL || t == rc_.img->base || rc_.img->imports.count(t)) {
+        target_key(true, f);
+        continue;
+      }
+      Key k = cx_.resolve(t);
+      put64(char('a' + k.kind), k.va);
+      key_ += k.name;
+      key_ += '\0';
+      if (k.kind == Key::VA) continue;
+      if (Bytes s = literal(k, t, f.access); !s.empty()) {
+        key_ += s;
+        key_ += '\0';
+        if (k.kind == Key::CONST) key_ += rc_.img->bytes(t, 32);  // a token shows as many as its operand reads
+      } else {
+        target_key(true, f);
+      }
+    }
     return key_;
   }
   // ids, and per instruction the in-function branch target (function-relative, NO_TARGET for none)
@@ -370,7 +384,8 @@ class Identities {
  private:
   const Code &oc_, &rc_;
   const DiffContext& cx_;
-  std::vector<u64> targets_;  // the original's targets other than imports and __ImageBase, sorted
+  std::vector<u64> targets_;
+  bool targets_made_ = false;
   // the keys seen, as ids in order of first sight: open addressing over their hashes, the keys in one buffer
   struct Slot {
     size_t hash = 0;
@@ -418,21 +433,32 @@ class Identities {
     if (it->second) return put64('V', *it->second);
     put64('U', t);  // stands for nothing the original has here
   }
-  std::optional<u64> stands_for(u64 r, int access) const {
-    const Image &O = *oc_.img, &R = *rc_.img;
+  // a literal's bytes, as the original's are compared with them (empty: not a literal)
+  Bytes literal(const Key& k, u64 r, int access) const {
+    if (k.kind == Key::STR) return rc_.img->cstring(r, k.wide());
+    if (k.kind != Key::CONST) return {};
+    i64 n = constant_size(k.name);
+    return Bytes(rc_.img->bytes(r, n ? n : access ? access : 4));
+  }
+  // the original's targets other than imports and __ImageBase, sorted (made when first needed)
+  const std::vector<u64>& targets() {
+    if (!targets_made_) {
+      for (auto& f : oc_.field_list)
+        if (f.kind != F_TBL && !oc_.img->imports.count(u64(f.value)) && u64(f.value) != oc_.img->base)
+          targets_.push_back(u64(f.value));
+      std::sort(targets_.begin(), targets_.end());
+      targets_.erase(std::unique(targets_.begin(), targets_.end()), targets_.end());
+      targets_made_ = true;
+    }
+    return targets_;
+  }
+  std::optional<u64> stands_for(u64 r, int access) {
+    const Image& O = *oc_.img;
     Key k = cx_.resolve(r);
     if (k.kind == Key::VA) return k.va;
-    Bytes s;
-    i64 n = 0;
-    if (k.kind == Key::STR) {
-      s = R.cstring(r, k.wide());
-    } else if (k.kind == Key::CONST) {
-      n = constant_size(k.name);
-      if (!n) n = access ? access : 4;
-      s = Bytes(R.bytes(r, n));
-    }
+    Bytes s = literal(k, r, access);
     using MK = Matching::Kind;
-    for (u64 o : targets_) {
+    for (u64 o : targets()) {
       if (!s.empty()) {
         if (!O.writable(o) && O.bytes(o, i64(s.size())) == s) return o;
       } else if (cx_.matching && (cx_.matching->holds(MK::Function, o, r) || cx_.matching->holds(MK::Data, o, r) ||
