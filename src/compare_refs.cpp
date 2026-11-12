@@ -258,7 +258,11 @@ std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   size_t lo = R->reloc_lower_bound(r_t), hi = R->reloc_lower_bound(r_t + n);
   std::vector<i64> ptrs;
   for (size_t i = lo; i < hi; ++i) ptrs.push_back(i64(R->reloc_sorted[i] - r_t));
-  i64 size = std::max<i64>(want, std::min<i64>(i64(n), i64(ctx->orig_object_end(o_t)) - i64(o_t)));
+  // the original object's bytes up to its known end, within the rebuilt span. Not for an address inside a symbol with
+  // nothing but zeros after it: that is an end pointer (a loop bound), and the original has the next object there
+  bool end_pointer = want == 0 && !ctx->symbol_start(r_t);
+  i64 known = end_pointer ? 0 : std::min<i64>(i64(n), i64(ctx->orig_object_end(o_t)) - i64(o_t));
+  i64 size = std::max<i64>(want, known);
   for (i64 off : ptrs)
     if (off < want) size = std::max(size, off + 8);
   std::vector<i64> kept;

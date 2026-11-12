@@ -87,9 +87,12 @@ class Player { ... };
   - `functions` (required): one object per function, `{"ea": <va>, "size": <bytes>, "name": "...",
     "lib": <bool>, "thunk": <bool>}`.
   - `vtables` (optional): `{"vtable_ea": <va>, "name": "<decorated ??_7 name>", "slots": [<va>, ...]}`.
-  - `data_items` (optional): data items; the alignment ones, `{"ea": <va>, "size": <bytes>, "kind": "align"}`,
-    tell where original objects end and where padding lies. Without them a data object is compared only as far as
-    the rebuilt one's last nonzero byte, so a table whose trailing entries the rebuild leaves zero still matches.
+  - `data_items` (optional): the items of the data sections, `{"ea": <va>, "size": <bytes>, "kind": "..."}`.
+    Each item ends the original object before it, and the `"align"` ones are padding. A data object is then
+    compared up to its original end, within the rebuilt object's span. Without this export it is compared only up
+    to the rebuilt object's last nonzero byte, so a table whose last entries the rebuild leaves zero, or a string
+    cut short, still matches. A table left as separate items ends at its first one, so it is compared no less than
+    without the export.
   - `data_names` (optional): named data, `{"ea": <va>, "kind": "data", ...}`.
 - Optional library attribution: `library_matches`, `{"matches": [{"ea": <va>, "lib": "x.lib",
   "symbol": "<decorated>"}, ...]}` (library functions found in the original, for example by signature
@@ -167,8 +170,8 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 52 cases in code: pairing (inference taken back when it fails and kept
-one-to-one, local statics, folded functions), data (literals against globals, tables cut short, tables that
+exact problems it must report, and 53 cases in code: pairing (inference taken back when it fails and kept
+one-to-one, local statics, folded functions), data (the data items export, literals against globals, tables cut short, tables that
 point at each other), name handling, the annotation parser, the instruction diff, the replay key and record,
 hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache
 directory's code, diff and sources stores. `ctest` also runs fadec's own decoder tests.

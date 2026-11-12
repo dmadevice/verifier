@@ -97,6 +97,8 @@ class Original {
   u64 object_end(u64 va) const;
   bool named_data(u64 va) const;
   bool in_padding(u64 va) const;
+  // the data items' and named data's exports (either may be absent): where objects end, and the padding
+  void load_items(const std::string& data_items, const std::string& data_names);
 
  private:
   const Config* config_ = nullptr;
@@ -107,7 +109,6 @@ class Original {
   std::vector<u64> boundaries_, align_starts_, align_ends_;
   std::vector<u64> data_names_;  // sorted, distinct
   void load_exports();           // the tables from the text exports
-  void load_items();
   bool load_snapshot(const std::string& path, const std::string& key);
   void save_snapshot(const std::string& path, const std::string& key) const;
 };

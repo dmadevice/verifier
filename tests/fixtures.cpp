@@ -1175,6 +1175,34 @@ Problems short_table(bool rebuilt_short) {
   return c.function(of, of + 8, rf, rf + 8);
 }
 
+// an end pointer: the address one past a table, which the rebuild's padding holds and the original's next object
+// starts at, compares nothing (the original object's end being known)
+Problems end_pointer() {
+  Side o(0), r(0x240);
+  u64 ot = o.put(RDATA, unhex("01000000020000000300000004000000"), 16);
+  o.put(RDATA, unhex("05000000"), 4);
+  u64 rt = r.put(RDATA, unhex("01000000020000000300000004000000") + Bytes(16, '\0'), 16);
+  u64 of = o.reserve(TEXT, 16), rf = r.reserve(TEXT, 16);
+  o.write(of, lea_rcx(of, ot + 16) + "\xc3");
+  r.write(rf, lea_rcx(rf, rt + 16) + "\xc3");
+  Image O = o.image(), R = r.image();
+  struct Table : ComparerContext {
+    u64 ot = 0, rt = 0;
+    u64 span(u64 t) const override { return rt + 32 - t; }
+    bool symbol_start(u64 t) const override { return t == rt; }
+    u64 orig_object_end(u64 t) const override { return t < ot + 16 ? ot + 16 : ot + 20; }
+  } table;
+  table.ot = ot;
+  table.rt = rt;
+  Comparer c(
+      &O, &R,
+      [&](u64 t) {
+        return t >= rt && t < rt + 32 ? Key::of_va(ot + (t - rt)) : Key::named(Key::UNRESOLVED, hex(t));
+      },
+      nullptr, nullptr, &table);
+  return c.function(of, of + 8, rf, rf + 8);
+}
+
 // a pointer only in the original: the rebuilt table holds the same eight bytes as a plain number
 Problems pointer_only_in_original() {
   Side o(0), r(0x240);
@@ -1233,6 +1261,29 @@ Problems table_cycle(bool a_first) {
   if (!a_first) pa = fa();
   if (pa.empty()) return {{"setup", "A should differ"}};
   return pb;
+}
+
+// the data items: every item ends the object before it, the alignment ones are padding, in either JSON layout
+Problems data_items_load() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-items-" + unique_suffix());
+  fs::create_directories(d);
+  std::string items = (d / "data_items.jsonl").string();
+  std::ofstream(items, std::ios::binary) << "{\"ea\": 4096, \"size\": 10, \"kind\": \"string\"}\n"
+                                         << "{\"ea\": 4106, \"size\": 2, \"kind\": \"align\"}\n"
+                                         << "\n"
+                                         << "{\"kind\": \"data\", \"size\": 4, \"ea\": 4108}\n"
+                                         << "{\"ea\": 4112, \"size\": 8, \"kind\": \"data\"}\n";
+  Original o;
+  o.load_items(items, (d / "absent.jsonl").string());
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  Problems bad;
+  if (o.object_end(4096) != 4106 || o.object_end(4100) != 4106) bad.push_back({"items", "a string's end"});
+  if (o.object_end(4108) != 4112) bad.push_back({"items", "a data item (other key order) ends at the next one"});
+  if (o.object_end(4112) != 4112) bad.push_back({"items", "the last item's end is unknown"});
+  if (!o.in_padding(4107) || o.in_padding(4100) || o.in_padding(4108)) bad.push_back({"items", "padding"});
+  return bad;
 }
 
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
@@ -2219,6 +2270,8 @@ int main(int argc, char** argv) {
       {"rebuilt table cut short", "data", [] { return short_table(true); }},
       {"original table cut short", "data", [] { return short_table(false); }},
       {"pointer only in the original", "data", pointer_only_in_original},
+      {"end pointer past a table", nullptr, end_pointer},
+      {"data items: object ends and padding", nullptr, data_items_load},
       {"table cycle, the failing table first", "data", [] { return table_cycle(true); }},
       {"table cycle, the other first", "data", [] { return table_cycle(false); }},
       {"ignored annotations reported", nullptr, ignored_annotations},

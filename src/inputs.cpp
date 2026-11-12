@@ -214,11 +214,11 @@ void Original::load_exports() {
       linked[ea] = Linked{m["lib"].as_str(), "", false};
     }
   }
-  load_items();
+  load_items(p.data_items, p.data_names);
 }
 
 std::string Original::snapshot_key(const Config& p) {
-  std::string key = "verifier original snapshot 5\n" + p.original_sha256 + "\n";
+  std::string key = "verifier original snapshot 6\n" + p.original_sha256 + "\n";
   i64 recent = two_seconds_ago();
   for (auto* f : p.snapshot_inputs()) {
     i64 time = std::numeric_limits<i64>::min();
@@ -380,12 +380,15 @@ u64 Original::extent(u64 va) const {
   return va + functions.at(va).size;
 }
 
-void Original::load_items() {
-  std::set<u64> b;
+// Where the original's data objects start and end, from the data items: each item starts an object (and so ends the
+// one before), and the alignment items are padding. A table the disassembler left as separate items ends at its
+// first one, which never compares less than the rebuilt object's own nonzero bytes (see Comparer::rodata).
+void Original::load_items(const std::string& data_items, const std::string& data_names) {
+  std::vector<u64> b;
   std::map<u64, u64> align;
-  if (file_exists(config_->data_items)) {
-    for_each_file_line(config_->data_items, [&](std::string_view line) {
-      if (line.find("\"align\"") == std::string_view::npos) return;
+  if (file_exists(data_items)) {
+    for_each_file_line(data_items, [&](std::string_view line) {
+      if (strip(line).empty()) return;
       u64 ea, size;
       size_t e;
       static constexpr std::string_view sz = ", \"size\": ";
@@ -395,12 +398,12 @@ void Original::load_items() {
         ea = u64(d["ea"].as_int());
         size = u64(d["size"].as_int());
       }
-      b.insert(ea);
-      align[ea] = ea + size;
+      b.push_back(ea);
+      if (line.find("\"align\"") != std::string_view::npos) align[ea] = ea + size;
     });
   }
-  if (file_exists(config_->data_names)) {
-    for_each_file_line(config_->data_names, [&](std::string_view line) {
+  if (file_exists(data_names)) {
+    for_each_file_line(data_names, [&](std::string_view line) {
       if (line.find("\"kind\": \"data\"") == std::string_view::npos) return;
       u64 ea;
       size_t e;
@@ -410,8 +413,10 @@ void Original::load_items() {
   }
   std::sort(data_names_.begin(), data_names_.end());
   data_names_.erase(std::unique(data_names_.begin(), data_names_.end()), data_names_.end());
-  for (u64 x : data_names_) b.insert(x);
-  boundaries_.assign(b.begin(), b.end());
+  b.insert(b.end(), data_names_.begin(), data_names_.end());
+  std::sort(b.begin(), b.end());
+  b.erase(std::unique(b.begin(), b.end()), b.end());
+  boundaries_ = std::move(b);
   for (auto& [s, e] : align) {
     align_starts_.push_back(s);
     align_ends_.push_back(e);
