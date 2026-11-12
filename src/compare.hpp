@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "matching.hpp"
 #include "names.hpp"
 #include "pe.hpp"
 #include "problem.hpp"
@@ -49,51 +50,12 @@ struct Key {
 };
 
 
-// -- journal: undo log of the pairing state while a pairing is only assumed ------------------------------------
-class Journal {
- public:
-  int active = 0;
-  std::vector<std::function<void()>> log;
-  bool speculate(const std::function<bool()>& attempt);
-};
-
-template <class K, class V, class H = std::hash<K>>
-class JMap {
- public:
-  explicit JMap(Journal* j = nullptr) : j_(j) {}
-  void attach(Journal* j) { j_ = j; }
-  bool contains(const K& k) const { return m_.count(k) != 0; }
-  const V* find(const K& k) const {
-    auto it = m_.find(k);
-    return it == m_.end() ? nullptr : &it->second;
-  }
-  void set(const K& k, V v) {
-    if (j_ && j_->active) {
-      auto it = m_.find(k);
-      if (it == m_.end())
-        j_->log.push_back([this, k] { m_.erase(k); });
-      else {
-        V old = it->second;
-        j_->log.push_back([this, k, old] { m_[k] = old; });
-      }
-    }
-    m_[k] = std::move(v);
-  }
-  const std::unordered_map<K, V, H>& items() const { return m_; }
-  size_t size() const { return m_.size(); }
-
- private:
-  Journal* j_;
-  std::unordered_map<K, V, H> m_;
-};
-
-struct PairHash {
-  size_t operator()(const std::pair<u64, u64>& p) const {
-    return std::hash<u64>()(p.first * 0x9E3779B97F4A7C15ull ^ p.second);
-  }
-};
-
 using NamePairs = std::vector<std::pair<Bytes, Bytes>>;  // (original decorated name, rebuilt one)
+
+// a pair of functions to compare: the original's [ostart, oend) and the rebuild's [rstart, rend)
+struct FnPair {
+  u64 ostart, oend, rstart, rend;
+};
 
 i64 literal_size(const Image& img, u64 start, const Key& key);
 
@@ -125,12 +87,18 @@ class ComparerContext {
   virtual std::optional<u64> end_of_previous(u64 t) const { return std::nullopt; }
   // the original functions a local static's owners pair with (nullopt: unknown)
   virtual std::optional<std::vector<u64>> static_home(u64 base) const { return std::nullopt; }
-  virtual bool infer(u64 o_t, u64 r_t) { return false; }  // r_t stands for o_t, when its code compares equal
+  // an unresolved rebuilt function r_t that may stand for original function o_t (when its code compares equal): the
+  // two functions to compare, or nullopt when it cannot
+  virtual std::optional<FnPair> function_candidate(u64 o_t, u64 r_t) const { return std::nullopt; }
   // decoded functions kept for the run (nullptr: the Comparer decodes)
   virtual std::shared_ptr<const Code> orig_code(u64 start, u64 end) { return nullptr; }
   virtual std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end) { return nullptr; }
 };
 
+// The comparison of a run's functions and data. A run explores its roots (the pairs it reports on), solves the
+// matching, then judges each root against it (Matching says how):
+//   cmp.explore(functions, data); cmp.solve(); ... cmp.judge_function(f) / cmp.judge_rodata(o, r) ...
+// function(), rodata() and vtable() are the units the comparison is made of, compared the way the mode says.
 class Comparer {
  public:
   // vtables (if given) and ctx (if given; else nothing is known) outlive the Comparer
@@ -142,55 +110,62 @@ class Comparer {
   std::function<Key(u64)> resolve;
   const std::map<u64, std::vector<u64>>& vtables;  // original vtable VA -> slot VAs
   NameOf names;                                    // original VA -> IDA name
+  ComparerContext* ctx;                            // what is known beyond the two images (never null)
+  Matching m;
 
-  Journal journal;
-  // results kept for the run (journaled): functions, read-only data and vtables by (original, rebuilt) address;
-  // FuncInfo pairs both ways
-  JMap<std::pair<u64, u64>, Problems, PairHash> memo_fn{&journal};
-  using Memo = JMap<std::pair<u64, u64>, std::optional<Problem>, PairHash>;
-  Memo memo_ro{&journal}, memo_vt{&journal};
-  JMap<u64, u64> memo_fi{&journal}, memo_fir{&journal};
-  JMap<u64, u64> bound{&journal}, bound_o{&journal};
-  JMap<u64, u64> data_r{&journal}, data_o{&journal};
-  JMap<std::string, std::string> hash_r{&journal}, hash_o{&journal};
-  JMap<u64, u64> vt_r{&journal}, vt_o{&journal};
-
-  ComparerContext* ctx;  // what is known beyond the two images (never null)
+  // the run: explore roots (any number of calls, each comparing the function candidates they register too), solve,
+  // then judge each root
+  void explore(const std::vector<FnPair>& functions, const std::vector<std::pair<u64, u64>>& data = {});
+  void solve();
+  Problems judge_function(const FnPair& f);
+  std::optional<Problem> judge_rodata(u64 o_t, u64 r_t);
+  // all three for these roots at once, each one's problems (the tests)
+  std::vector<Problems> check(const std::vector<FnPair>& roots);
+  Problems check(u64 ostart, u64 oend, u64 rstart, u64 rend) { return check({{ostart, oend, rstart, rend}})[0]; }
 
   // a function's decoded code: the context's (kept for the run), else decoded here
   std::shared_ptr<const Code> orig_code(u64 start, u64 end);
   std::shared_ptr<const Code> rebuilt_code(u64 start, u64 end);
 
-  Problems function(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth = 0);
-  std::optional<Problem> ref(u64 o_t, u64 r_t, int access);
+  // the units
+  Problems function(u64 ostart, u64 oend, u64 rstart, u64 rend);
   std::optional<Problem> rodata(u64 o_t, u64 r_t);
   std::optional<Problem> vtable(u64 o_vt, u64 r_vt);
-  std::optional<Problem> coinductive(Memo& memo, u64 o_t, u64 r_t, const std::function<std::optional<Problem>()>& body);
-  std::optional<Problem> rodata_body(u64 o_t, u64 r_t);
-  std::optional<Problem> vtable_body(u64 o_vt, u64 r_vt);
+
+  std::optional<Problem> ref(u64 o_t, u64 r_t, int access);
   // equal names, except that each build hash in a rebuilt name (anonymous namespace `?A0x...@`, lambda) stands
   // for one hash of the original's, the same one for the whole run
   bool same_names(const NamePairs& names);
   bool same_rtti(const Rtti& a, const Rtti& b);  // offsets, hierarchy, then the names
   bool same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b);
-  bool infer_data(u64 o_t, u64 r_t);
   bool is_vtable_slot(u64 o_vt, u64 off) const;  // off: a slot of the original's vtable other than the first
-  bool infer_vtable(u64 o_vt, u64 r_vt);
-  std::optional<Key> bind_local(u64 o_t, u64 r_t);
   bool static_fits(u64 o_base, u64 base);
-  bool static_overlaps(u64 o_base, u64 o_t, u64 base);
   bool refers_to(u64 f, u64 lo, u64 n);
-  Problems unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth = 0);
-  Problems unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth, int chain_depth = 0);
+  // `fi`: the FuncInfo pair of the function a funclet belongs to (compared there, not again for the funclet)
+  Problems unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, std::optional<std::pair<u64, u64>> fi = std::nullopt);
+  Problems unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend,
+                       std::optional<std::pair<u64, u64>> fi = std::nullopt, int chain_depth = 0);
 
  private:
+  using Kind = Matching::Kind;
+  Problems function_body(const FnPair& f, std::optional<std::pair<u64, u64>> fi);
+  Problems funclet(const FnPair& f, std::pair<u64, u64> fi);
   Problems code(u64 ostart, u64 oend, u64 rstart, u64 rend);
+  std::optional<Problem> rodata_body(u64 o_t, u64 r_t);
+  std::optional<Problem> vtable_body(u64 o_vt, u64 r_vt);
+  // the guesses (Matching): whether r_t stands for o_t, as a function, vtable, read-only data or local static
+  bool infer_function(u64 o_t, u64 r_t);
+  bool infer_vtable(u64 o_vt, u64 r_vt);
+  bool infer_data(u64 o_t, u64 r_t);
+  bool bind_local(u64 o_t, u64 r_t);
+  bool folded_extra(u64 base, u64 o_primary, u64 o_base);
   bool same_read(u64 o_t, u64 r_t, int access, u64 r_end, std::optional<bool> wide = std::nullopt);
   std::optional<Problem> accessed(u64 o_t, u64 r_t, int n);
   bool is_alternate(u64 o_t, u64 r_t);  // r_t's symbol is one of several at its address, one of them naming o_t
   std::optional<Problem> throw_info_cmp(u64 o_t, u64 r_t, std::string_view name);
   Problems handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend,
-                        int depth);
+                        std::optional<std::pair<u64, u64>> fi);
+  void explore_queued();
   friend class EHContext;
 };
 

@@ -170,8 +170,8 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 53 cases in code: pairing (inference taken back when it fails and kept
-one-to-one, local statics, folded functions), data (the data items export, literals against globals, tables cut short, tables that
+exact problems it must report, and 60 cases in code: pairing (a guessed function or table that fails, guesses
+kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items export, literals against globals, tables cut short, tables that
 point at each other), name handling, the annotation parser, the instruction diff, the replay key and record,
 hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache
 directory's code, diff and sources stores. `ctest` also runs fadec's own decoder tests.
@@ -193,9 +193,12 @@ A run, in the order `verify.cpp`'s `run` takes it:
    votes from the code that references them.
 6. **Comparison** (`compare.cpp`, `compare_refs.cpp`, `compare_eh.cpp`, decoding in `x64.cpp` and
    `code_store.cpp`): each annotated function against its original. This covers the instruction bytes with
-   address fields set aside, then what each address field refers to, then unwind and EH data. What a comparison
-   finds out (an unannotated function inferred to be an original, two tables found consistent) is speculative.
-   It goes into a journal and is taken back when the comparison that assumed it fails.
+   address fields set aside, then what each address field refers to, then unwind and EH data. Where it has to
+   guess (an unannotated function, vtable or table standing for an original one, a local static's place, a build
+   hash in a name, a shared FuncInfo), the matching (`matching.cpp`) decides, for all functions at once: every
+   annotated function and GLOBAL is explored first with each guess assumed, the guesses that hold together are
+   kept by fixed rules, and then each function is judged against them. The results do not depend on the order
+   the functions are compared in.
 7. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the symbolised
    instruction diff (`report.cpp`, kept between runs by `diff_store.cpp`), its stdout line and its report entry.
 8. **Summary and gate** (`verify.cpp`): coverage, the regression gate against the matched list, and the replay

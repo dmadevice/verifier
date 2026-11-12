@@ -59,6 +59,11 @@ struct Result {
 };
 void write_result(std::string& out, const Result& r, int level);  // as JSON, an object at `level`
 
+// the functions evaluate() compares for an annotation (nullopt: it reports without comparing), each a root the
+// comparison explores before any is judged
+std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig, const Rebuilt& reb,
+                                    const Pairing& pairing);
+// an annotation's result: its functions judged (after the comparer has explored every root and solved)
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
                 const std::string& root, bool show, Out& out, bool want_diff = true, DiffStore* diffs = nullptr);
 std::string result_line(const Result& r, const std::string& module);

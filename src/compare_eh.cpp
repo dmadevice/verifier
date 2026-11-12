@@ -7,10 +7,9 @@
 
 namespace verifier {
 
-constexpr int MAX_FUNCLET_DEPTH = 4;
 constexpr int MAX_CHAIN = 32;
 
-Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth) {
+Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, std::optional<std::pair<u64, u64>> fi) {
   auto ob = O->pdata_in(ostart, oend), rb = R->pdata_in(rstart, rend);
   bool same = ob.size() == rb.size();
   for (size_t i = 0; same && i < ob.size(); ++i)
@@ -19,13 +18,14 @@ Problems Comparer::unwinds(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth
   if (!same) return {{Category::Unwind, ".pdata ranges differ"}};
   Problems probs;
   for (size_t i = 0; i < ob.size(); ++i) {
-    auto p = unwind_info(O->pdata_at(ob[i])->unwind, R->pdata_at(rb[i])->unwind, ostart, oend, rstart, rend, depth);
+    auto p = unwind_info(O->pdata_at(ob[i])->unwind, R->pdata_at(rb[i])->unwind, ostart, oend, rstart, rend, fi);
     probs.insert(probs.end(), p.begin(), p.end());
   }
   return probs;
 }
 
-Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend, int depth, int chain_depth) {
+Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart, u64 rend,
+                               std::optional<std::pair<u64, u64>> fi, int chain_depth) {
   Unwind o = O->unwind(ou), r = R->unwind(ru);
   if (o.body != r.body) return {{Category::Unwind, "UNWIND_INFO codes differ"}};
   if (o.has_chain != r.has_chain || o.handler.has_value() != r.handler.has_value())
@@ -35,12 +35,12 @@ Problems Comparer::unwind_info(u32 ou, u32 ru, u64 ostart, u64 oend, u64 rstart,
         O->base + o.chain_end - ostart != R->base + r.chain_end - rstart)
       return {{Category::Unwind, "chained range differs"}};
     if (chain_depth >= MAX_CHAIN) return {{Category::Unwind, "unwind chain too long"}};
-    return unwind_info(o.chain_unwind, r.chain_unwind, ostart, oend, rstart, rend, depth, chain_depth + 1);
+    return unwind_info(o.chain_unwind, r.chain_unwind, ostart, oend, rstart, rend, fi, chain_depth + 1);
   }
   if (!o.handler) return {};
   Key got = resolve(*r.handler);
   if (!got.is_va(*o.handler)) return {{Category::Unwind, "handler " + hex(*o.handler) + " vs " + got.text()}};
-  return handler_data(names(*o.handler), *o.hdata, *r.hdata, ostart, oend, rstart, rend, depth);
+  return handler_data(names(*o.handler), *o.hdata, *r.hdata, ostart, oend, rstart, rend, fi);
 }
 
 // -- EH ----------------------------------------------------------------------------------------------------------
@@ -54,12 +54,12 @@ std::optional<u64> extent_or_leaf(const Image& img, u64 va) {  // .pdata's exten
 
 class EHContext {
  public:
-  EHContext(Comparer* c, u64 os, u64 oe, u64 rs, u64 re, int d)
-      : c(c), O(c->O), R(c->R), ostart(os), oend(oe), rstart(rs), rend(re), depth(d) {}
+  EHContext(Comparer* c, u64 os, u64 oe, u64 rs, u64 re)
+      : c(c), O(c->O), R(c->R), ostart(os), oend(oe), rstart(rs), rend(re) {}
   Comparer* c;
   const Image *O, *R;
   u64 ostart, oend, rstart, rend;
-  int depth;
+  std::optional<std::pair<u64, u64>> fi;  // the FuncInfo pair being compared (its funclets' handler data)
   std::vector<u64> ofun, rfun;
   Problems probs;
 
@@ -92,11 +92,8 @@ class EHContext {
       probs.push_back({Category::Eh, "funclet " + hex(o) + " has no .pdata"});
       return;
     }
-    if (depth >= MAX_FUNCLET_DEPTH) {
-      probs.push_back({Category::Eh, "funclet nesting too deep"});
-      return;
-    }
-    for (auto& [cat, why] : c->function(o, *oe, r, *re, depth + 1))
+    Problems got = fi ? c->funclet({o, *oe, r, *re}, *fi) : c->function(o, *oe, r, *re);
+    for (auto& [cat, why] : got)
       probs.push_back({Category::Eh, "funclet " + std::to_string(ofun.size() - 1) + ": " + std::string(category_name(cat)) + ": " + why});
   }
 
@@ -136,15 +133,10 @@ class EHContext {
     }
   }
 
+  // a FuncInfo pair is a guess (one partner on each side: Matching)
   Problems funcinfo(u64 ofi, u64 rfi) {
-    if (c->memo_fi.contains(ofi) || c->memo_fir.contains(rfi)) {
-      auto a = c->memo_fi.find(ofi);
-      auto b = c->memo_fir.find(rfi);
-      bool ok = a && *a == rfi && b && *b == ofi;
-      return ok ? Problems{} : Problems{{Category::Eh, "FuncInfo sharing differs"}};
-    }
-    c->memo_fi.set(ofi, rfi);
-    c->memo_fir.set(rfi, ofi);
+    if (!c->m.assume(Matching::Kind::FuncInfo, ofi, rfi)) return {{Category::Eh, "FuncInfo sharing differs"}};
+    fi = std::make_pair(ofi, rfi);
     auto rd = [](const Image* im, u64 p, u32(&m)[10]) {
       for (int k = 0; k < 10; ++k) m[k] = im->u32_at(p + 4 * k);
     };
@@ -229,15 +221,19 @@ class EHContext {
 };
 
 Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 ostart, u64 oend, u64 rstart, u64 rend,
-                                int depth) {
-  EHContext ctx(this, ostart, oend, rstart, rend, depth);
-  if (handler == "__CxxFrameHandler3") return ctx.funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
+                                std::optional<std::pair<u64, u64>> fi) {
+  EHContext ctx(this, ostart, oend, rstart, rend);
+  // a funclet's FuncInfo is its function's, compared there
+  auto funcinfo = [&](u64 ofi, u64 rfi) {
+    return fi && *fi == std::make_pair(ofi, rfi) ? Problems{} : ctx.funcinfo(ofi, rfi);
+  };
+  if (handler == "__CxxFrameHandler3") return funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
   if (handler == "__GSHandlerCheck") {
     if (gs_data(*O, od) != gs_data(*R, rd)) return {{Category::Eh, "GS cookie data differs"}};
     return {};
   }
   if (handler == "__GSHandlerCheck_EH") {
-    Problems p = ctx.funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
+    Problems p = funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
     if (gs_data(*O, od + 4) != gs_data(*R, rd + 4)) p.push_back({Category::Eh, "GS cookie data differs"});
     return p;
   }

@@ -20,23 +20,33 @@ namespace verifier {
 
 using json::Value;
 
-std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
-                                      const std::function<std::vector<u64>(const std::string&)>& lookup,
-                                      const std::function<std::optional<u64>(u64)>& orig_of, Comparer& cmp) {
-  const Image &O = *cmp.O, &R = *cmp.R;
+std::vector<GlobalRoot> global_roots(const std::vector<Annotation>& anns,
+                                     const std::function<std::vector<u64>(const std::string&)>& lookup,
+                                     const std::function<std::optional<u64>(u64)>& orig_of, const Image& O,
+                                     const Image& R) {
   std::vector<const Annotation*> sorted;
   for (auto& a : anns) sorted.push_back(&a);
   std::stable_sort(sorted.begin(), sorted.end(), [](auto* x, auto* y) { return x->va < y->va; });
-  std::vector<GlobalDiff> out;
+  std::vector<GlobalRoot> out;
   for (auto* a : sorted) {
     u64 va = a->va;
     if (a->kind != Kind::Global || !O.flags(va) || O.writable(va) || O.executable(va)) continue;
-    for (u64 rva : lookup(a->name)) {
-      if (orig_of(rva) != va || R.writable(rva) || R.executable(rva)) continue;
-      auto p = cmp.rodata(va, rva);
-      if (p) out.push_back({a, p->detail});
-    }
+    for (u64 rva : lookup(a->name))
+      if (orig_of(rva) == va && !R.writable(rva) && !R.executable(rva)) out.push_back({a, rva});
   }
+  return out;
+}
+
+std::vector<std::pair<u64, u64>> data_pairs(const std::vector<GlobalRoot>& roots) {
+  std::vector<std::pair<u64, u64>> out;
+  for (auto& g : roots) out.emplace_back(g.ann->va, g.rva);
+  return out;
+}
+
+std::vector<GlobalDiff> check_globals(const std::vector<GlobalRoot>& roots, Comparer& cmp) {
+  std::vector<GlobalDiff> out;
+  for (auto& g : roots)
+    if (auto p = cmp.judge_rodata(g.ann->va, g.rva)) out.push_back({g.ann, p->detail});
   return out;
 }
 
@@ -301,6 +311,18 @@ void pick_destructors(std::vector<Annotation>& anns, const Original& orig, const
     if (ann.flags.dtor) ann.name = pick_destructor(ann.name, slots.count(ann.va) != 0, has_code);
 }
 
+// the comparison's exploring of every root (the compared annotations' functions, the GLOBALs' data) and its matching,
+// before any result is judged
+void explore_all(const std::vector<Annotation>& anns, const Original& orig, const Rebuilt& reb, Pairing& pairing,
+                 Comparer& cmp, const std::vector<GlobalRoot>& globals) {
+  for (auto& ann : anns) {
+    if (!is_paired(ann.kind)) continue;
+    if (auto f = compared_pair(ann, orig, reb, pairing)) cmp.explore({*f});
+  }
+  cmp.explore({}, data_pairs(globals));
+  cmp.solve();
+}
+
 // every compared annotation's result, in address order: its stdout line and report entry made as it is evaluated,
 // and what the summary reads kept
 struct Evaluated {
@@ -355,10 +377,9 @@ void print_cache_stats(const CodeCache& orig_cache, const CodeCache& rebuilt_cac
 }
 
 // stdout after the results' lines: GLOBALs whose bytes differ, and annotations that name nothing
-void print_warnings(const std::vector<Annotation>& anns, const std::vector<Ignored>& ignored, const Rebuilt& reb,
-                    const Pairing& pairing, Comparer& cmp, const std::string& root, Out& out) {
-  auto lookup = [&](const std::string& n) { return reb.lookup(n).vas; };
-  for (auto& g : check_globals(anns, lookup, [&](u64 rva) { return pairing.orig_of(rva); }, cmp))
+void print_warnings(const std::vector<GlobalRoot>& globals, const std::vector<Ignored>& ignored, Comparer& cmp,
+                    const std::string& root, Out& out) {
+  for (auto& g : check_globals(globals, cmp))
     out.print("GLOBAL DIFFERS " + hex(g.ann->va) + " " + g.ann->name + " (" + where_of(g.ann->path, root) + ":" +
               std::to_string(g.ann->line) + "): " + g.problem + "; is the address right?");
   for (auto& ig : ignored)
@@ -427,9 +448,19 @@ int run(int argc, char** argv) {
   s.ph.mark("pairing");
   Comparer& cmp = pairing.comparer(orig_cache, rebuilt_cache);
   s.ph.mark("prebind votes");
+  auto globals = global_roots(
+      anns, [&](const std::string& n) { return reb.lookup(n).vas; }, [&](u64 rva) { return pairing.orig_of(rva); },
+      orig.img, reb.img);
+  explore_all(anns, orig, reb, pairing, cmp, globals);
+  s.ph.mark("explore+solve");
 
   Evaluated ev = evaluate_all(anns, orig, reb, pairing, cmp, diff_store, s, out);
   s.ph.mark("evaluate");
+  if (std::getenv("VERIFIER_TIMING")) {
+    auto st = cmp.m.stats();
+    std::fprintf(stderr, "matching: %zu nodes, %zu guesses (%zu hold), %zu roots compared again\n", st.nodes,
+                 st.candidates, st.accepted, st.rejudged);
+  }
   print_cache_stats(orig_cache, rebuilt_cache, orig_store, diff_store);
   orig_store.save();
   diff_store.save();
@@ -437,7 +468,7 @@ int run(int argc, char** argv) {
 
   out.write(ev.lines);
   std::string().swap(ev.lines);
-  print_warnings(anns, ignored, reb, pairing, cmp, p.root, out);
+  print_warnings(globals, ignored, cmp, p.root, out);
   Totals totals = summarize(ev.results, ev.libcode, orig, out, p.module);
   s.ph.mark("globals+summary");
 

@@ -112,11 +112,7 @@ void Pairing::pair_vftables() {
   }
 }
 
-void Pairing::use(std::unique_ptr<Comparer> c) {
-  cmp = std::move(c);
-  inferred_r_.attach(&cmp->journal);
-  inferred_o_.attach(&cmp->journal);
-}
+void Pairing::use(std::unique_ptr<Comparer> c) { cmp = std::move(c); }
 
 Comparer& Pairing::comparer(CodeCache& oc, CodeCache& rc) {
   use(std::make_unique<Comparer>(
@@ -150,10 +146,7 @@ void Pairing::prebind_locals() {
     auto v = votes_of(rva, ova);
     if (!v.empty()) votes[rva] = std::move(v);
   }
-  for (auto& [base, o_base] : decide_locals(votes)) {
-    cmp->bound.set(base, o_base);
-    cmp->bound_o.set(o_base, base);
-  }
+  for (auto& [base, o_base] : decide_locals(votes)) cmp->m.fix_local(base, o_base);
 }
 
 std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
@@ -303,8 +296,8 @@ Key Pairing::resolve(u64 t) const {
   Key r = resolve_symbol(t);
   if (r.kind == Key::UNRESOLVED) {
     auto at = reb.local_base(t);
-    if (at) {
-      if (auto b = cmp->bound.find(at->first)) return Key::of_va(*b + at->second);
+    if (at && cmp) {
+      if (auto b = cmp->m.local_of(at->first)) return Key::of_va(*b + at->second);
     }
   }
   if (r.kind != Key::UNRESOLVED || reb.symbols.contains(t)) return r;
@@ -359,21 +352,9 @@ std::optional<std::pair<u64, Key>> Pairing::literal_at(u64 t) const {
   return std::nullopt;
 }
 
-bool Pairing::infer(u64 o_t, u64 r_t) {
-  if (auto o = inferred_r_.find(r_t)) return *o == o_t;
-  if (inferred_o_.contains(o_t) || orig_of(r_t)) return false;  // one rebuilt function for each original
-  if (!orig.functions.contains(o_t) || !reb.symbols.contains(r_t) || infer_depth_ >= 4) return false;
-  u64 oend = orig.extent(o_t), rend = reb.extent(r_t);
-  return cmp->journal.speculate([&] {
-    inferred_r_.set(r_t, o_t);
-    inferred_o_.set(o_t, r_t);
-    struct Depth {
-      int& d;
-      Depth(int& x) : d(++x) {}
-      ~Depth() { --d; }
-    } depth(infer_depth_);
-    return cmp->function(o_t, oend, r_t, rend, 1).empty();
-  });
+std::optional<FnPair> Pairing::function_candidate(u64 o_t, u64 r_t) const {
+  if (orig_of(r_t) || !orig.functions.contains(o_t) || !reb.symbols.contains(r_t)) return std::nullopt;
+  return FnPair{o_t, orig.extent(o_t), r_t, reb.extent(r_t)};
 }
 
 }  // namespace verifier

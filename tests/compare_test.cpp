@@ -18,8 +18,11 @@ namespace verifier::test {
 
 namespace {
 
+// Build hashes pair one original hash with each rebuilt one, for the run. Each comparison unit below (a root at
+// original address 1, 2, ...) proposes the pairs of its names while exploring; the matching keeps, for each hash, the
+// pair of the root with the lowest address; judging answers from it. The order the roots are explored in does not
+// matter.
 Findings build_hashes() {
-  Comparer c(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
   Bytes a = ".?AVX@?A0x11111111@@", b = ".?AVX@?A0x22222222@@";
   auto rtti_of = [](const Bytes& name, u32 off) {
     Rtti r;
@@ -29,23 +32,47 @@ Findings build_hashes() {
     return r;
   };
   Findings bad;
-  if (!c.same_names({{a, b}}) || !c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)))
-    bad.push_back({"hash", "same name, other hash"});
-  if (c.same_names({{a, ".?AVX@?A0x33333333@@"}}) || c.same_names({{".?AVX@?A0x44444444@@", b}}))
-    bad.push_back({"hash", "a hash paired twice"});
-  if (c.same_rtti(rtti_of(a, 1), rtti_of(b, 2)) || c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
-    bad.push_back({"hash", "other value or name"});
-  if (c.same_rtti(rtti_of(".?AVW@?A0x99999999@@", 1), rtti_of(".?AVW@?A0xaaaaaaaa@@", 2)) ||
-      !c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}))
-    bad.push_back({"hash", "a failed comparison left a pairing behind"});
-  // a hash spelled the same on both sides is paired with itself like any other, in either order
-  for (bool same_first : {true, false}) {
-    Comparer d(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
-    Bytes s = "F<lambda_cc>", t = "F<lambda_dd>";
-    bool first = same_first ? d.same_names({{s, s}}) : d.same_names({{s, t}});
-    bool second = same_first ? d.same_names({{s, t}}) : d.same_names({{s, s}});
-    if (!first || second) bad.push_back({"hash", std::string("a hash paired twice, same spelling ") + (same_first ? "first" : "second")});
+  for (bool reversed : {false, true}) {
+    Comparer c(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
+    std::vector<std::function<void()>> units = {
+        [&] { c.same_names({{a, b}}); },
+        [&] { c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)); },
+        [&] { c.same_names({{a, ".?AVX@?A0x33333333@@"}}); },
+        [&] { c.same_names({{".?AVX@?A0x44444444@@", b}}); },
+        [&] { c.same_rtti(rtti_of(".?AVW@?A0x99999999@@", 1), rtti_of(".?AVW@?A0xaaaaaaaa@@", 2)); },
+        [&] { c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}); },
+    };
+    for (size_t k = 0; k < units.size(); ++k) {
+      size_t i = reversed ? units.size() - 1 - k : k;
+      c.m.unit(Matching::Kind::Function, i + 1, i + 1, [&] { return units[i](), Problems{}; });
+    }
+    c.solve();
+    std::string order = reversed ? " (explored in reverse)" : "";
+    if (!c.same_names({{a, b}}) || !c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)))
+      bad.push_back({"hash", "same name, other hash" + order});
+    if (c.same_names({{a, ".?AVX@?A0x33333333@@"}}) || c.same_names({{".?AVX@?A0x44444444@@", b}}))
+      bad.push_back({"hash", "a hash paired twice" + order});
+    if (c.same_rtti(rtti_of(a, 1), rtti_of(b, 2)) || c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
+      bad.push_back({"hash", "other value or name" + order});
+    if (!c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}))
+      bad.push_back({"hash", "a failed comparison left a pairing behind" + order});
   }
+  // a hash spelled the same on both sides is paired with itself like any other: the lower root's pairing is kept
+  for (bool same_first : {true, false})
+    for (bool reversed : {false, true}) {
+      Comparer d(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
+      Bytes s = "F<lambda_cc>", t = "F<lambda_dd>";
+      auto unit = [&](u64 at) {
+        bool same = (at == 1) == same_first;
+        d.m.unit(Matching::Kind::Function, at, at, [&] { return d.same_names({{s, same ? s : t}}), Problems{}; });
+      };
+      unit(reversed ? 2 : 1);
+      unit(reversed ? 1 : 2);
+      d.solve();
+      if (d.same_names({{s, s}}) != same_first || d.same_names({{s, t}}) == same_first)
+        bad.push_back({"hash", std::string("a hash paired twice, same spelling ") + (same_first ? "first" : "second") +
+                                   (reversed ? " (explored in reverse)" : "")});
+    }
   return bad;
 }
 
@@ -82,7 +109,10 @@ Findings global_bytes() {
     auto it = reb_to_orig.find(rva);
     return it == reb_to_orig.end() ? std::nullopt : std::optional<u64>(it->second);
   };
-  for (auto& g : check_globals(anns, lookup, orig_of, c)) got.push_back(g.ann->name);
+  auto roots = global_roots(anns, lookup, orig_of, O, R);
+  c.explore({}, data_pairs(roots));
+  c.solve();
+  for (auto& g : check_globals(roots, c)) got.push_back(g.ann->name);
   return bad_if(got != std::vector<std::string>{"g_exp"}, "globals", "reported " + join(got, ","));
 }
 
@@ -98,7 +128,7 @@ Findings literal_vs_global(bool string) {
   Image O = o.image(), R = r.image();
   Key k = string ? Key::named(Key::STR, "??_C@_03abc@") : Key::named(Key::CONST, "__real@3f800000");
   Comparer c(&O, &R, [&](u64 t) { return t == rk ? k : Key::named(Key::UNRESOLVED, hex(t)); });
-  return c.function(of, of + 7, rf, rf + 7);
+  return c.check(of, of + 7, rf, rf + 7);
 }
 
 // read-only data whose original extent is known (from its padding): compared to that end, so a table cut short
@@ -119,7 +149,7 @@ Findings short_table(bool rebuilt_short) {
   Comparer c(
       &O, &R, [&](u64 t) { return t == rt ? Key::of_va(ot) : Key::named(Key::UNRESOLVED, hex(t)); }, nullptr, nullptr,
       &spans);
-  return c.function(of, of + 8, rf, rf + 8);
+  return c.check(of, of + 8, rf, rf + 8);
 }
 
 // an end pointer: the address one past a table, which the rebuild's padding holds and the original's next object
@@ -147,7 +177,7 @@ Findings end_pointer() {
         return t >= rt && t < rt + 32 ? Key::of_va(ot + (t - rt)) : Key::named(Key::UNRESOLVED, hex(t));
       },
       nullptr, nullptr, &table);
-  return c.function(of, of + 8, rf, rf + 8);
+  return c.check(of, of + 8, rf, rf + 8);
 }
 
 // a pointer only in the original: the rebuilt table holds the same eight bytes as a plain number
@@ -168,7 +198,7 @@ Findings pointer_only_in_original() {
   Comparer c(
       &O, &R, [&](u64 t) { return t == rt ? Key::of_va(ot) : Key::named(Key::UNRESOLVED, hex(t)); }, nullptr, nullptr,
       &spans);
-  return c.function(of, of + 8, rf, rf + 8);
+  return c.check(of, of + 8, rf, rf + 8);
 }
 
 // tables that point at each other: A = {&B, &C}, B = {&A}, and C differs. B was found consistent while A was assumed
@@ -202,10 +232,9 @@ Findings table_cycle(bool a_first) {
         return it != to_orig.end() ? Key::of_va(it->second) : Key::named(Key::UNRESOLVED, hex(t));
       },
       nullptr, nullptr, &spans);
-  auto fa = [&] { return c.function(to.FA, to.FA + 8, tr.FA, tr.FA + 8); };
-  auto fb = [&] { return c.function(to.FB, to.FB + 8, tr.FB, tr.FB + 8); };
-  Findings pa = a_first ? fa() : Findings(), pb = fb();
-  if (!a_first) pa = fa();
+  FnPair fa{to.FA, to.FA + 8, tr.FA, tr.FA + 8}, fb{to.FB, to.FB + 8, tr.FB, tr.FB + 8};
+  auto got = a_first ? c.check({fa, fb}) : c.check({fb, fa});
+  Findings pa = got[a_first ? 0 : 1], pb = got[a_first ? 1 : 0];
   if (pa.empty()) return {{"setup", "A should differ"}};
   return pb;
 }
@@ -228,7 +257,7 @@ Findings malformed_unwind() {
   auto end = R.extent(fr);
   Comparer c(&O, &R, [](u64 t) { return Key::named(Key::UNRESOLVED, hex(t)); });
   c.unwinds(fo, fo + 13, fr, fr + 13);
-  c.unwind_info(R.pdata_at(fr + 8)->unwind, R.pdata_at(fr + 8)->unwind, fo, fo + 13, fr, fr + 13, 0);
+  c.unwind_info(R.pdata_at(fr + 8)->unwind, R.pdata_at(fr + 8)->unwind, fo, fo + 13, fr, fr + 13);
   return bad_if(!(end && *end == fr + 8), "extent", end ? hex(*end) : "None");
 }
 
@@ -253,7 +282,7 @@ Findings long_table(bool same) {
   std::map<std::string, u64> m{{"F", rf}, {"T", rt}};
   run.reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   run.start({{Kind::Function, of, "F", {}, "f.cpp", 1}, {Kind::Global, ot, "T", {}, "t.cpp", 1}});
-  return run.c->function(of, of + 8, rf, rf + 8);
+  return run.c->check(of, of + 8, rf, rf + 8);
 }
 
 // a table read through an __ImageBase-relative indexed operand (lea rcx, __ImageBase; mov eax, [rcx+rdx*4+table]):
@@ -274,7 +303,7 @@ Findings image_relative_table(bool same) {
   Comparer c(
       &O, &R, [&](u64 x) { return x == rt ? Key::of_va(ot) : Key::named(Key::UNRESOLVED, hex(x)); }, nullptr, nullptr,
       &spans);
-  return c.function(of, of + 15, rf, rf + 15);
+  return c.check(of, of + 15, rf, rf + 15);
 }
 
 }  // namespace

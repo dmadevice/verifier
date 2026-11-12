@@ -1,5 +1,5 @@
-// Comparison of what code refers to: local statics, referenced data, vtables and ThrowInfo, and the inference of
-// unannotated data and vtables from their contents.
+// Comparison of what code refers to: local statics, referenced data, vtables and ThrowInfo, and the guesses that pair
+// unannotated functions, data and vtables by their contents.
 #include <algorithm>
 
 #include "compare.hpp"
@@ -17,39 +17,43 @@ void mask(Bytes& buf, i64 lo, i64 hi) {
 
 }  // namespace
 
-std::optional<Key> Comparer::bind_local(u64 o_t, u64 r_t) {
+// A local static the votes did not place (or a further original of a folded read-only one): r_t's static stands for
+// o_t's when it fits there, a guess the matching decides (its rules: Matching). Judging: whether the matching holds it.
+bool Comparer::bind_local(u64 o_t, u64 r_t) {
   auto at = ctx->local_base(r_t);
-  if (!at || O->executable(o_t)) return std::nullopt;
+  if (!at || O->executable(o_t)) return false;
   auto [base, off] = *at;
   u64 o_base = o_t - off;
-  if (!bound.contains(base) && !bound_o.contains(o_base)) {
-    if (ctx->orig_padding(o_base) || !static_fits(o_base, base) || static_overlaps(o_base, o_t, base))
-      return std::nullopt;
-    auto homes = ctx->static_home(base);
-    if (homes) {
+  if (m.mode() == Matching::Mode::Judge) {
+    auto p = m.local_of(base);
+    return (p && *p == o_base) || m.holds(Kind::Local, o_base, base);
+  }
+  if (m.original_fixed(o_base)) return false;  // another static's, by the votes
+  if (auto fixed = m.local_of(base)) {
+    if (*fixed == o_base) return true;
+    // a further original of a folded read-only static
+    if (O->writable(o_base) || R->writable(base)) return false;
+  } else {
+    if (ctx->orig_padding(o_base) || !static_fits(o_base, base) || ctx->annotated_between(o_base, o_t)) return false;
+    if (auto homes = ctx->static_home(base)) {
       bool any = false;
       for (u64 f : *homes)
         if (refers_to(f, o_base, std::max<u64>(ctx->span(base), 1))) {
           any = true;
           break;
         }
-      if (!any) return std::nullopt;
-    }
-    bound.set(base, o_base);
-    bound_o.set(o_base, base);
-  } else if (bound.contains(base) && !bound_o.contains(o_base) && !O->writable(o_base) && !R->writable(base)) {
-    int same = 0;
-    for (auto& [ob, rb] : bound_o.items()) same += rb == base;
-    if (same < ctx->folded_locals(base)) {
-      i64 n = i64(rstrip_char(R->bytes(base, i64(ctx->span(base))), '\0').size());
-      if (!n) n = 1;
-      if (O->bytes(o_base, n) == O->bytes(*bound.find(base), n) && O->bytes(*bound.find(base), n) == R->bytes(base, n))
-        bound_o.set(o_base, base);
+      if (!any) return false;
     }
   }
-  auto p = bound_o.find(o_base);
-  if (p && *p == base) return Key::of_va(o_t);
-  return std::nullopt;
+  return m.assume(Kind::Local, o_base, base, off);
+}
+
+// a folded read-only static's further original: its bytes are the first original's and the rebuilt static's
+bool Comparer::folded_extra(u64 base, u64 o_primary, u64 o_base) {
+  if (O->writable(o_base) || R->writable(base)) return false;
+  i64 n = i64(rstrip_char(R->bytes(base, i64(ctx->span(base))), '\0').size());
+  if (!n) n = 1;
+  return O->bytes(o_base, n) == O->bytes(o_primary, n) && O->bytes(o_primary, n) == R->bytes(base, n);
 }
 
 bool Comparer::static_fits(u64 o_base, u64 base) {
@@ -65,13 +69,6 @@ bool Comparer::static_fits(u64 o_base, u64 base) {
     mask(b, i64(off), i64(off) + m);
   }
   return a == b;
-}
-
-bool Comparer::static_overlaps(u64 o_base, u64 o_t, u64 base) {
-  if (ctx->annotated_between(o_base, o_t)) return true;
-  for (auto& [ob, rb] : bound_o.items())
-    if (rb != base && o_base < ob && ob <= o_t) return true;
-  return false;
 }
 
 bool Comparer::refers_to(u64 f, u64 lo, u64 n) {
@@ -90,14 +87,16 @@ bool Comparer::is_vtable_slot(u64 o_vt, u64 off) const {
   return it != vtables.end() && off && off % 8 == 0 && off < 8 * it->second.size();
 }
 
+// The guesses: an unresolved rebuilt function, vtable or read-only object standing for an original one. Exploring,
+// each is assumed and compared (a function later: Matching queues it); judging, the matching answers.
+bool Comparer::infer_function(u64 o_t, u64 r_t) {
+  return ctx->function_candidate(o_t, r_t) && m.assume(Kind::Function, o_t, r_t);
+}
+
 bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
-  if (auto p = vt_r.find(r_vt); p && *p == o_vt) return true;
-  if (vt_r.contains(r_vt) || vt_o.contains(o_vt) || !vtables.count(o_vt) || !ctx->symbol_start(r_vt)) return false;
-  return journal.speculate([&] {
-    vt_r.set(r_vt, o_vt);
-    vt_o.set(o_vt, r_vt);
-    return !vtable(o_vt, r_vt).has_value();
-  });
+  if (!vtables.count(o_vt) || !ctx->symbol_start(r_vt) || !m.assume(Kind::Vtable, o_vt, r_vt)) return false;
+  if (m.mode() == Matching::Mode::Explore) vtable(o_vt, r_vt);
+  return true;
 }
 
 // One address field: the original's target o_t against the rebuild's r_t (`access`: the bytes the instruction reads
@@ -107,13 +106,14 @@ bool Comparer::infer_vtable(u64 o_vt, u64 r_vt) {
 //   2. resolve(): an annotation's original address, the original's name for the symbol, a constant or string literal
 //      by name, an RTTI or EH type by name, a local static the pairing has bound, or an offset into a resolved symbol;
 //   3. one of several names at r_t naming o_t (ICF-folded symbols) stands for o_t;
-//   4. a local static not yet bound is bound to o_t when it fits there (bind_local);
-//   5. an unresolved function is inferred to be o_t when its code compares equal (ctx->infer, speculative);
-//   6. an unresolved vtable is inferred to be o_t when its slots and RTTI compare equal (infer_vtable);
+//   4. a local static the votes did not place stands for o_t's when it fits there (bind_local);
+//   5. an unresolved function stands for o_t when its code compares equal (infer_function);
+//   6. an unresolved vtable stands for o_t when its slots and RTTI compare equal (infer_vtable);
 //   7. inside a compiler constant or string literal: the literal, with o_t moved back by the same offset;
 //   8. a slot past the first of an unresolved vtable: the vtable, inferred as in 6 and compared by its own slots (its
 //      symbol's span can run on over whatever the link put next);
-//   9. inside unresolved read-only data: its containing object is inferred to be o_t's object (infer_data).
+//   9. inside unresolved read-only data: its containing object stands for o_t's object (infer_data).
+// Steps 4, 5, 6, 8 and 9 are guesses (Matching): assumed while exploring, answered by the matching when judging.
 // Then the key decides what is compared: a constant or string by its bytes (and the bytes the instruction reads from
 // it), a type descriptor by name, ThrowInfo by its catchable types, a vbtable by its offsets; a key that is not o_t is
 // a reference problem, unless it is one past the end of the data object before (a loop bound). A key that is o_t
@@ -132,9 +132,9 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
   Key key = resolve(r_t);
   if (!key.is_va(o_t) && is_alternate(o_t, r_t)) key = Key::of_va(o_t);
   if (key.kind == Key::UNRESOLVED || (!key.is_va(o_t) && ctx->local_base(r_t).has_value())) {
-    if (auto b = bind_local(o_t, r_t)) key = *b;
+    if (bind_local(o_t, r_t)) key = Key::of_va(o_t);
   }
-  if (key.kind == Key::UNRESOLVED && O->executable(o_t) && ctx->infer(o_t, r_t)) key = Key::of_va(o_t);
+  if (key.kind == Key::UNRESOLVED && O->executable(o_t) && infer_function(o_t, r_t)) key = Key::of_va(o_t);
   if (key.kind == Key::UNRESOLVED && vtables.count(o_t) && infer_vtable(o_t, r_t)) key = Key::of_va(o_t);
   u64 o_at = o_t, r_at = r_t;
   std::optional<std::pair<u64, Key>> lit;
@@ -229,26 +229,14 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
   return std::nullopt;
 }
 
-// A comparison that can meet itself again (tables or vtables that point at each other) counts as consistent while it
-// runs. Its success holds as long as what it assumed, so it stays in the journal of an enclosing assumption; its
-// failure takes back everything assumed under it (a table found consistent only because this one was assumed to be)
-// before it is recorded.
-std::optional<Problem> Comparer::coinductive(Memo& memo, u64 o_t, u64 r_t,
-                                             const std::function<std::optional<Problem>()>& body) {
-  auto k = std::make_pair(o_t, r_t);
-  if (auto m = memo.find(k)) return *m;
-  std::optional<Problem> res;
-  journal.speculate([&] {
-    memo.set(k, std::nullopt);
-    res = body();
-    return !res;
-  });
-  if (res) memo.set(k, res);
-  return res;
-}
+namespace {
+Problems as_problems(std::optional<Problem> p) { return p ? Problems{std::move(*p)} : Problems{}; }
+std::optional<Problem> first(const Problems& ps) { return ps.empty() ? std::nullopt : std::optional<Problem>(ps[0]); }
+}  // namespace
 
+// read-only data and vtables can point at each other: met again while it is being compared, a unit holds (Matching)
 std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
-  return coinductive(memo_ro, o_t, r_t, [&] { return rodata_body(o_t, r_t); });
+  return first(m.unit(Kind::Data, o_t, r_t, [&] { return as_problems(rodata_body(o_t, r_t)); }));
 }
 
 std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
@@ -303,19 +291,17 @@ std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
 
 bool Comparer::infer_data(u64 o_t, u64 r_t) {
   if (vtables.count(o_t)) return false;  // by its slots and RTTI (infer_vtable): its bytes do not hold the RTTI
-  if (auto p = data_r.find(r_t); p && *p == o_t) return true;
-  if (data_r.contains(r_t) || data_o.contains(o_t) || resolve(r_t).kind != Key::UNRESOLVED) return false;
+  // a local static is placed by its own rule (bind_local)
+  if (ctx->local_base(r_t) || resolve(r_t).kind != Key::UNRESOLVED) return false;
   if (!ctx->symbol_start(r_t) || O->writable(o_t) || R->writable(r_t) || O->executable(o_t) || R->executable(r_t))
     return false;
   if (!O->flags(o_t)) return false;
   auto rb = R->bytes(r_t, i64(ctx->span(r_t)));
   // all zeros: nothing to tell this object from any other zero-filled one
   if (rb.find_first_not_of('\0') == std::string_view::npos) return false;
-  return journal.speculate([&] {
-    data_r.set(r_t, o_t);
-    data_o.set(o_t, r_t);
-    return !rodata(o_t, r_t).has_value();
-  });
+  if (!m.assume(Kind::Data, o_t, r_t)) return false;
+  if (m.mode() == Matching::Mode::Explore) rodata(o_t, r_t);
+  return true;
 }
 
 std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_view name) {
@@ -335,7 +321,7 @@ std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_vi
 }
 
 std::optional<Problem> Comparer::vtable(u64 o_vt, u64 r_vt) {
-  return coinductive(memo_vt, o_vt, r_vt, [&] { return vtable_body(o_vt, r_vt); });
+  return first(m.unit(Kind::Vtable, o_vt, r_vt, [&] { return as_problems(vtable_body(o_vt, r_vt)); }));
 }
 
 std::optional<Problem> Comparer::vtable_body(u64 o_vt, u64 r_vt) {
@@ -346,7 +332,7 @@ std::optional<Problem> Comparer::vtable_body(u64 o_vt, u64 r_vt) {
     u64 r_s = R->u64_at(r_vt + 8 * i);
     Key got = resolve(r_s);
     if (got.is_va(s) || is_alternate(s, r_s)) continue;
-    if (got.kind == Key::UNRESOLVED && O->executable(s) && ctx->infer(s, r_s)) continue;
+    if (got.kind == Key::UNRESOLVED && O->executable(s) && infer_function(s, r_s)) continue;
     res = Problem{Category::Vtable, "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
     break;
   }

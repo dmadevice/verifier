@@ -74,7 +74,7 @@ Findings replay(const Value& c) {
     std::vector<std::pair<u64, u64>> padding;
     std::vector<u64> local, literals, starts, named, annotated;
     std::shared_ptr<std::map<u64, Key>> keys;
-    const Image* R = nullptr;
+    const Image *O = nullptr, *R = nullptr;
     std::vector<u64> alternates(u64 t) const override {
       auto it = folded.find(t);
       return it == folded.end() ? std::vector<u64>() : it->second;
@@ -105,9 +105,12 @@ Findings replay(const Value& c) {
       auto it = refs.find(f);
       return it == refs.end() ? std::vector<u64>() : it->second;
     }
-    bool infer(u64 o_t, u64 r_t) override {
+    std::optional<FnPair> function_candidate(u64 o_t, u64 r_t) const override {
       auto it = same_code.find(r_t);
-      return it != same_code.end() && it->second == o_t;
+      if (it == same_code.end() || it->second != o_t) return std::nullopt;
+      auto oe = leaf_extent(*O, o_t), re = leaf_extent(*R, r_t);
+      if (!oe || !re) return std::nullopt;
+      return FnPair{o_t, *oe, r_t, *re};
     }
     std::optional<std::pair<u64, Key>> literal_at(u64 t) const override {
       for (u64 v : literals) {
@@ -163,17 +166,17 @@ Findings replay(const Value& c) {
   dc.annotated = u64s(m.get("annotated"));
   std::sort(dc.starts.begin(), dc.starts.end());
   dc.keys = keys;
+  dc.O = &O;
   dc.R = &R;
   Comparer cmp(&O, &R, resolve, &vtables, name_of(names), &dc);
   if (auto* pb = m.get("pre_bound")) {
     u64 rb = u64(pb->arr[0].as_int()), ob = u64(pb->arr[1].as_int());
-    cmp.bound.set(rb, ob);
-    cmp.bound_o.set(ob, rb);
+    cmp.m.fix_local(rb, ob);
   }
   u64 o0 = u64(c["ofn"].arr[0].as_int()), o1 = u64(c["ofn"].arr[1].as_int());
   u64 r0 = u64(c["rfn"].arr[0].as_int()), r1 = u64(c["rfn"].arr[1].as_int());
   auto oe = O.extent(o0), re = R.extent(r0);
-  return cmp.function(o0, oe && *oe ? *oe : o1, r0, re && *re ? *re : r1);
+  return cmp.check(o0, oe && *oe ? *oe : o1, r0, re && *re ? *re : r1);
 }
 
 void data_cases(const Value& doc) {

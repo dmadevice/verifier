@@ -3,33 +3,11 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 namespace verifier {
 
 std::string Key::text() const { return kind == VA ? hex(va) : std::string(name); }
-
-bool Journal::speculate(const std::function<bool()>& attempt) {
-  size_t mark = log.size();
-  auto undo = [&] {
-    for (size_t i = log.size(); i > mark; --i) log[i - 1]();
-    log.resize(mark);
-  };
-  ++active;
-  bool ok = false;
-  try {
-    ok = attempt();
-  } catch (...) {
-    --active;
-    undo();
-    throw;
-  }
-  --active;
-  if (!ok)
-    undo();
-  else if (!active)
-    log.resize(mark);  // held by no assumption any more
-  return ok;
-}
 
 i64 literal_size(const Image& img, u64 start, const Key& key) {
   if (key.kind == Key::TD) return 16 + i64(type_name(img, start).size());  // the name counts its terminator
@@ -90,6 +68,47 @@ Comparer::Comparer(const Image* o, const Image* r, std::function<Key(u64)> res,
       names(nm ? std::move(nm) : NameOf([](u64) { return std::string_view(); })),
       ctx(context ? context : &nothing_known()) {}
 
+void Comparer::explore(const std::vector<FnPair>& functions, const std::vector<std::pair<u64, u64>>& data) {
+  for (auto& f : functions) function(f.ostart, f.oend, f.rstart, f.rend);
+  for (auto& [o, r] : data) rodata(o, r);
+  explore_queued();
+}
+
+void Comparer::explore_queued() {
+  for (auto q = m.take_queued(); !q.empty(); q = m.take_queued())
+    for (auto& [o, r] : q)
+      if (auto f = ctx->function_candidate(o, r)) function(f->ostart, f->oend, f->rstart, f->rend);
+}
+
+void Comparer::solve() {
+  Matching::Rules rules;
+  rules.folded_locals = [this](u64 base) { return ctx->folded_locals(base); };
+  rules.folded_extra = [this](u64 base, u64 o_primary, u64 o_base) { return folded_extra(base, o_primary, o_base); };
+  m.solve(rules);
+}
+
+Problems Comparer::judge_function(const FnPair& f) {
+  if (!m.solved()) throw std::logic_error("judge before solve");
+  return m.judge_root(Kind::Function, f.ostart, f.rstart, [&] { return function_body(f, std::nullopt); });
+}
+
+std::optional<Problem> Comparer::judge_rodata(u64 o_t, u64 r_t) {
+  if (!m.solved()) throw std::logic_error("judge before solve");
+  Problems p = m.judge_root(Kind::Data, o_t, r_t, [&] {
+    auto x = rodata_body(o_t, r_t);
+    return x ? Problems{*x} : Problems{};
+  });
+  return p.empty() ? std::nullopt : std::optional<Problem>(p[0]);
+}
+
+std::vector<Problems> Comparer::check(const std::vector<FnPair>& roots) {
+  explore(roots);
+  solve();
+  std::vector<Problems> out;
+  for (auto& f : roots) out.push_back(judge_function(f));
+  return out;
+}
+
 std::shared_ptr<const Code> Comparer::orig_code(u64 start, u64 end) {
   auto c = ctx->orig_code(start, end);
   return c ? c : std::make_shared<const Code>(*O, start, end);
@@ -109,23 +128,10 @@ bool Comparer::same_names(const NamePairs& names) {
     if (px != py || hx.size() != hy.size()) return false;
     for (size_t k = 0; k < hx.size(); ++k) pairs.emplace_back(hx[k], hy[k]);
   }
-  std::unordered_map<std::string, std::string> new_o, new_r;
-  for (auto& [o, r] : pairs) {
-    auto get = [](const JMap<std::string, std::string>& m, const std::unordered_map<std::string, std::string>& nw,
-                  const std::string& k, const std::string& dflt) {
-      if (auto p = m.find(k)) return *p;
-      auto it = nw.find(k);
-      return it == nw.end() ? dflt : it->second;
-    };
-    if (get(hash_r, new_r, r, o) != o || get(hash_o, new_o, o, r) != r) return false;
-    new_r[r] = o;
-    new_o[o] = r;
-  }
-  for (auto& [o, r] : pairs) {
-    if (new_r.count(r)) hash_r.set(r, new_r[r]);
-    if (new_o.count(o)) hash_o.set(o, new_o[o]);
-  }
-  return true;
+  // each (original hash, rebuilt hash) a guess: one original hash for each rebuilt one (Matching)
+  bool ok = true;
+  for (auto& [o, r] : pairs) ok = m.assume(Kind::Hash, m.text_id(o), m.text_id(r)) && ok;
+  return ok;
 }
 
 bool Comparer::same_rtti(const Rtti& a, const Rtti& b) {
@@ -201,14 +207,21 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
 }
 
 
-Problems Comparer::function(u64 ostart, u64 oend, u64 rstart, u64 rend, int depth) {
-  auto k = std::make_pair(ostart, rstart);
-  if (auto m = memo_fn.find(k)) return *m;
-  memo_fn.set(k, Problems{});
-  Problems probs = code(ostart, oend, rstart, rend);
-  if (probs.empty()) probs = unwinds(ostart, oend, rstart, rend, depth);
-  memo_fn.set(k, probs);
+Problems Comparer::function_body(const FnPair& f, std::optional<std::pair<u64, u64>> fi) {
+  Problems probs = code(f.ostart, f.oend, f.rstart, f.rend);
+  if (probs.empty()) probs = unwinds(f.ostart, f.oend, f.rstart, f.rend, fi);
   return probs;
+}
+
+Problems Comparer::function(u64 ostart, u64 oend, u64 rstart, u64 rend) {
+  FnPair f{ostart, oend, rstart, rend};
+  return m.unit(Kind::Function, ostart, rstart, [&] { return function_body(f, std::nullopt); });
+}
+
+// a funclet of a function with FuncInfo `fi`: its own unit (its handler data is that FuncInfo, compared with the
+// function, not again here)
+Problems Comparer::funclet(const FnPair& f, std::pair<u64, u64> fi) {
+  return m.unit(Kind::Funclet, f.ostart, f.rstart, [&] { return function_body(f, fi); });
 }
 
 }  // namespace verifier

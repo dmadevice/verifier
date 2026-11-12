@@ -1,6 +1,6 @@
 // What each rebuilt address stands for in the original: annotated functions and data by name, other symbols by
-// original name, compiler constants and literals by value, local statics as comparisons (and the votes before
-// them) pair them, and unannotated functions whose code compares equal (infer).
+// original name, compiler constants and literals by value, local statics as the votes before the comparison and the
+// matching place them, and the unannotated functions that may stand for an original (function_candidate).
 #pragma once
 #include <map>
 #include <memory>
@@ -46,7 +46,7 @@ class Pairing : public ComparerContext {
   std::optional<u64> end_of_previous(u64 t) const override;
   std::vector<u64> alternates(u64 t) const override;
   std::optional<std::pair<u64, Key>> literal_at(u64 t) const override;
-  bool infer(u64 o_t, u64 r_t) override;
+  std::optional<FnPair> function_candidate(u64 o_t, u64 r_t) const override;
   std::optional<std::vector<u64>> static_home(u64 base) const override;
   std::vector<u64> orig_refs(u64 f) override;
   bool symbol_start(u64 t) const override { return reb.symbols.contains(t); }
@@ -82,8 +82,6 @@ class Pairing : public ComparerContext {
   std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
-  JMap<u64, u64> inferred_r_, inferred_o_;  // unresolved rebuilt functions inferred to be originals, both ways
-  int infer_depth_ = 0;                     // inferences in progress, one inside another (at most 4)
   mutable std::unordered_map<u64, Key> resolved_;      // resolve_symbol's answers
   std::unordered_map<u64, std::vector<u64>> refs_of_;  // orig_refs' answers
 };

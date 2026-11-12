@@ -111,6 +111,16 @@ bool same_tokens(const Code& oc, const Code& rc, u64 ova, u64 oend, u64 rva, u64
 
 }  // namespace
 
+std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig, const Rebuilt& reb,
+                                    const Pairing& pairing) {
+  u64 ova = ann.va;
+  if (!orig.functions.contains(ova) || (is_counted(ann.kind) && orig.linked.count(ova))) return std::nullopt;
+  const Pairing::Paired* pd = pairing.paired(ann);
+  Lookup lk = pd ? pd->lookup : reb.lookup(ann.name, sig_flag(ann.flags), true);
+  if (lk.vas.empty() || lk.nhits > 1) return std::nullopt;
+  return FnPair{ova, orig.extent(ova), lk.vas[0], reb.extent(lk.vas[0])};
+}
+
 Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb, Pairing& pairing, Comparer& cmp,
                 const std::string& root, bool show, Out& out, bool want_diff, DiffStore* diffs) {
   u64 ova = ann.va;
@@ -148,7 +158,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.name = lk.qname;
   u64 rva = lk.vas[0];
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
-  Problems probs = cmp.function(ova, oend, rva, rend);
+  Problems probs = cmp.judge_function({ova, oend, rva, rend});
   auto ocp = cmp.orig_code(ova, oend), rcp = cmp.rebuilt_code(rva, rend);  // decoded by the comparison
   const Code &oc = *ocp, &rc = *rcp;
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };

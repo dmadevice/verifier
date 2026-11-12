@@ -75,15 +75,14 @@ Findings failed_inference() {
              {Kind::Function, fo.G, "G", {}, "g.cpp", 1},
              {Kind::Function, fo.F, "F", {}, "f.cpp", 1}});
   Image O = o.image(), R = r.image();
-  struct InferOnly : ComparerContext {  // the pairing's inference, nothing else known
+  struct InferOnly : ComparerContext {  // the pairing's function candidates, nothing else known
     Pairing& p;
     explicit InferOnly(Pairing& x) : p(x) {}
-    bool infer(u64 a, u64 b) override { return p.infer(a, b); }
+    std::optional<FnPair> function_candidate(u64 a, u64 b) const override { return p.function_candidate(a, b); }
   } infer_only(p);
   p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
-  auto g = p.cmp->function(fo.G, fo.G + 6, fr.G, fr.G + 6);
-  auto f = p.cmp->function(fo.F, fo.F + 8, fr.F, fr.F + 8);
-  return g.empty() ? Findings{{"setup", "G should differ"}} : f;
+  auto got = p.cmp->check({{fo.G, fo.G + 6, fr.G, fr.G + 6}, {fo.F, fo.F + 8, fr.F, fr.F + 8}});
+  return got[0].empty() ? Findings{{"setup", "G should differ"}} : got[1];
 }
 
 // inference pairs one rebuilt function with each original: G and H both call A in the original, and two copies of it
@@ -110,12 +109,12 @@ Findings inference_one_to_one() {
   struct InferOnly : ComparerContext {
     Pairing& p;
     explicit InferOnly(Pairing& x) : p(x) {}
-    bool infer(u64 a, u64 b) override { return p.infer(a, b); }
+    std::optional<FnPair> function_candidate(u64 a, u64 b) const override { return p.function_candidate(a, b); }
   } infer_only(p);
   p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
-  auto g = p.cmp->function(og, og + 6, rg, rg + 6);
-  auto h = p.cmp->function(oh, oh + 6, rh, rh + 6);
-  return g.empty() ? h : Findings{{"setup", "G should match"}};
+  // H first or G first: the matching is the same
+  auto got = p.cmp->check({{oh, oh + 6, rh, rh + 6}, {og, og + 6, rg, rg + 6}});
+  return got[1].empty() ? got[0] : Findings{{"setup", "G should match"}};
 }
 
 // a leaf with no .pdata: the rebuild's extent reaches the next symbol, over the nop before a table, and the original's
@@ -134,6 +133,8 @@ Findings padded_leaf_sizes() {
   run.reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Annotation ann{Kind::Function, of, "F", {}, "f.cpp", 1};
   run.start({ann});
+  run.c->explore({*compared_pair(ann, run.orig, run.reb, *run.p)});
+  run.c->solve();
   Out out;
   Result res = evaluate(ann, run.orig, run.reb, *run.p, *run.c, ".", false, out);
   Findings bad;
@@ -178,9 +179,9 @@ Findings prebound_static(bool owner_first) {
   std::vector<std::pair<u64, u64>> order;
   if (owner_first) order.emplace_back(so.G, sr.G);
   order.emplace_back(so.F, sr.F);
-  Findings probs;
-  for (auto [of, rf] : order) probs = run.c->function(of, of + 7, rf, rf + 7);
-  return probs;
+  std::vector<FnPair> roots;
+  for (auto [of, rf] : order) roots.push_back({of, of + 7, rf, rf + 7});
+  return run.c->check(roots).back();
 }
 
 Findings consensus_static() {
@@ -219,8 +220,11 @@ Findings consensus_static() {
   };
   reb.fake.span = [](u64) { return u64(16); };
   run.start(anns);
+  std::vector<FnPair> roots;
+  for (auto& [n, f] : fns) roots.push_back({f.first, f.first + 7, f.second, f.second + 7});
+  auto probs = run.c->check(roots);
   std::map<std::string, bool> got;
-  for (auto& [n, f] : fns) got[n] = !run.c->function(f.first, f.first + 7, f.second, f.second + 7).empty();
+  for (size_t i = 0; i < fns.size(); ++i) got[fns[i].first] = !probs[i].empty();
   bool ok = got == std::map<std::string, bool>{{"w", true}, {"a", false}, {"b", false}};
   return bad_if(!ok, "binding", "differs");
 }
@@ -250,7 +254,35 @@ Findings folded_original(bool same_code) {
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
   reb.fake.span = [](u64) { return u64(16); };
   run.start({{Kind::Function, oo, "A", {}, "a.cpp", 1}, {Kind::Function, oG, "G", {}, "g.cpp", 1}});
-  return run.c->function(oG, oG + 6, rG, rG + 6);
+  return run.c->check(oG, oG + 6, rG, rG + 6);
+}
+
+// read-only data guessed by its bytes pairs one rebuilt object with each original: F and G read one table in the
+// original, two copies of it in the rebuild. The root with the lower original address (F) keeps the pairing, G's copy
+// is a reference problem, whichever is compared first
+Findings data_guess_one_to_one(bool f_first) {
+  Side o(0), r(0x240);
+  Bytes table = unhex("0102030405060708");
+  u64 ot = o.put(RDATA, table, 16), rt1 = r.put(RDATA, table, 16), rt2 = r.put(RDATA, table, 16);
+  u64 of = o.reserve(TEXT, 16), og = o.reserve(TEXT, 16);
+  u64 rf = r.reserve(TEXT, 16), rg = r.reserve(TEXT, 16);
+  o.write(of, lea_rcx(of, ot) + "\xc3");
+  o.write(og, lea_rcx(og, ot) + "\xc3");
+  r.write(rf, lea_rcx(rf, rt1) + "\xc3");
+  r.write(rg, lea_rcx(rg, rt2) + "\xc3");
+  FakeRun run;
+  run.O = o.image();
+  run.R = r.image();
+  for (u64 va : {of, og}) run.orig.functions.set(IdaFunction{va, 8, "", false, false});
+  run.reb.symbols = symbols_at({rf, rg, rt1, rt2, rt2 + 16});
+  run.reb.fake.extent = [](u64 va) { return va + 8; };
+  std::map<std::string, u64> m{{"F", rf}, {"G", rg}};
+  run.reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
+  run.start({{Kind::Function, of, "F", {}, "f.cpp", 1}, {Kind::Function, og, "G", {}, "g.cpp", 1}});
+  FnPair f{of, of + 8, rf, rf + 8}, g{og, og + 8, rg, rg + 8};
+  auto got = f_first ? run.c->check({f, g}) : run.c->check({g, f});
+  Findings pf = got[f_first ? 0 : 1], pg = got[f_first ? 1 : 0];
+  return pf.empty() ? pg : Findings{{"setup", "F should match"}};
 }
 
 Findings addend_across_annotation(u64 off) {
@@ -302,6 +334,8 @@ void add_pairing_cases(Cases& cases) {
       {"stub leaves its original open", nullptr, stub_pairing},
       {"failed inference taken back", "reference", failed_inference},
       {"inference one-to-one", "reference", inference_one_to_one},
+      {"data guess one-to-one, lower root compared first", "reference", [] { return data_guess_one_to_one(true); }},
+      {"data guess one-to-one, lower root compared last", "reference", [] { return data_guess_one_to_one(false); }},
       {"padded leaf, same size reported", nullptr, padded_leaf_sizes},
       {"other static, owner compared later", "reference", [] { return prebound_static(false); }},
       {"other static, owner compared first", "reference", [] { return prebound_static(true); }},
