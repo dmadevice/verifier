@@ -427,6 +427,12 @@ Problems qualified_names() {
        "N::E<N::I*>::`vbase destructor'"},
       {"public: void __cdecl `anonymous namespace'::S::f(int) __ptr64", "`anonymous namespace'::S::f"},
       {"int (__cdecl*__cdecl select_printer(struct box * __ptr64))(struct _iobuf * __ptr64,int)", "select_printer"},
+      // returning a pointer to member function: `(__cdecl <class>::*` before the name
+      {"public: void (__cdecl Foo::*__cdecl Foo::Get(void) __ptr64)(void) __ptr64", "Foo::Get"},
+      {"public: static int (__cdecl N::T<class N::A,int>::*__cdecl N::T<class N::A,int>::Pick(int))(int)const "
+       "__ptr64",
+       "N::T<N::A,int>::Pick"},
+      {"public: void __cdecl Foo::Set(void (__cdecl Foo::*)(void) __ptr64) __ptr64", "Foo::Set"},
   };
   Problems bad;
   for (auto& [u, want] : cases)
@@ -445,6 +451,7 @@ Problems qualified_names() {
       {"public: bool __cdecl N::S::operator<(class N::S const & __ptr64)const __ptr64", "(S const&)"},
       {"int (__cdecl*__cdecl select_printer(struct box * __ptr64))(struct _iobuf * __ptr64,int)", "(box*)"},
       {"void __cdecl f(void (__cdecl*)(int))", "(void (__cdecl*)(int))"},
+      {"public: void (__cdecl Foo::*__cdecl Foo::Get(int) __ptr64)(void) __ptr64", "(int)"},
   };
   for (auto& [u, want] : sigs)
     if (signature(u) != want) bad.push_back({"signature", u + " -> " + signature(u)});

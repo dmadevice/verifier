@@ -292,6 +292,20 @@ std::string fnptr_inner(const std::string& und) {
   const size_t npos = std::string_view::npos;
   size_t p = 1;  // t[0] == '('
   if (size_t w = underscore_word(t, 1); w != npos) p = skip_space(t, w);
+  // a pointer to member function names its class first: `(__cdecl N::C<class A>::*`
+  if (p < t.size() && t[p] != '*') {
+    long depth = 0;
+    size_t k = p;
+    for (; k < t.size(); ++k) {
+      char ch = t[k];
+      if (ch == '<') ++depth;
+      else if (ch == '>') --depth;
+      else if (depth <= 0 && (ch == '(' || ch == ')' || is_space(ch))) return und;
+      else if (depth <= 0 && ch == '*') break;
+    }
+    if (k >= t.size() || k < p + 2 || t.compare(k - 2, 2, "::") != 0) return und;
+    p = k;
+  }
   if (p >= t.size() || t[p] != '*') return und;
   ++p;
   size_t lp = t.rfind('(');
