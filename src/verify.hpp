@@ -25,12 +25,25 @@ class Out {
   std::string text_;
 };
 
+// What a compared annotation came to
+enum class Status : u8 {
+  Match,      // the rebuilt function is the original's
+  Diff,       // compared, and something differs (the result's category and problems say what)
+  Missing,    // no rebuilt symbol for the annotation's name
+  Ambiguous,  // the name matches several rebuilt symbols
+  BadAddr,    // no original function at the annotation's address
+  LibCode,    // a counted annotation on code a linked library supplies
+};
+std::string_view status_name(Status s);  // as reported: MATCH, DIFF, ...
+
 // One annotation's result, as the report gives it (members in the report's order; the optional ones written when set)
 struct Result {
   u64 va = 0;
-  std::string orig, name, kind, src;
+  std::string orig, name;
+  Kind kind = Kind::Function;
+  std::string src;
   std::vector<std::string> overloads;  // written when more than one
-  std::string status;
+  Status status = Status::Match;
   bool linked = false;  // LIBCODE: the library and the symbol (if any)
   std::string lib;
   std::optional<std::string> symbol;

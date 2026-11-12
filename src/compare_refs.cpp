@@ -220,7 +220,7 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
     auto p = ref(o_p, r_p, 0);
     if (p) {
       std::string offs = off < 0 ? hex_signed(off) : "+" + hex(u64(off));
-      return Problem{p->first, "pointer at " + hex(o_t) + offs + ": " + p->second};
+      return Problem{p->category, "pointer at " + hex(o_t) + offs + ": " + p->detail};
     }
   }
   return std::nullopt;
@@ -260,7 +260,7 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
       if (infer_data(o_p, r_p)) continue;
       auto p = ref(o_p, r_p, 0);
       if (p) {
-        res = Problem{p->first, "pointer at " + hex(o_t) + "+" + hex(u64(off)) + ": " + p->second};
+        res = Problem{p->category, "pointer at " + hex(o_t) + "+" + hex(u64(off)) + ": " + p->detail};
         break;
       }
     }
@@ -295,7 +295,7 @@ std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_vi
       return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
     if (a) {
       auto p = ref(a, b, 0);
-      if (p) return Problem{p->first, std::string(name) + ": " + p->second};
+      if (p) return Problem{p->category, std::string(name) + ": " + p->detail};
     }
   }
   return std::nullopt;

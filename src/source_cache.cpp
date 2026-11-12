@@ -20,7 +20,8 @@ SourceCache::SourceCache(std::string path, std::string key, i64 recent)
   if (!file) return;
   BinReader r(file->view(), head.size());
   std::unordered_map<std::string, Stored> m;
-  while (r.ok() && !r.done()) {
+  bool known_kinds = true;
+  while (r.ok() && known_kinds && !r.done()) {
     std::string name;
     Stored st{};
     u32 na = 0, ni = 0;
@@ -32,7 +33,12 @@ SourceCache::SourceCache(std::string path, std::string key, i64 recent)
     for (u32 i = 0; r.ok() && i < na; ++i) {
       Ann a;
       u8 folded = 0, dtor = 0;
-      r.str(a.kind);
+      std::string kind;
+      r.str(kind);
+      if (auto k = kind_named(kind))
+        a.kind = *k;
+      else
+        known_kinds = false;
       r.get(a.va);
       r.str(a.name);
       r.get(folded);
@@ -52,7 +58,7 @@ SourceCache::SourceCache(std::string path, std::string key, i64 recent)
     }
     if (r.ok()) m.emplace(std::move(name), std::move(st));
   }
-  if (r.ok()) old_ = std::move(m);  // a damaged file is not used at all
+  if (r.ok() && known_kinds) old_ = std::move(m);  // a damaged file is not used at all
 }
 
 const SourceCache::Entry* SourceCache::find(const ListedFile& f) const {
@@ -83,7 +89,7 @@ void SourceCache::save() {
     w.str(e.hash);
     w.put(u32(e.anns.size()));
     for (auto& a : e.anns) {
-      w.str(a.kind);
+      w.str(std::string(kind_name(a.kind)));
       w.put(a.va);
       w.str(a.name);
       w.put(u8(a.flags.folded));

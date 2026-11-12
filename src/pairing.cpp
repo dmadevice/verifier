@@ -54,11 +54,11 @@ std::string reb_mi_vftable(std::string_view n) {
 Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotation>& anns) : orig(o), reb(r) {
   pair_vftables();
   for (auto& a : anns) {
-    std::string key = a.kind == "VTABLE" ? a.name + "::`vftable'" : a.name;
+    std::string key = a.kind == Kind::Vtable ? a.name + "::`vftable'" : a.name;
     Lookup lk = reb.lookup(key, sig_flag(a.flags), is_paired(a.kind));
     for (u64 rva : lk.vas) {
       reb_to_origs_.push_back({rva, a.va});  // in annotation order: the last of each rebuilt address wins
-      if (a.kind != "STUB") paired_o.push_back(a.va);
+      if (a.kind != Kind::Stub) paired_o.push_back(a.va);
     }
     if (is_paired(a.kind)) {
       std::string pk = paired_key(a);

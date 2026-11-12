@@ -16,7 +16,7 @@ namespace verifier {
 class SourceCache {
  public:
   struct Ann {
-    std::string kind;
+    Kind kind;
     u64 va;
     std::string name;
     AnnotationFlags flags;

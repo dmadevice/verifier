@@ -11,6 +11,13 @@
 
 namespace verifier {
 
+// What an annotation says its definition is
+enum class Kind : u8 { Function, Stub, Synthetic, Template, Library, Global, Vtable };
+std::string_view kind_name(Kind k);                    // as written in source: FUNCTION, STUB, ...
+std::optional<Kind> kind_named(std::string_view name);  // the kind written `name`
+bool is_counted(Kind k);  // FUNCTION SYNTHETIC TEMPLATE: decompiled code, compared and counted
+bool is_paired(Kind k);   // the counted kinds and LIBRARY: compared
+
 struct AnnotationFlags {
   bool folded = false;  // FOLDED: identical-code folding gave several functions the address
   bool dtor = false;    // the definition is a destructor
@@ -18,7 +25,7 @@ struct AnnotationFlags {
 };
 
 struct Annotation {
-  std::string kind;  // FUNCTION STUB SYNTHETIC TEMPLATE LIBRARY GLOBAL VTABLE
+  Kind kind = Kind::Function;
   u64 va = 0;
   std::string name;
   AnnotationFlags flags;
@@ -32,8 +39,6 @@ struct Ignored {
   std::string text;
 };
 
-bool is_counted(std::string_view kind);                             // FUNCTION SYNTHETIC TEMPLATE
-bool is_paired(const std::string& kind);                            // counted + LIBRARY
 std::optional<std::string> sig_flag(const AnnotationFlags& flags);  // the parameter list, if any
 
 // The files under root: each directory's files (sorted by name), then its subdirectories (sorted by name), with their

@@ -196,7 +196,7 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
         continue;
       }
       auto p = ref(u64(fa[z].value), u64(fb[z].value), fa[z].access);
-      if (p) probs.push_back({p->first, "@" + std::to_string(k) + ": " + p->second});
+      if (p) probs.push_back({p->category, "@" + std::to_string(k) + ": " + p->detail});
     }
   }
   if (!(oc.table_region() == rc.table_region())) probs.push_back({"encoding", "switch table region differs"});

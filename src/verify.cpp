@@ -20,6 +20,11 @@ namespace verifier {
 
 using json::Value;
 
+std::string_view status_name(Status s) {
+  constexpr std::string_view names[] = {"MATCH", "DIFF", "MISSING", "AMBIGUOUS", "BADADDR", "LIBCODE"};
+  return names[size_t(s)];
+}
+
 void Out::write(const std::string& s) {
   text_ += s;
   std::fwrite(s.data(), 1, s.size(), stdout);
@@ -132,11 +137,11 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     rec.overloads = reb.overloads_of(ann.name);
   }
   if (!orig.functions.contains(ova)) {
-    rec.status = "BADADDR";
+    rec.status = Status::BadAddr;
     return rec;
   }
   if (is_counted(ann.kind) && orig.linked.count(ova)) {
-    rec.status = "LIBCODE";
+    rec.status = Status::LibCode;
     auto& l = orig.linked.at(ova);
     rec.linked = true;
     rec.lib = l.lib;
@@ -144,7 +149,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     return rec;
   }
   if (lk.vas.empty() || lk.nhits > 1) {
-    rec.status = lk.vas.empty() ? "MISSING" : "AMBIGUOUS";
+    rec.status = lk.vas.empty() ? Status::Missing : Status::Ambiguous;
     return rec;
   }
   rec.name = lk.qname;
@@ -183,12 +188,12 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   // a DIFF's category and diff, kept between runs (a function of the tokens): read from the store when it has them
   std::optional<DiffStore::Entry> kept;
   if (diffs && !same && !probs.empty() && want_diff) kept = diffs->get(offsets(oc), offsets(rc), ot, rt, cmp.names);
-  if (!probs.empty()) rec.category = same ? probs[0].first : kept ? kept->category : classify(ot, rt);
+  if (!probs.empty()) rec.category = same ? probs[0].category : kept ? kept->category : classify(ot, rt);
   rec.osize = i64(oc.code.size());  // padding after the last ret is not code, whichever side's extent reaches over it
   rec.rsize = i64(rc.code.size());
-  rec.status = probs.empty() ? "MATCH" : "DIFF";
+  rec.status = probs.empty() ? Status::Match : Status::Diff;
   rec.unresolved.assign(unresolved.begin(), unresolved.end());
-  for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].first + ": " + probs[i].second);
+  for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].category + ": " + probs[i].detail);
   if (!same) {
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
       if (ot[k] == rt[k]) continue;
@@ -232,7 +237,7 @@ void write_result(std::string& out, const Result& r, int level) {
   };
   str("orig", r.orig);
   str("name", r.name);
-  str("kind", r.kind);
+  str("kind", std::string(kind_name(r.kind)));
   str("src", r.src);
   if (r.overloads.size() > 1) strs("overloads", r.overloads);
   if (r.compared) {
@@ -241,7 +246,7 @@ void write_result(std::string& out, const Result& r, int level) {
     o.key("rsize");
     out += std::to_string(r.rsize);
   }
-  str("status", r.status);
+  str("status", std::string(status_name(r.status)));
   if (r.linked) {
     o.key("library");
     out += '[';
@@ -279,7 +284,7 @@ void write_result(std::string& out, const Result& r, int level) {
 }
 
 std::string result_line(const Result& r, const std::string& module) {
-  std::string line = pad_right(r.status, 9) + " " + r.orig + " " +
+  std::string line = pad_right(std::string(status_name(r.status)), 9) + " " + r.orig + " " +
                      pad_left(r.compared ? std::to_string(r.osize) : "-", 5) + "/" +
                      pad_right(r.compared ? std::to_string(r.rsize) : "-", 5) + " " +
                      pad_right(r.category.value_or(""), 12) + " " + r.name;
@@ -294,7 +299,7 @@ std::string result_line(const Result& r, const std::string& module) {
     for (auto& x : r.unresolved) xs.push_back(head_chars(x, 90));
     line += "\n            unresolved: " + join(xs, ", ");
   }
-  if (r.overloads.size() > 1 && r.status != "MATCH")
+  if (r.overloads.size() > 1 && r.status != Status::Match)
     line += "\n            overloads: " + head_chars(join(r.overloads, " "), 200) +
             " (pick one: `// FUNCTION: " + module + " 0x... (<params>)`)";
   return line;
@@ -310,11 +315,11 @@ std::vector<GlobalDiff> check_globals(const std::vector<Annotation>& anns,
   std::vector<GlobalDiff> out;
   for (auto* a : sorted) {
     u64 va = a->va;
-    if (a->kind != "GLOBAL" || !O.flags(va) || O.writable(va) || O.executable(va)) continue;
+    if (a->kind != Kind::Global || !O.flags(va) || O.writable(va) || O.executable(va)) continue;
     for (u64 rva : lookup(a->name)) {
       if (orig_of(rva) != va || R.writable(rva) || R.executable(rva)) continue;
       auto p = cmp.rodata(va, rva);
-      if (p) out.push_back({a, p->second});
+      if (p) out.push_back({a, p->detail});
     }
   }
   return out;
@@ -325,8 +330,8 @@ namespace {
 // what the summary and the regression gate read of a result once its line and report entry are made
 struct Outcome {
   u64 va;
-  std::string_view kind;  // the annotation's
-  std::string status;
+  Kind kind;  // the annotation's
+  Status status;
   std::optional<std::string> category;
   std::string name;
 };
@@ -355,7 +360,7 @@ Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>&
                  Out& out, const std::string& module) {
   Totals t;
   for (auto& r : results)
-    if (r.status == "MATCH" && is_counted(r.kind)) t.matched.insert(r.va);
+    if (r.status == Status::Match && is_counted(r.kind)) t.matched.insert(r.va);
   std::pair<u64, u64> funclets{0, 0};
   if (auto it = orig.img.pogo.find(".text$x"); it != orig.img.pogo.end()) funclets = it->second;
   size_t universe = 0;
@@ -370,9 +375,9 @@ Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>&
   std::map<std::string, i64> cat_counts, lib_counts;
   size_t differ = 0;
   for (auto& r : results) {
-    if (r.status == "MATCH") continue;
+    if (r.status == Status::Match) continue;
     ++differ;
-    ++cat_counts[r.category ? *r.category : r.status];
+    ++cat_counts[r.category ? *r.category : std::string(status_name(r.status))];
   }
   auto cats = by_count(cat_counts);
   for (auto& [ea, l] : orig.linked) {
@@ -381,9 +386,9 @@ Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>&
   }
   size_t lib_checked = 0, lib_match = 0;
   for (auto& r : results) {
-    if (r.kind == "LIBRARY") {
+    if (r.kind == Kind::Library) {
       ++lib_checked;
-      lib_match += r.status == "MATCH";
+      lib_match += r.status == Status::Match;
     }
   }
   for (auto& r : libcode) t.libcode.push_back(&r);
@@ -393,7 +398,7 @@ Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>&
               (sym.empty() ? "" : ", `" + sym + "`") +
               ": remove the definition and reach it as the original does (through the library call or class that uses "
               "it); `// " +
-              r->kind + ":` is for decompiled code, `// LIBRARY: " + module + " " + r->orig +
+              std::string(kind_name(r->kind)) + ":` is for decompiled code, `// LIBRARY: " + module + " " + r->orig +
               " <symbol>` for library code");
   }
   out.print("\nannotated " + std::to_string(results.size()) + ": " + std::to_string(t.matched.size()) + " match, " +
@@ -616,7 +621,7 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
       write_result(ev.report, r, 2);
     }
     ev.results.push_back({r.va, ann->kind, r.status, r.category, r.name});
-    if (r.status == "LIBCODE") ev.libcode.push_back(std::move(r));
+    if (r.status == Status::LibCode) ev.libcode.push_back(std::move(r));
   }
   if (s.a.json) ev.report += ev.results.empty() ? "[]" : "\n  ]";
   return ev;

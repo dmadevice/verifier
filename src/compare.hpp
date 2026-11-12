@@ -45,7 +45,11 @@ struct Key {
   std::string text() const;  // what a problem message shows: hex(va) or the name
 };
 
-using Problem = std::pair<std::string, std::string>;  // (category, detail)
+// What differs: the category (`reference`, `data`, `eh`, ...) and what is wrong, in words
+struct Problem {
+  std::string category, detail;
+  bool operator==(const Problem&) const = default;
+};
 using Problems = std::vector<Problem>;
 
 // -- journal: undo log of the pairing state while a pairing is only assumed ------------------------------------

@@ -119,9 +119,9 @@ int failures = 0;
 void report(const std::string& name, const char* want, const Problems& probs, bool ok, std::string note = "") {
   std::replace(note.begin(), note.end(), '\n', ' ');
   std::set<std::string> cats;
-  for (auto& p : probs) cats.insert(p.first);
+  for (auto& p : probs) cats.insert(p.category);
   std::string got = probs.empty() ? "MATCH" : join(std::vector<std::string>(cats.begin(), cats.end()), ",");
-  if (verbose && !probs.empty()) got += "  " + probs[0].second.substr(0, 110);
+  if (verbose && !probs.empty()) got += "  " + probs[0].detail.substr(0, 110);
   failures += !ok;
   std::string padded = name.size() >= 40 ? name : name + std::string(40 - name.size(), ' ');
   std::printf("%s %s want %-12s got %s%s\n", ok ? "ok " : "BAD", padded.c_str(), want ? want : "MATCH", got.c_str(),
@@ -132,7 +132,7 @@ void report(const std::string& name, const char* want, const Problems& probs, bo
 bool verdict(const char* want, const Problems& probs) {
   if (!want) return probs.empty();
   for (auto& p : probs)
-    if (p.first == want) return true;
+    if (p.category == want) return true;
   return false;
 }
 
@@ -552,9 +552,9 @@ Problems folded_annotations() {
   reb.fake.qualified = [](std::string_view n) { return std::string(n.substr(1, 1)); };
   std::map<std::string, u64> m{{"A", 0x100}, {"B", 0x100}, {"C", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  std::vector<Annotation> anns = {{"FUNCTION", 0x1000, "A", {}, "a.cpp", 1},
-                                  {"FUNCTION", 0x2000, "B", {}, "b.cpp", 1},
-                                  {"FUNCTION", 0x3000, "C", {}, "c.cpp", 1}};
+  std::vector<Annotation> anns = {{Kind::Function, 0x1000, "A", {}, "a.cpp", 1},
+                                  {Kind::Function, 0x2000, "B", {}, "b.cpp", 1},
+                                  {Kind::Function, 0x3000, "C", {}, "c.cpp", 1}};
   Pairing p(orig, reb, anns);
   auto a1 = p.alternates(0x100), a2 = p.alternates(0x200);
   bool ok = std::set<u64>(a1.begin(), a1.end()) == std::set<u64>{0x1000, 0x2000} && a2.empty();
@@ -717,7 +717,7 @@ Problems stub_pairing() {
   reb.symbols = Symbols({{0x100, "sub_1000"}, {0x200, "A"}});
   std::map<std::string, u64> m{{"sub_1000", 0x100}, {"A", 0x200}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  Pairing p(orig, reb, {{"STUB", 0x1000, "sub_1000", {}, "s.cpp", 1}, {"FUNCTION", 0x2000, "A", {}, "a.cpp", 1}});
+  Pairing p(orig, reb, {{Kind::Stub, 0x1000, "sub_1000", {}, "s.cpp", 1}, {Kind::Function, 0x2000, "A", {}, "a.cpp", 1}});
   bool ok = p.paired_o == std::vector<u64>{0x2000};
   return bad_if(!ok, "paired", "stub/function paired wrongly");
 }
@@ -730,11 +730,11 @@ Problems global_bytes() {
       rw = r.put(DATA, Bytes("\2\0\0\0", 4));
   Image O = o.image(), R = r.image();
   std::map<std::string, u64> names{{"g_std", ra}, {"g_exp", rb}, {"g_w", rw}};
-  std::vector<Annotation> anns = {{"GLOBAL", oa, "g_std", {}, "a.cpp", 1},
-                                  {"GLOBAL", oa, "g_exp", {}, "a.cpp", 2},
-                                  {"GLOBAL", ow, "g_w", {}, "a.cpp", 3},
-                                  {"GLOBAL", ob, "g_gone", {}, "a.cpp", 4},
-                                  {"FUNCTION", ob, "g_std", {}, "a.cpp", 5}};
+  std::vector<Annotation> anns = {{Kind::Global, oa, "g_std", {}, "a.cpp", 1},
+                                  {Kind::Global, oa, "g_exp", {}, "a.cpp", 2},
+                                  {Kind::Global, ow, "g_w", {}, "a.cpp", 3},
+                                  {Kind::Global, ob, "g_gone", {}, "a.cpp", 4},
+                                  {Kind::Function, ob, "g_std", {}, "a.cpp", 5}};
   std::unordered_map<u64, u64> reb_to_orig{{ra, oa}, {rb, oa}, {rw, ow}};
   struct Spans : ComparerContext {
     u64 span(u64) const override { return 16; }
@@ -890,9 +890,9 @@ Problems failed_inference() {
   std::map<std::string, u64> m{{"X", fr.X}, {"G", fr.G}, {"F", fr.F}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   Pairing p(orig, reb,
-            {{"GLOBAL", fo.X, "X", {}, "x.cpp", 1},
-             {"FUNCTION", fo.G, "G", {}, "g.cpp", 1},
-             {"FUNCTION", fo.F, "F", {}, "f.cpp", 1}});
+            {{Kind::Global, fo.X, "X", {}, "x.cpp", 1},
+             {Kind::Function, fo.G, "G", {}, "g.cpp", 1},
+             {Kind::Function, fo.F, "F", {}, "f.cpp", 1}});
   Image O = o.image(), R = r.image();
   struct InferOnly : ComparerContext {  // the pairing's inference, nothing else known
     Pairing& p;
@@ -937,12 +937,12 @@ Problems padded_leaf_sizes() {
   run.reb.symbols = symbols_at({rf, rf + code.size() + 2});
   std::map<std::string, u64> m{{"F", rf}};
   run.reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
-  Annotation ann{"FUNCTION", of, "F", {}, "f.cpp", 1};
+  Annotation ann{Kind::Function, of, "F", {}, "f.cpp", 1};
   run.start({ann});
   Out out;
   Result res = evaluate(ann, run.orig, run.reb, *run.p, *run.c, ".", false, out);
   Problems bad;
-  if (res.status != "MATCH") bad.push_back({"status", res.status});
+  if (res.status != Status::Match) bad.push_back({"status", std::string(status_name(res.status))});
   if (res.osize != i64(code.size()) || res.rsize != res.osize)
     bad.push_back({"sizes", std::to_string(res.osize) + "/" + std::to_string(res.rsize)});
   return bad;
@@ -979,7 +979,7 @@ Problems prebound_static(bool owner_first) {
     return std::nullopt;
   };
   reb.fake.span = [](u64) { return u64(16); };
-  run.start({{"FUNCTION", so.F, "F", {}, "f.cpp", 1}, {"FUNCTION", so.G, "G", {}, "g.cpp", 1}});
+  run.start({{Kind::Function, so.F, "F", {}, "f.cpp", 1}, {Kind::Function, so.G, "G", {}, "g.cpp", 1}});
   std::vector<std::pair<u64, u64>> order;
   if (owner_first) order.emplace_back(so.G, sr.G);
   order.emplace_back(so.F, sr.F);
@@ -1010,7 +1010,7 @@ Problems consensus_static() {
     run.orig.functions.set(IdaFunction{f.first, 7, "", false, false});
     vas.push_back(f.second);
     m[n] = f.second;
-    anns.push_back({"FUNCTION", f.first, n, {}, n + ".cpp", 1});
+    anns.push_back({Kind::Function, f.first, n, {}, n + ".cpp", 1});
   }
   vas.push_back(rs);
   reb.symbols = symbols_at(vas);
@@ -1054,7 +1054,7 @@ Problems folded_original(bool same_code) {
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
   reb.fake.span = [](u64) { return u64(16); };
-  run.start({{"FUNCTION", oo, "A", {}, "a.cpp", 1}, {"FUNCTION", oG, "G", {}, "g.cpp", 1}});
+  run.start({{Kind::Function, oo, "A", {}, "a.cpp", 1}, {Kind::Function, oG, "G", {}, "g.cpp", 1}});
   return run.c->function(oG, oG + 6, rG, rG + 6);
 }
 
@@ -1069,7 +1069,7 @@ Problems addend_across_annotation(u64 off) {
   std::map<std::string, u64> m{{"g", rg}, {"y", ry}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
-  Pairing p(orig, reb, {{"GLOBAL", og, "g", {}, "g.cpp", 1}, {"GLOBAL", oy, "y", {}, "y.cpp", 1}});
+  Pairing p(orig, reb, {{Kind::Global, og, "g", {}, "g.cpp", 1}, {Kind::Global, oy, "y", {}, "y.cpp", 1}});
   p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
   Key got = p.resolve(rg + off);
   return bad_if(!got.is_va(og + off), "reference", "g+" + hex(off) + " resolves to " + got.text());
@@ -1088,7 +1088,7 @@ Problems addend_across_sections() {
   std::map<std::string, u64> m{{"g", rg}};
   reb.fake.lookup = [m](const std::string& k, auto&, bool) { return fixed_lookup(m, k); };
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
-  Pairing p(orig, reb, {{"GLOBAL", og, "g", {}, "g.cpp", 1}});
+  Pairing p(orig, reb, {{Kind::Global, og, "g", {}, "g.cpp", 1}});
   p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
   Problems bad;
   if (!p.resolve(rg + 0x10).is_va(og + 0x10)) bad.push_back({"reference", "inside the symbol"});
@@ -1266,9 +1266,9 @@ Problems report_writer() {
   std::vector<Value> want(4, Value::object());
   rs[0].orig = "0x180001000";
   rs[0].name = "f";
-  rs[0].kind = "FUNCTION";
+  rs[0].kind = Kind::Function;
   rs[0].src = "a.cpp:1";
-  rs[0].status = "BADADDR";
+  rs[0].status = Status::BadAddr;
   rs[0].overloads = {"(int)", "(char const*)"};
   for (auto& [k, v] : std::vector<std::pair<std::string, Value>>{{"orig", Value::str("0x180001000")},
                                                                  {"name", Value::str("f")},
@@ -1279,7 +1279,7 @@ Problems report_writer() {
     want[0].set(k, v);
   rs[1] = rs[0];
   rs[1].overloads = {"(int)"};
-  rs[1].status = "LIBCODE";
+  rs[1].status = Status::LibCode;
   rs[1].linked = true;
   rs[1].lib = "x.lib";
   want[1] = Value::object();
@@ -1295,7 +1295,7 @@ Problems report_writer() {
   want[1].set("library", lib);
   rs[2] = rs[1];
   rs[2].linked = false;
-  rs[2].status = "MATCH";
+  rs[2].status = Status::Match;
   rs[2].compared = true;
   rs[2].osize = 16;
   rs[2].rsize = 16;
@@ -1312,7 +1312,7 @@ Problems report_writer() {
                                                                  {"problems", Value::array()}})
     want[2].set(k, v);
   rs[3] = rs[2];
-  rs[3].status = "DIFF";
+  rs[3].status = Status::Diff;
   rs[3].category = "regalloc";
   rs[3].unresolved = {"?g@@3HA"};
   rs[3].problems = {"code: \"x\"\n"};
@@ -2099,7 +2099,7 @@ int main(int argc, char** argv) {
     try {
       probs = h.fn();
       ok = verdict(h.want, probs);
-      if (!ok && !probs.empty()) note = probs[0].second.substr(0, 120);
+      if (!ok && !probs.empty()) note = probs[0].detail.substr(0, 120);
     } catch (std::exception& e) {
       ok = false;
       note = std::string("ERROR ") + e.what();

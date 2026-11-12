@@ -22,8 +22,20 @@
 
 namespace verifier {
 
-bool is_counted(std::string_view k) { return k == "FUNCTION" || k == "SYNTHETIC" || k == "TEMPLATE"; }
-bool is_paired(const std::string& k) { return is_counted(k) || k == "LIBRARY"; }
+namespace {
+constexpr std::string_view KIND_NAMES[] = {"FUNCTION", "STUB", "SYNTHETIC", "TEMPLATE", "LIBRARY", "GLOBAL", "VTABLE"};
+}  // namespace
+
+std::string_view kind_name(Kind k) { return KIND_NAMES[size_t(k)]; }
+
+std::optional<Kind> kind_named(std::string_view name) {
+  for (size_t i = 0; i < std::size(KIND_NAMES); ++i)
+    if (KIND_NAMES[i] == name) return Kind(i);
+  return std::nullopt;
+}
+
+bool is_counted(Kind k) { return k == Kind::Function || k == Kind::Synthetic || k == Kind::Template; }
+bool is_paired(Kind k) { return is_counted(k) || k == Kind::Library; }
 
 std::optional<std::string> sig_flag(const AnnotationFlags& flags) {
   if (flags.sig.empty()) return std::nullopt;
@@ -93,24 +105,22 @@ std::vector<ListedFile> list_files(const std::string& root) {
 
 namespace {
 
-const char* const KINDS[] = {"FUNCTION", "STUB", "SYNTHETIC", "TEMPLATE", "LIBRARY", "GLOBAL", "VTABLE"};
-
 // `//\s*(FUNCTION|...):\s*<module>\s+0x([0-9a-fA-F]+)\s*(.*)$` anywhere in the line: kind, hex, rest
-bool match_annotation(std::string_view line, const std::string& module, std::string& kind, std::string& hexs,
+bool match_annotation(std::string_view line, const std::string& module, Kind& kind, std::string& hexs,
                       std::string& rest) {
   for (size_t p = line.find("//"); p != std::string_view::npos; p = line.find("//", p + 1)) {
     size_t i = p + 2;
     while (i < line.size() && is_space(line[i])) ++i;
-    const char* k = nullptr;
-    for (const char* c : KINDS) {
-      size_t n = std::strlen(c);
-      if (line.compare(i, n, c) == 0 && line.compare(i + n, 1, ":") == 0) {
-        k = c;
+    std::optional<Kind> k;
+    for (size_t c = 0; c < std::size(KIND_NAMES); ++c) {
+      std::string_view n = KIND_NAMES[c];
+      if (line.compare(i, n.size(), n) == 0 && line.compare(i + n.size(), 1, ":") == 0) {
+        k = Kind(c);
         break;
       }
     }
     if (!k) continue;
-    i += std::strlen(k) + 1;
+    i += kind_name(*k).size() + 1;
     while (i < line.size() && is_space(line[i])) ++i;
     if (line.compare(i, module.size(), module) != 0) continue;
     i += module.size();
@@ -123,7 +133,7 @@ bool match_annotation(std::string_view line, const std::string& module, std::str
     if (h == j) continue;
     size_t r = h;
     while (r < line.size() && is_space(line[r])) ++r;
-    kind = k;
+    kind = *k;
     hexs = std::string(line.substr(j, h - j));
     rest = std::string(line.substr(r));
     return true;
@@ -141,7 +151,8 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
   std::vector<std::string_view> lines;
   for_each_line(data, [&](std::string_view l) { lines.push_back(l); });
   for (size_t i = 0; i < lines.size(); ++i) {
-    std::string kind, hexs, rest0;
+    Kind kind;
+    std::string hexs, rest0;
     if (!match_annotation(lines[i], module, kind, hexs, rest0)) continue;
     u64 va = parse_hex(hexs);
     std::string rest = strip(rest0);
@@ -153,7 +164,7 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
     std::vector<std::string> following(lines.begin() + long(i) + 1,
                                        lines.begin() + long(std::min(lines.size(), i + 4)));
     size_t before = out.size();
-    if (kind == "SYNTHETIC" || kind == "TEMPLATE" || kind == "LIBRARY") {
+    if (kind == Kind::Synthetic || kind == Kind::Template || kind == Kind::Library) {
       std::string name = rest;
       if (name.empty() && !following.empty()) {
         std::string f = strip(following[0]);
@@ -170,14 +181,14 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
       continue;
     }
     if (starts_with(rest, "(") && ends_with(rest, ")")) flags.sig = norm_params(rest);
-    if (kind == "GLOBAL") {
+    if (kind == Kind::Global) {
       for (auto& nxt : following) {
         if (auto name = global_decl_name(nxt)) {
           out.push_back({kind, va, *name, flags, kept_path, int(i + 1)});
           break;
         }
       }
-    } else if (kind == "VTABLE") {
+    } else if (kind == Kind::Vtable) {
       for (auto& nxt : following) {
         if (auto name = class_decl_name(nxt)) {
           out.push_back({kind, va, *name, flags, kept_path, int(i + 1)});
