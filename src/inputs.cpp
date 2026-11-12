@@ -29,9 +29,9 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
 
 // The snapshot: its header (format and key), the string table (u64 length, then the text), then the fields as u64s,
 // a string as (offset, length) in the table, which holds each distinct string once; then the image's headers
-// (u64 length, then the bytes), where the file's data lies in the image (a count, then each part's start and end), where
-// the laid-out image starts (page-aligned) and its size, and the image. Only the
-// table and the image are used in place once read.
+// (u64 length, then the bytes), where the file's data lies in the image (a count, then each part's start and end),
+// where the laid-out image starts (page-aligned) and its size, and the image. Only the table and the image are used in
+// place once read.
 constexpr std::string_view SNAPSHOT_MAGIC = "verifier-snapshot 6\n";
 
 struct StringTable {

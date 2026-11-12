@@ -715,7 +715,7 @@ std::vector<u64>& fast_path_counts() {
 namespace {
 
 std::optional<std::vector<Field>> unchecked_same_code_fields(const Code& o, const Image& img, u64 start, u64 end) {
-  auto answer =[&](FastPath why, std::optional<std::vector<Field>> fields = std::nullopt) {
+  auto answer = [&](FastPath why, std::optional<std::vector<Field>> fields = std::nullopt) {
     ++fast_path_counts()[size_t(why)];
     return fields;
   };

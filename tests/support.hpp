@@ -61,7 +61,7 @@ void add_inputs_cases(Cases&);
 void add_cache_cases(Cases&);
 void add_util_cases(Cases&);
 void run_fixture_cases(const Value& doc);  // reported as they run
-Image fixture_image(const Value& side);     // a fixture case's "orig" or "rebuilt" image
+Image fixture_image(const Value& side);    // a fixture case's "orig" or "rebuilt" image
 void report(const std::string& name, const char* want, const Findings& probs, bool ok, std::string note = "");
 bool verdict(const char* want, const Findings& probs);
 

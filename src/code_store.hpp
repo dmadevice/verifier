@@ -18,10 +18,10 @@ namespace verifier {
 // no function read from it is held).
 class CodeStore {
  public:
-  CodeStore(std::string path, std::string key);  // path empty: nothing kept
+  CodeStore(std::string path, std::string key);                                  // path empty: nothing kept
   std::shared_ptr<const Code> find(const Image& img, u64 start, u64 end) const;  // nullptr when not kept
-  void add(const Code& c);                                                        // a function decoded this run
-  void save();  // when functions were added
+  void add(const Code& c);                                                       // a function decoded this run
+  void save();                                                                   // when functions were added
 
  private:
   struct Record {
@@ -31,8 +31,8 @@ class CodeStore {
   };
   std::string path_, key_;
   std::shared_ptr<const MappedFile> file_;  // held by the functions read in place too
-  std::vector<u16> mnems_;  // the file's mnemonic numbers -> this run's (Mnem ids are numbered as a run meets them)
-  bool in_place_ = false;   // the numbers are the same: instructions and fields are read in place
+  std::vector<u16> mnems_;     // the file's mnemonic numbers -> this run's (Mnem ids are numbered as a run meets them)
+  bool in_place_ = false;      // the numbers are the same: instructions and fields are read in place
   std::vector<Record> index_;  // the file's functions, sorted
   BinWriter added_;            // the functions decoded this run, as the file has them
 };

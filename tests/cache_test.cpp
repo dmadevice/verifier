@@ -27,7 +27,8 @@ Findings sources_cache() {
   fs::create_directories(d / "src");
   std::string file = (d / "src" / "a.cpp").string(), cache = (d / "sources.bin").string();
   auto write = [&](const char* addr) {
-    std::ofstream(file, std::ios::binary) << "// FUNCTION: MOD 0x" << addr << "\nvoid Get() {}\n// FUNCTION: MOD 0x99\n";
+    std::ofstream(file, std::ios::binary)
+        << "// FUNCTION: MOD 0x" << addr << "\nvoid Get() {}\n// FUNCTION: MOD 0x99\n";
   };
   auto hour_ago = fs::file_time_type::clock::now() - std::chrono::hours(1);
   auto run = [&](i64 recent) {

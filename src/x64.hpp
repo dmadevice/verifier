@@ -196,9 +196,9 @@ class Code {
   friend class CodeStore;  // keeps decoded functions between runs, and makes them again without a decode
   struct Undecoded {};
   Code(const Image& img, u64 start, u64 end, Undecoded);  // only the place and bytes set
-  std::vector<Lean> lean_;          // the instructions, when held here
-  std::vector<Field> fields_;       // the fields, when held here
-  std::shared_ptr<const void> owner_;  // what insns and field_list are views of, when not held here
+  std::vector<Lean> lean_;                                // the instructions, when held here
+  std::vector<Field> fields_;                             // the fields, when held here
+  std::shared_ptr<const void> owner_;                     // what insns and field_list are views of, when not held here
   std::string_view decoded_from_;  // the bytes the instructions were decoded from (`code` before trimming)
   size_t reloc_at_ = 0;            // add_fields: the first relocation not before the instruction
   void add_fields(const Insn& ins, u32 image_base);
