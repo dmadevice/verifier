@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "layouts.hpp"
 #include "matching.hpp"
 #include "names.hpp"
 #include "pe.hpp"
@@ -136,8 +137,8 @@ class Comparer {
   // equal names, except that each build hash in a rebuilt name (anonymous namespace `?A0x...@`, lambda) stands
   // for one hash of the original's, the same one for the whole run
   bool same_names(const NamePairs& names);
-  bool same_rtti(const Rtti& a, const Rtti& b);  // offsets, hierarchy, then the names
-  bool same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b);
+  // the same values and structure (RTTI, a ThrowInfo's catchable types), then the same names
+  bool same_signature(const Signature& a, const Signature& b);
   bool is_vtable_slot(u64 o_vt, u64 off) const;  // off: a slot of the original's vtable other than the first
   bool static_fits(u64 o_base, u64 base);
   bool refers_to(u64 f, u64 lo, u64 n);

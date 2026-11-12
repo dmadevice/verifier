@@ -24,22 +24,16 @@ namespace {
 // matter.
 Findings build_hashes() {
   Bytes a = ".?AVX@?A0x11111111@@", b = ".?AVX@?A0x22222222@@";
-  auto rtti_of = [](const Bytes& name, u32 off) {
-    Rtti r;
-    r.present = true;
-    r.name = name;
-    r.off = off;
-    return r;
-  };
+  auto rtti_of = [](const Bytes& name, u32 off) { return Signature{{1, off}, {name}, {}}; };
   Findings bad;
   for (bool reversed : {false, true}) {
     Comparer c(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
     std::vector<std::function<void()>> units = {
         [&] { c.same_names({{a, b}}); },
-        [&] { c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)); },
+        [&] { c.same_signature(rtti_of(a, 1), rtti_of(b, 1)); },
         [&] { c.same_names({{a, ".?AVX@?A0x33333333@@"}}); },
         [&] { c.same_names({{".?AVX@?A0x44444444@@", b}}); },
-        [&] { c.same_rtti(rtti_of(".?AVW@?A0x99999999@@", 1), rtti_of(".?AVW@?A0xaaaaaaaa@@", 2)); },
+        [&] { c.same_signature(rtti_of(".?AVW@?A0x99999999@@", 1), rtti_of(".?AVW@?A0xaaaaaaaa@@", 2)); },
         [&] { c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}); },
     };
     for (size_t k = 0; k < units.size(); ++k) {
@@ -48,11 +42,11 @@ Findings build_hashes() {
     }
     c.solve();
     std::string order = reversed ? " (explored in reverse)" : "";
-    if (!c.same_names({{a, b}}) || !c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)))
+    if (!c.same_names({{a, b}}) || !c.same_signature(rtti_of(a, 1), rtti_of(b, 1)))
       bad.push_back({"hash", "same name, other hash" + order});
     if (c.same_names({{a, ".?AVX@?A0x33333333@@"}}) || c.same_names({{".?AVX@?A0x44444444@@", b}}))
       bad.push_back({"hash", "a hash paired twice" + order});
-    if (c.same_rtti(rtti_of(a, 1), rtti_of(b, 2)) || c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
+    if (c.same_signature(rtti_of(a, 1), rtti_of(b, 2)) || c.same_names({{".?AVY@?A0x55555555@@", ".?AVZ@?A0x66666666@@"}}))
       bad.push_back({"hash", "other value or name" + order});
     if (!c.same_names({{".?AVW@?A0x99999999@@", ".?AVW@?A0xbbbbbbbb@@"}}))
       bad.push_back({"hash", "a failed comparison left a pairing behind" + order});

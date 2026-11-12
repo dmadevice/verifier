@@ -331,67 +331,6 @@ Unwind Image::unwind(u32 u) const {
   return w;
 }
 
-Bytes type_name(const Image& img, u64 td) { return img.cstring(td + 16); }
-
-Bytes gs_data(const Image& img, u64 va) {
-  u32 f = img.u32_at(va);
-  return Bytes(img.bytes(va, (f & 4) ? 12 : 4));
-}
-
-Rtti rtti(const Image& img, u64 col) {
-  Rtti r;
-  if (!col || !img.flags(col)) return r;
-  r.present = true;
-  u32 sig = img.u32_at(col);
-  if (sig != 1) {
-    r.bad_sig = true;
-    r.sig = sig;
-    return r;
-  }
-  r.off = img.u32_at(col + 4);
-  r.cdoff = img.u32_at(col + 8);
-  u32 td = img.u32_at(col + 12), chd = img.u32_at(col + 16);
-  r.attrs = img.u32_at(img.base + chd + 4);
-  u32 nbase = img.u32_at(img.base + chd + 8), barr = img.u32_at(img.base + chd + 12);
-  for (u32 i = 0; i < std::min<u32>(nbase, 256); ++i) {
-    u64 bcd = img.base + img.u32_at(img.base + barr + 4 * i);
-    BaseDesc b;
-    b.name = type_name(img, img.base + img.u32_at(bcd));
-    b.ncont = img.u32_at(bcd + 4);
-    b.mdisp = img.i32_at(bcd + 8);
-    b.pdisp = img.i32_at(bcd + 12);
-    b.vdisp = img.i32_at(bcd + 16);
-    b.attr = img.u32_at(bcd + 20);
-    r.bases.push_back(std::move(b));
-  }
-  r.name = type_name(img, img.base + td);
-  return r;
-}
-
-ThrowInfoSig throw_info(const Image& img, u64 ti) {
-  ThrowInfoSig t;
-  t.attrs = img.u32_at(ti);
-  i32 unwind = img.i32_at(ti + 4);
-  u32 cta = img.u32_at(ti + 12);
-  u32 n = std::min<u32>(img.u32_at(img.base + cta), 64);
-  t.funcs.push_back(unwind ? img.base + u64(i64(unwind)) : 0);
-  for (u32 i = 0; i < n; ++i) {
-    u64 ct = img.base + img.u32_at(img.base + cta + 4 + 4 * i);
-    CatchableSig c;
-    c.props = img.u32_at(ct);
-    i32 td = img.i32_at(ct + 4);
-    c.mdisp = img.i32_at(ct + 8);
-    c.pdisp = img.i32_at(ct + 12);
-    c.vdisp = img.i32_at(ct + 16);
-    c.size = img.i32_at(ct + 20);
-    u32 copy = img.u32_at(ct + 24);
-    c.name = type_name(img, img.base + u64(i64(td)));
-    t.types.push_back(std::move(c));
-    t.funcs.push_back(copy ? img.base + copy : 0);
-  }
-  return t;
-}
-
 std::string imp_str(const Import* imp) {
   if (!imp) return "(not an import)";
   return imp->name.empty() ? imp->dll + "#" + std::to_string(imp->ordinal) : imp->dll + "!" + imp->name;

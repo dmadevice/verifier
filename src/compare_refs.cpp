@@ -305,11 +305,12 @@ bool Comparer::infer_data(u64 o_t, u64 r_t) {
 }
 
 std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_view name) {
-  ThrowInfoSig os = throw_info(*O, o_t), rs = throw_info(*R, r_t);
-  if (!same_catchables(os, rs))
+  Signature os = signature(*O, THROW_INFO, o_t), rs = signature(*R, THROW_INFO, r_t);
+  if (!same_signature(os, rs))
     return Problem{Category::Reference, hex(o_t) + " vs " + std::string(name) + ": catchable types differ"};
-  for (size_t i = 0; i < std::min(os.funcs.size(), rs.funcs.size()); ++i) {
-    u64 a = os.funcs[i], b = rs.funcs[i];
+  // the destructor, then each catchable type's copy constructor
+  for (size_t i = 0; i < std::min(os.functions.size(), rs.functions.size()); ++i) {
+    u64 a = os.functions[i], b = rs.functions[i];
     if (bool(a) != bool(b))
       return Problem{Category::Reference, hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
     if (a) {
@@ -336,7 +337,7 @@ std::optional<Problem> Comparer::vtable_body(u64 o_vt, u64 r_vt) {
     res = Problem{Category::Vtable, "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
     break;
   }
-  if (!res && !same_rtti(rtti(*O, O->u64_at(o_vt - 8)), rtti(*R, R->u64_at(r_vt - 8))))
+  if (!res && !same_signature(rtti_signature(*O, O->u64_at(o_vt - 8)), rtti_signature(*R, R->u64_at(r_vt - 8))))
     res = Problem{Category::Vtable, "RTTI of " + hex(o_vt) + " differs"};
   return res;
 }

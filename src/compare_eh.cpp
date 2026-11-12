@@ -1,9 +1,9 @@
 // Comparison of a function's unwind data: .pdata ranges, UNWIND_INFO chains, and the language handler's data
 // (C++ EH FuncInfo with its funclets, GS cookie data, SEH scope tables).
 #include <algorithm>
-#include <cstring>
 
 #include "compare.hpp"
+#include "layouts.hpp"
 
 namespace verifier {
 
@@ -94,7 +94,8 @@ class EHContext {
     }
     Problems got = fi ? c->funclet({o, *oe, r, *re}, *fi) : c->function(o, *oe, r, *re);
     for (auto& [cat, why] : got)
-      probs.push_back({Category::Eh, "funclet " + std::to_string(ofun.size() - 1) + ": " + std::string(category_name(cat)) + ": " + why});
+      probs.push_back({Category::Eh, "funclet " + std::to_string(ofun.size() - 1) + ": " +
+                                         std::string(category_name(cat)) + ": " + why});
   }
 
   // ('p', off) / ('f', k, off) / ('?',)
@@ -113,109 +114,97 @@ class EHContext {
     return {'?', 0, 0};
   }
 
-  void handlers(u64 oarr, u64 rarr, i64 n) {
-    for (i64 i = 0; i < n; ++i) {
-      u64 o = oarr + 20 * u64(i), r = rarr + 20 * u64(i);
-      u32 oadj = O->u32_at(o), otd = O->u32_at(o + 4), oaddr = O->u32_at(o + 12);
-      i32 odisp = O->i32_at(o + 8), oframe = O->i32_at(o + 16);
-      u32 radj = R->u32_at(r), rtd = R->u32_at(r + 4), raddr = R->u32_at(r + 12);
-      i32 rdisp = R->i32_at(r + 8), rframe = R->i32_at(r + 16);
-      if (oadj != radj || odisp != rdisp || oframe != rframe) {
-        probs.push_back({Category::Eh, "catch handler " + std::to_string(i) + " differs"});
-        continue;
+  // a field holding a code address: the same place on both sides (in the function; for Ip also in the funclets found
+  // so far, for End also the function's end)
+  bool same_place(Holds holds, u32 ov, u32 rv) {
+    u64 o = O->base + ov, r = R->base + rv;
+    static const std::vector<u64> none;
+    bool ip = holds == Holds::Ip;
+    u64 extra = holds == Holds::End ? 1 : 0;
+    Where ow = where(*O, o, ostart, oend + extra, ip ? ofun : none);
+    Where rw = where(*R, r, rstart, rend + extra, ip ? rfun : none);
+    return ow == rw && ow.t != '?';
+  }
+
+  // one record of `l` on each side (layouts.hpp says how), `index` its place in its table for the messages; false
+  // when its table stops here
+  bool record(const Layout& l, u64 o, u64 r, i64 index) {
+    auto fail = [&](const char* text) {
+      probs.push_back({Category::Eh, message(text ? text : l.differs, index)});
+      return !l.stop_at_first;
+    };
+    for (auto& f : l.fields)
+      if ((f.holds == Holds::Value || f.holds == Holds::Count) && O->u32_at(o + f.off) != R->u32_at(r + f.off))
+        return fail(l.differs);
+    std::vector<std::pair<int, i64>> counts;  // (offset, entries)
+    for (auto& f : l.fields) {
+      if (f.holds != Holds::Count) continue;
+      u32 raw = O->u32_at(o + f.off);
+      i64 v = f.sign ? i64(i32(raw)) : i64(raw);
+      if (v < f.lo || v > f.hi) {
+        if (!f.clamp) return fail(l.out_of_range ? l.out_of_range : l.differs);
+        v = std::min(v, f.hi);
       }
-      if ((otd == 0) != (rtd == 0) ||
-          (otd && !c->same_names({{type_name(*O, O->base + otd), type_name(*R, R->base + rtd)}}))) {
-        probs.push_back({Category::Eh, "catch type " + std::to_string(i) + " differs"});
-        continue;
-      }
-      funclet(oaddr, raddr);
+      counts.emplace_back(f.off, std::max<i64>(v, 0));
     }
+    for (auto& f : l.fields) {
+      u32 ov = O->u32_at(o + f.off), rv = R->u32_at(r + f.off);
+      switch (f.holds) {
+        case Holds::Funclet:
+          funclet(ov, rv);
+          break;
+        case Holds::Filter:
+          if (ov >= 0x10 && rv >= 0x10)
+            funclet(ov, rv);
+          else if (ov != rv)
+            return fail(f.differs);
+          break;
+        case Holds::Type:
+          if ((ov == 0) != (rv == 0) ||
+              (ov && !c->same_names({{type_name(*O, rva(*O, f, ov)), type_name(*R, rva(*R, f, rv))}})))
+            return fail(f.differs);
+          break;
+        case Holds::Ip:
+        case Holds::Begin:
+        case Holds::End:
+          if (!same_place(f.holds, ov, rv)) return fail(f.differs);
+          break;
+        case Holds::Target:
+          if ((ov == 0) != (rv == 0) || (ov && O->base + ov - ostart != R->base + rv - rstart)) return fail(f.differs);
+          break;
+        case Holds::Record:
+          if ((ov == 0) != (rv == 0))
+            probs.push_back({Category::Eh, message(f.differs, index)});
+          else if (ov)
+            record(*f.layout, rva(*O, f, ov), rva(*R, f, rv), index);
+          break;
+        case Holds::Table:
+        case Holds::Inline: {
+          i64 n = 0;
+          for (auto& [off, cn] : counts)
+            if (off == f.count_at) n = cn;
+          bool inl = f.holds == Holds::Inline;
+          u64 of = inl ? o + f.off : rva(*O, f, ov), rf = inl ? r + f.off : rva(*R, f, rv);
+          for (i64 i = 0; i < n; ++i)
+            if (!record(*f.layout, of + u64(f.layout->size) * u64(i), rf + u64(f.layout->size) * u64(i), i)) break;
+          break;
+        }
+        default:  // Value and Count: compared above; Function: not in handler data
+          break;
+      }
+    }
+    return true;
+  }
+
+  static u64 rva(const Image& img, const Member& f, u32 raw) {
+    return img.base + u64(f.sign ? i64(i32(raw)) : i64(raw));
   }
 
   // a FuncInfo pair is a guess (one partner on each side: Matching)
   Problems funcinfo(u64 ofi, u64 rfi) {
     if (!c->m.assume(Matching::Kind::FuncInfo, ofi, rfi)) return {{Category::Eh, "FuncInfo sharing differs"}};
     fi = std::make_pair(ofi, rfi);
-    auto rd = [](const Image* im, u64 p, u32(&m)[10]) {
-      for (int k = 0; k < 10; ++k) m[k] = im->u32_at(p + 4 * k);
-    };
-    u32 om[10], rm[10];
-    rd(O, ofi, om);
-    rd(R, rfi, rm);
-    // magic, max_state(i), unwind_map, ntry, try_map, nip, ip_map, disp_help(i), es_list, ehflags(i)
-    if (om[0] != rm[0] || om[1] != rm[1] || om[3] != rm[3] || om[5] != rm[5] || om[7] != rm[7] || om[9] != rm[9])
-      return {{Category::Eh, "FuncInfo header differs"}};
-    i32 max_state = i32(om[1]);
-    u32 ntry = om[3], nip = om[5];
-    if (max_state > 0x10000 || ntry > 0x10000 || nip > 0x100000) return {{Category::Eh, "FuncInfo out of range"}};
-    for (i32 i = 0; i < max_state; ++i) {
-      i32 ost = O->i32_at(O->base + om[2] + 8 * u64(i)), rst = R->i32_at(R->base + rm[2] + 8 * u64(i));
-      u32 oact = O->u32_at(O->base + om[2] + 8 * u64(i) + 4), ract = R->u32_at(R->base + rm[2] + 8 * u64(i) + 4);
-      if (ost != rst) {
-        probs.push_back({Category::Eh, "unwind map entry " + std::to_string(i) + " differs"});
-        continue;
-      }
-      funclet(oact, ract);
-    }
-    for (u32 i = 0; i < ntry; ++i) {
-      u64 ob = O->base + om[4] + 20 * u64(i), rb = R->base + rm[4] + 20 * u64(i);
-      i32 o4[4], r4[4];
-      for (int z = 0; z < 4; ++z) {
-        o4[z] = O->i32_at(ob + 4 * z);
-        r4[z] = R->i32_at(rb + 4 * z);
-      }
-      if (std::memcmp(o4, r4, sizeof o4) != 0) {
-        probs.push_back({Category::Eh, "try block " + std::to_string(i) + " differs"});
-        continue;
-      }
-      handlers(O->base + O->u32_at(ob + 16), R->base + R->u32_at(rb + 16), o4[3]);
-    }
-    if ((om[8] == 0) != (rm[8] == 0)) {
-      probs.push_back({Category::Eh, "exception specification presence differs"});
-    } else if (om[8]) {
-      i32 on = O->i32_at(O->base + om[8]), rn = R->i32_at(R->base + rm[8]);
-      u32 oarr = O->u32_at(O->base + om[8] + 4), rarr = R->u32_at(R->base + rm[8] + 4);
-      if (on != rn || !(0 <= on && on <= 0x100))
-        probs.push_back({Category::Eh, "exception specification differs"});
-      else
-        handlers(O->base + oarr, R->base + rarr, on);
-    }
-    for (u32 i = 0; i < nip; ++i) {
-      u32 oip = O->u32_at(O->base + om[6] + 8 * u64(i)), rip = R->u32_at(R->base + rm[6] + 8 * u64(i));
-      i32 ost = O->i32_at(O->base + om[6] + 8 * u64(i) + 4), rst = R->i32_at(R->base + rm[6] + 8 * u64(i) + 4);
-      Where ow = where(*O, O->base + oip, ostart, oend, ofun), rw = where(*R, R->base + rip, rstart, rend, rfun);
-      if (ost != rst || !(ow == rw) || ow.t == '?') {
-        probs.push_back({Category::Eh, "IP-to-state entry " + std::to_string(i) + " differs"});
-        break;
-      }
-    }
-    return probs;
-  }
-
-  Problems scope_table(u64 od, u64 rd) {
-    u32 n = O->u32_at(od);
-    if (n != R->u32_at(rd) || n > 0x1000) return {{Category::Eh, "scope table size differs"}};
-    for (u32 i = 0; i < n; ++i) {
-      u64 oo = od + 4 + 16 * u64(i), ro = rd + 4 + 16 * u64(i);
-      u32 ob = O->u32_at(oo), oe = O->u32_at(oo + 4), oh = O->u32_at(oo + 8), ot = O->u32_at(oo + 12);
-      u32 rb = R->u32_at(ro), re = R->u32_at(ro + 4), rh = R->u32_at(ro + 8), rt = R->u32_at(ro + 12);
-      Where ow1 = where(*O, O->base + ob, ostart, oend, {}), ow2 = where(*O, O->base + oe, ostart, oend + 1, {});
-      Where rw1 = where(*R, R->base + rb, rstart, rend, {}), rw2 = where(*R, R->base + re, rstart, rend + 1, {});
-      if (!(ow1 == rw1) || !(ow2 == rw2) || ow1.t == '?' || ow2.t == '?') {
-        probs.push_back({Category::Eh, "scope " + std::to_string(i) + " range differs"});
-        continue;
-      }
-      if ((ot == 0) != (rt == 0) || (ot && O->base + ot - ostart != R->base + rt - rstart)) {
-        probs.push_back({Category::Eh, "scope " + std::to_string(i) + " target differs"});
-        continue;
-      }
-      if (oh < 0x10 || rh < 0x10) {  // EXCEPTION_EXECUTE_HANDLER etc. are constants, not RVAs
-        if (oh != rh) probs.push_back({Category::Eh, "scope " + std::to_string(i) + " filter differs"});
-        continue;
-      }
-      funclet(oh, rh);
-    }
+    record(FUNC_INFO, ofi, rfi, -1);
     return probs;
   }
 };
@@ -227,17 +216,24 @@ Problems Comparer::handler_data(std::string_view handler, u64 od, u64 rd, u64 os
   auto funcinfo = [&](u64 ofi, u64 rfi) {
     return fi && *fi == std::make_pair(ofi, rfi) ? Problems{} : ctx.funcinfo(ofi, rfi);
   };
-  if (handler == "__CxxFrameHandler3") return funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
-  if (handler == "__GSHandlerCheck") {
-    if (gs_data(*O, od) != gs_data(*R, rd)) return {{Category::Eh, "GS cookie data differs"}};
-    return {};
+  switch (handler_named(handler)) {
+    case Handler::CxxFrame3:
+      return funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
+    case Handler::GS:
+      if (gs_data(*O, od) != gs_data(*R, rd)) return {{Category::Eh, "GS cookie data differs"}};
+      return {};
+    case Handler::GS_EH: {
+      Problems p = funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
+      if (gs_data(*O, od + 4) != gs_data(*R, rd + 4)) p.push_back({Category::Eh, "GS cookie data differs"});
+      return p;
+    }
+    case Handler::CSpecific:
+      ctx.record(SCOPE_TABLE, od, rd, -1);
+      return ctx.probs;
+    case Handler::CxxFrame4:  // FuncInfo4 is not described (layouts.hpp): the seam for its decoder
+    case Handler::Unknown:
+      break;
   }
-  if (handler == "__GSHandlerCheck_EH") {
-    Problems p = funcinfo(O->base + O->u32_at(od), R->base + R->u32_at(rd));
-    if (gs_data(*O, od + 4) != gs_data(*R, rd + 4)) p.push_back({Category::Eh, "GS cookie data differs"});
-    return p;
-  }
-  if (handler == "__C_specific_handler") return ctx.scope_table(od, rd);
   return {{Category::Eh,
            "handler " + (handler.empty() ? std::string("unknown") : std::string(handler)) + " data is not verifiable"}};
 }

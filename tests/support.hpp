@@ -55,6 +55,7 @@ const Value& fixtures();         // tests/data/fixtures.json, read once
 void add_names_cases(Cases&);
 void add_report_cases(Cases&);
 void add_compare_cases(Cases&);
+void add_eh_cases(Cases&);
 void add_pairing_cases(Cases&);
 void add_inputs_cases(Cases&);
 void add_cache_cases(Cases&);

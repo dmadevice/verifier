@@ -165,10 +165,10 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 54 cases in code: pairing (a guessed function or table that fails, guesses
+exact problems it must report, and 55 cases in code: pairing (a guessed function or table that fails, guesses
 kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items export, literals against globals, tables cut short, tables that
 point at each other), name handling, the annotation parser, the instruction diff,
-hashing, the report's JSON escaping, file reading, line splitting, the name table, the name cache file and the
+each record of the EH handler data, hashing, the report's JSON escaping, file reading, line splitting, the name table, the name cache file and the
 snapshot key. `ctest` also runs fadec's own decoder tests.
 
 ## How it works
@@ -184,8 +184,11 @@ A run, in the order `verify.cpp`'s `run` takes it:
    stands for in the original (by name, as a literal, by containing symbol). Local statics are paired here, by
    votes from the code that references them.
 5. **Comparison** (`compare.cpp`, `compare_refs.cpp`, `compare_eh.cpp`, decoding in `x64.cpp`): each annotated
-   function against its original. This covers the instruction bytes with address fields set aside, then what each address field refers to, then unwind and EH data. Where it has to
-   guess (an unannotated function, vtable or table standing for an original one, a local static's place, a build
+   function against its original. This covers the instruction bytes with address fields set aside, then what
+   each address field refers to, then unwind and EH data. The EH and RTTI records (FuncInfo and its tables, SEH
+   scope tables, the RTTI hierarchy, ThrowInfo) are described once as layouts (`layouts.cpp`) and compared
+   generically; `__CxxFrameHandler4`'s compressed FuncInfo is not described yet and reported as not verifiable.
+   Where it has to guess (an unannotated function, vtable or table standing for an original one, a local static's place, a build
    hash in a name, a shared FuncInfo), the matching (`matching.cpp`) decides, for all functions at once: every
    annotated function and GLOBAL is explored first with each guess assumed, the guesses that hold together are
    kept by fixed rules, and then each function is judged against them. The results do not depend on the order

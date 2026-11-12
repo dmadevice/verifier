@@ -83,37 +83,6 @@ class Image {
 
 std::optional<u64> leaf_extent(const Image& img, u64 va);  // in x64.cpp: needs the decoder
 
-// Comparable signatures of RTTI / EH structures
-Bytes type_name(const Image& img, u64 td);
-Bytes gs_data(const Image& img, u64 va);
-struct BaseDesc {
-  Bytes name;
-  u32 ncont;
-  i32 mdisp, pdisp, vdisp;
-  u32 attr;
-  bool operator==(const BaseDesc& o) const = default;
-};
-struct Rtti {
-  bool present = false;  // a CompleteObjectLocator in a section
-  bool bad_sig = false;
-  u32 sig = 0;
-  u32 off = 0, cdoff = 0, attrs = 0;
-  Bytes name;
-  std::vector<BaseDesc> bases;
-};
-Rtti rtti(const Image& img, u64 col);
-struct CatchableSig {
-  u32 props;
-  Bytes name;
-  i32 mdisp, pdisp, vdisp, size;
-  bool operator==(const CatchableSig& o) const = default;
-};
-struct ThrowInfoSig {
-  u32 attrs;
-  std::vector<CatchableSig> types;
-  std::vector<u64> funcs;  // destructor, then each type's copy constructor (0 when absent)
-};
-ThrowInfoSig throw_info(const Image& img, u64 ti);
 std::string imp_str(const Import* imp);
 
 }  // namespace verifier

@@ -134,30 +134,10 @@ bool Comparer::same_names(const NamePairs& names) {
   return ok;
 }
 
-bool Comparer::same_rtti(const Rtti& a, const Rtti& b) {
-  if (a.present != b.present) return false;
-  if (!a.present) return true;
-  if (a.bad_sig || b.bad_sig) return a.bad_sig == b.bad_sig && a.sig == b.sig;
-  if (a.off != b.off || a.cdoff != b.cdoff || a.attrs != b.attrs || a.bases.size() != b.bases.size()) return false;
-  NamePairs names{{a.name, b.name}};
-  for (size_t i = 0; i < a.bases.size(); ++i) {
-    const BaseDesc &x = a.bases[i], &y = b.bases[i];
-    if (x.ncont != y.ncont || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.attr != y.attr)
-      return false;
-    names.emplace_back(x.name, y.name);
-  }
-  return same_names(names);
-}
-
-bool Comparer::same_catchables(const ThrowInfoSig& a, const ThrowInfoSig& b) {
-  if (a.attrs != b.attrs || a.types.size() != b.types.size()) return false;
+bool Comparer::same_signature(const Signature& a, const Signature& b) {
+  if (a.values != b.values || a.names.size() != b.names.size()) return false;
   NamePairs names;
-  for (size_t i = 0; i < a.types.size(); ++i) {
-    const CatchableSig &x = a.types[i], &y = b.types[i];
-    if (x.props != y.props || x.mdisp != y.mdisp || x.pdisp != y.pdisp || x.vdisp != y.vdisp || x.size != y.size)
-      return false;
-    names.emplace_back(x.name, y.name);
-  }
+  for (size_t i = 0; i < a.names.size(); ++i) names.emplace_back(a.names[i], b.names[i]);
   return same_names(names);
 }
 
