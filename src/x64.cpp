@@ -638,6 +638,7 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
   for (auto& i : all) decoded += i.size;
   complete = decoded == cut + (resume ? n - *resume : 0);
   std::vector<u32> image_base = image_base_regs(all, im.base);
+  shape.known = complete && tables.empty() && image_base.empty() && !all.empty();
   insns.reserve(all.size());
   reloc_at_ = relocated ? im.reloc_lower_bound(s) : 0;
   for (size_t k = 0; k < all.size(); ++k) {
@@ -649,9 +650,144 @@ Code::Code(const Image& im, u64 s, u64 e) : img(&im), start(s), end(e) {
     l.nfields = u8(field_list.size() - l.field);
     l.addressed = l.addressed || l.nfields;
     for (auto& op : ins.ops) l.addressed = l.addressed || (op.type == OP_MEM && (op.base() == rip || op.index));
+    if (shape.known) add_to_shape(ins, l);
     insns.push_back(l);
   }
+  if (shape.known) {
+    shape.ends_in_jump = all.back().type == FDI_RET || all.back().type == FDI_JMP;
+    std::sort(shape.indexed.begin(), shape.indexed.end());
+    shape.indexed.erase(std::unique(shape.indexed.begin(), shape.indexed.end()), shape.indexed.end());
+  } else {
+    shape = {};
+  }
   trim_padding();
+}
+
+namespace {
+
+// what a field's bytes give: a branch target or RIP-relative address from the instruction's end, or the value
+i64 field_value(const Field& f, std::string_view insn, u64 address) {
+  u64 raw = 0;
+  for (unsigned i = 0; i < f.size; ++i) raw |= u64(u8(insn[f.off + i])) << (8 * i);
+  i64 v = f.size < 8 && (raw >> (8 * f.size - 1) & 1) ? i64(raw | (~u64(0) << (8 * f.size))) : i64(raw);
+  return f.kind == F_EXT || f.kind == F_RIP ? i64(address + insn.size()) + v : v;
+}
+
+bool in_table_range(i64 disp, i64 frva, i64 erva) { return frva <= disp && disp < erva + i64(TABLE_SLACK); }
+
+}  // namespace
+
+void Code::add_to_shape(const Insn& ins, const Lean& l) {
+  for (const Field& f : fields(l)) {
+    auto inside = [&](unsigned at, unsigned size) {
+      return size && at <= f.off && unsigned(f.off + f.size) <= at + size;
+    };
+    if (!(inside(ins.disp_offset, ins.disp_size) || inside(ins.imm_offset, ins.imm_size)) ||
+        field_value(f, bytes(l), address(l)) != f.value)
+      shape.known = false;
+  }
+  for (auto& op : ins.ops) {
+    if (op.type == OP_IMM && ins.branches()) {
+      if (!ins.imm_size) shape.known = false;
+      if (i64(start) <= op.imm() && op.imm() < i64(end)) shape.reach = std::max(shape.reach, op.imm() - i64(start) + 1);
+    }
+    if (op.type == OP_MEM && op.base() != reg_rip() && op.index && op.disp() > 0) shape.indexed.push_back(op.disp());
+  }
+}
+
+bool& check_fast_path() {
+  static bool on = false;
+  return on;
+}
+
+const char* fast_path_name(FastPath p) {
+  constexpr const char* names[] = {"taken", "shape", "length", "tail", "bytes", "target", "reloc"};
+  return names[size_t(p)];
+}
+
+std::vector<u64>& fast_path_counts() {
+  static std::vector<u64> counts = std::vector<u64>(size_t(FastPath::Count));
+  return counts;
+}
+
+namespace {
+
+std::optional<std::vector<Field>> unchecked_same_code_fields(const Code& o, const Image& img, u64 start, u64 end) {
+  auto answer =[&](FastPath why, std::optional<std::vector<Field>> fields = std::nullopt) {
+    ++fast_path_counts()[size_t(why)];
+    return fields;
+  };
+  const Code::Shape& sh = o.shape;
+  if (!sh.known) return answer(FastPath::Shape);
+  std::string_view code = end > start ? img.bytes(start, i64(end - start)) : std::string_view();
+  i64 cut = o.cut, n = i64(code.size()), frva = i64(start - img.base), erva = i64(end - img.base);
+  if (n < cut || n < sh.reach) return answer(FastPath::Length);
+  // indexed operands keep their displacements: none may fall where this function would have a switch table
+  auto it = std::lower_bound(sh.indexed.begin(), sh.indexed.end(), frva);
+  if (it != sh.indexed.end() && in_table_range(*it, frva, erva)) return answer(FastPath::Length);
+  // past the instructions: nothing, or one nop after the closing ret or jmp (padding, dropped as the original's is)
+  if (n > cut) {
+    if (!sh.ends_in_jump || n - cut > 15) return answer(FastPath::Tail);
+    auto tail = decode_linear(code.substr(size_t(cut)), start + u64(cut));
+    if (tail.size() != 1 || tail[0].type != FDI_NOP || tail[0].size != n - cut) return answer(FastPath::Tail);
+    for (auto& op : tail[0].ops)
+      if (op.type == OP_MEM && op.base() != reg_rip() && op.index && in_table_range(op.disp(), frva, erva))
+        return answer(FastPath::Tail);
+  }
+  std::vector<Field> out(o.field_list);
+  size_t same_to = 0;  // the bytes before it are compared
+  size_t reloc = img.reloc_lower_bound(start);
+  auto same_bytes = [&](size_t to) {
+    bool same = to <= same_to || std::memcmp(o.code.data() + same_to, code.data() + same_to, to - same_to) == 0;
+    same_to = std::max(same_to, to);
+    return same;
+  };
+  for (const Lean& l : o.insns) {
+    std::string_view insn = code.substr(l.off, l.size);
+    for (size_t z = l.field; z < size_t(l.field + l.nfields); ++z) {
+      Field& f = out[z];
+      size_t at = l.off + f.off;
+      if (!same_bytes(at)) return answer(FastPath::Bytes);
+      same_to = std::max(same_to, at + f.size);
+      f.value = field_value(f, insn, start + l.off);
+      // a branch target inside the function, or __ImageBase loaded where the original loads another address (or the
+      // other way round), would decode otherwise
+      if (f.kind == F_EXT && i64(start) <= f.value && f.value < i64(end)) return answer(FastPath::Target);
+      if (f.kind == F_RIP && (o.field_list[z].value == i64(o.img->base)) != (f.value == i64(img.base)))
+        return answer(FastPath::Target);
+      if (f.kind == F_ABS) {
+        if (reloc >= img.reloc_sorted.size() || img.reloc_sorted[reloc] != start + at) return answer(FastPath::Reloc);
+        ++reloc;
+      }
+    }
+  }
+  if (!same_bytes(size_t(cut))) return answer(FastPath::Bytes);
+  if (reloc < img.reloc_sorted.size() && img.reloc_sorted[reloc] < start + u64(cut)) return answer(FastPath::Reloc);
+  return answer(FastPath::Taken, std::move(out));
+}
+
+}  // namespace
+
+std::optional<std::vector<Field>> same_code_fields(const Code& o, const Image& img, u64 start, u64 end) {
+  auto got = unchecked_same_code_fields(o, img, start, end);
+  if (got && check_fast_path()) {
+    Code full(img, start, end);
+    bool same = full.complete && full.tables.empty() && !full.resume && full.cut == o.cut &&
+                full.code.size() == o.code.size() && full.insns.size() == o.insns.size() &&
+                full.field_list.size() == got->size();
+    for (size_t k = 0; same && k < o.insns.size(); ++k) {
+      const Lean &a = o.insns[k], &b = full.insns[k];
+      same = a.off == b.off && a.size == b.size && a.mnem == b.mnem && a.field == b.field && a.nfields == b.nfields &&
+             a.addressed == b.addressed;
+    }
+    for (size_t z = 0; same && z < got->size(); ++z) {
+      const Field &a = (*got)[z], &b = full.field_list[z];
+      same = a.value == b.value && a.access == b.access && a.indexed == b.indexed && a.off == b.off &&
+             a.size == b.size && a.kind == b.kind;
+    }
+    if (!same) throw std::logic_error("fast path: the fields differ from a full decode at " + hex(start));
+  }
+  return got;
 }
 
 std::shared_ptr<const Code> CodeCache::code(u64 start, u64 end) {

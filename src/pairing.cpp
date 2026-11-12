@@ -171,25 +171,30 @@ std::vector<std::pair<u64, u64>> Pairing::voting_pairs() const {
 Pairing::Votes Pairing::votes_of(u64 rva, u64 ova) {
   const Image& O = orig.img;
   auto oc = orig_function(ova);
-  auto rc = rebuilt_function(rva);
   Votes out;
+  // the rebuilt fields without a decode when the code decodes as the original's (same_code_fields)
+  auto vote = [&](const Field& x, const Field& y) {
+    if (!is_address(x.kind)) return;
+    auto at = reb.local_base(u64(y.value));
+    u64 xv = u64(x.value);
+    if (!at || O.executable(xv) || !O.flags(xv)) return;
+    u64 o_base = xv - at->second;
+    bool fits = !orig.in_padding(o_base) && static_fits(O, reb.img, o_base, at->first, reb.span(at->first)) &&
+                !annotated_between(o_base, xv);
+    auto [it, fresh] = out[at->first].try_emplace(fits ? std::optional<u64>(o_base) : std::nullopt, at->second);
+    if (!fresh) it->second = std::max(it->second, at->second);
+  };
+  if (auto rf = same_code_fields(*oc, reb.img, rva, reb.extent(rva))) {
+    for (size_t z = 0; z < rf->size(); ++z) vote(oc->field_list[z], (*rf)[z]);
+    return out;
+  }
+  auto rc = rebuilt_function(rva);
   if (oc->insns.size() != rc->insns.size()) return out;
   for (size_t k = 0; k < oc->insns.size(); ++k) {
     const Lean &a = oc->insns[k], &b = rc->insns[k];
     auto fa = oc->fields(a), fb = rc->fields(b);
     if (a.mnem != b.mnem || !same_layout(a, fa, b, fb)) continue;
-    for (size_t z = 0; z < fa.size(); ++z) {
-      const Field &x = fa[z], &y = fb[z];
-      if (!is_address(x.kind)) continue;
-      auto at = reb.local_base(u64(y.value));
-      u64 xv = u64(x.value);
-      if (!at || O.executable(xv) || !O.flags(xv)) continue;
-      u64 o_base = xv - at->second;
-      bool fits = !orig.in_padding(o_base) && static_fits(O, reb.img, o_base, at->first, reb.span(at->first)) &&
-                  !annotated_between(o_base, xv);
-      auto [it, fresh] = out[at->first].try_emplace(fits ? std::optional<u64>(o_base) : std::nullopt, at->second);
-      if (!fresh) it->second = std::max(it->second, at->second);
-    }
+    for (size_t z = 0; z < fa.size(); ++z) vote(fa[z], fb[z]);
   }
   return out;
 }

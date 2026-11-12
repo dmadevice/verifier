@@ -303,6 +303,7 @@ int run(int argc, char** argv) {
   Config p = Config::load(a.config);
   Phases ph;
   Out out;
+  check_fast_path() = std::getenv("VERIFIER_CHECK_FAST") != nullptr;  // each fast answer checked by a full decode
 
   i64 start = two_seconds_ago();  // files changed after this are too recent to trust their stamps
   // this verifier build: what the caches it alone can read are keyed by ("": unknown, nothing of it kept)
@@ -353,6 +354,10 @@ int run(int argc, char** argv) {
     auto st = cmp.m.stats();
     std::fprintf(stderr, "matching: %zu nodes, %zu guesses (%zu hold), %zu roots compared again\n", st.nodes,
                  st.candidates, st.accepted, st.rejudged);
+    std::string fast;
+    for (size_t i = 0; i < size_t(FastPath::Count); ++i)
+      fast += std::string(i ? ", " : "") + fast_path_name(FastPath(i)) + " " + std::to_string(fast_path_counts()[i]);
+    std::fprintf(stderr, "fast path: %s\n", fast.c_str());
   }
 
   out.write(ev.lines);

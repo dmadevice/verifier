@@ -84,6 +84,14 @@ void add_unresolved(const Tok& t, std::set<std::string>& out) {
     if ((op.k == Op::SYM || op.k == Op::MSYM) && op.key.kind == Key::UNRESOLVED) out.insert(std::string(op.key.name));
 }
 
+// the same for an address field's target, as symbolise takes it (an import first; a compiler constant is by value)
+void add_unresolved(const Field& f, const Image& img, const std::function<Key(u64)>& resolve,
+                    std::set<std::string>& out) {
+  if (img.imports.count(u64(f.value))) return;
+  Key k = resolve(u64(f.value));
+  if (k.kind == Key::UNRESOLVED) out.insert(std::string(k.name));
+}
+
 }  // namespace
 
 std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig, const Rebuilt& reb,
@@ -134,17 +142,22 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   u64 oend = orig.extent(ova), rend = reb.extent(rva);
   FnPair fns{ova, oend, rva, rend};
   Problems probs = cmp.judge_function(fns);
-  auto ocp = cmp.orig_code(ova, oend), rcp = cmp.rebuilt_code(rva, rend);  // decoded by the comparison
-  const Code &oc = *ocp, &rc = *rcp;
+  auto ocp = cmp.orig_code(ova, oend);
+  const Code& oc = *ocp;
+  // a match whose code decodes as the original's needs no decode of its own (same_code_fields)
+  std::optional<std::vector<Field>> fields;
+  if (probs.empty() && !show) fields = same_code_fields(oc, reb.img, rva, rend);
+  auto rcp = fields ? ocp : cmp.rebuilt_code(rva, rend);
+  const Code& rc = *rcp;  // the original's when the fields are known
   std::function<Key(u64)> resolve = [&](u64 t) { return pairing.resolve(t); };
   std::set<std::string> unresolved;
   bool same = true;  // the instructions are the same as tokens
   Toks ot, rt;       // only when the report shows instructions
   if (probs.empty() && !show) {
     // a match: the comparison accepted every address field, so no diff is shown; only the rebuilt side's names that
-    // resolve to nothing are reported (unaddressed instructions have none)
-    for (auto& b : rc.insns)
-      if (b.addressed) add_unresolved(symbolise_one(rc, b, resolve, true), unresolved);
+    // resolve to nothing are reported: what its branches out of the function and RIP-relative operands refer to
+    for (const Field& f : fields ? *fields : rc.field_list)
+      if (f.kind == F_EXT || f.kind == F_RIP) add_unresolved(f, reb.img, resolve, unresolved);
   } else {
     ot = symbolise(oc, by_va(), false);
     rt = symbolise(rc, resolve, true);

@@ -204,8 +204,41 @@ void data_cases(const Value& doc) {
   }
 }
 
+// every case again with each fast answer (same_code_fields) checked against a full decode, and each fast match against
+// the full comparison: a difference throws. The cases must take the fast path somewhere.
+void fast_path_check(const Value& doc) {
+  bool was = check_fast_path();
+  check_fast_path() = true;
+  u64 taken = fast_path_counts()[size_t(FastPath::Taken)];
+  bool ok = true;
+  std::string note;
+  for (auto& c : doc["cases"].arr) {
+    Findings expected;
+    for (auto& p : c["problems"].arr) expected.push_back({p.arr[0].as_str(), p.arr[1].as_str()});
+    try {
+      if (replay(c) != expected) {
+        ok = false;
+        note += c["name"].as_str() + ": other problems; ";
+      }
+    } catch (std::exception& e) {
+      ok = false;
+      note += c["name"].as_str() + ": " + e.what() + "; ";
+    }
+  }
+  check_fast_path() = was;
+  taken = fast_path_counts()[size_t(FastPath::Taken)] - taken;
+  if (!taken) {
+    ok = false;
+    note += "the fast path was never taken";
+  }
+  report("fast path self-check", nullptr, {}, ok, note + std::to_string(taken) + " fast answers");
+}
+
 }  // namespace
 
-void run_fixture_cases(const json::Value& doc) { data_cases(doc); }
+void run_fixture_cases(const json::Value& doc) {
+  data_cases(doc);
+  fast_path_check(doc);
+}
 
 }  // namespace verifier::test

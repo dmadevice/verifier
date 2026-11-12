@@ -154,6 +154,7 @@ class Comparer {
   Problems function_body(const FnPair& f, std::optional<std::pair<u64, u64>> fi);
   Problems funclet(const FnPair& f, std::pair<u64, u64> fi);
   Problems code(const FnPair& f);
+  Problems code_decoded(const FnPair& f, const Code& oc);  // code(), the rebuilt side decoded
   std::optional<Problem> rodata_body(u64 o_t, u64 r_t);
   std::optional<Problem> vtable_body(u64 o_vt, u64 r_vt);
   // the guesses (Matching): whether r_t stands for o_t, as a function, vtable, read-only data or local static

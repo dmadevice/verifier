@@ -142,8 +142,28 @@ bool Comparer::same_signature(const Signature& a, const Signature& b) {
 }
 
 Problems Comparer::code(const FnPair& f) {
-  auto ocp = orig_code(f.ostart, f.oend), rcp = rebuilt_code(f.rstart, f.rend);
-  const Code &oc = *ocp, &rc = *rcp;
+  auto ocp = orig_code(f.ostart, f.oend);
+  const Code& oc = *ocp;
+  // the rebuilt code decodes as the original's (same_code_fields): only what the fields refer to is compared. A
+  // difference is reported as the full comparison finds it.
+  if (auto rf = same_code_fields(oc, *R, f.rstart, f.rend)) {
+    Problems probs;
+    for (size_t k = 0; k < oc.insns.size(); ++k)
+      for (size_t z = oc.insns[k].field; z < size_t(oc.insns[k].field + oc.insns[k].nfields); ++z) {
+        const Field &a = oc.field_list[z], &b = (*rf)[z];
+        if (auto p = ref(u64(a.value), u64(b.value), a.access))
+          probs.push_back({p->category, "@" + std::to_string(k) + ": " + p->detail});
+      }
+    if (probs.empty() && check_fast_path() && !code_decoded(f, oc).empty())
+      throw std::logic_error("fast path: a match the full comparison does not make at " + hex(f.ostart));
+    if (probs.empty()) return probs;
+  }
+  return code_decoded(f, oc);
+}
+
+Problems Comparer::code_decoded(const FnPair& f, const Code& oc) {
+  auto rcp = rebuilt_code(f.rstart, f.rend);
+  const Code& rc = *rcp;
   Problems probs;
   auto decoded = [](const Code& c) {
     i64 s = 0;

@@ -171,6 +171,15 @@ class Code {
   i64 cut = 0;
   std::optional<i64> resume;  // code resumes here after the tables (hand-written switches)
   bool complete = false;
+  // What same_code_fields needs to show that other bytes decode as these do. `known` when they can be shown to:
+  // the code is complete, has no switch tables and loads no __ImageBase, and each field lies in a displacement or
+  // immediate and holds what its bytes give.
+  struct Shape {
+    bool known = false;
+    bool ends_in_jump = false;  // the last instruction is a ret or jmp (a nop after it is padding)
+    i64 reach = 0;              // the branches inside the function go below this offset
+    std::vector<i64> indexed;   // the positive displacements of indexed memory operands (sorted, distinct)
+  } shape;
 
   u64 address(const Lean& i) const { return start + i.off; }
   std::string_view bytes(const Lean& i) const { return code.substr(i.off, i.size); }
@@ -184,11 +193,26 @@ class Code {
   std::string_view decoded_from_;  // the bytes the instructions were decoded from (`code` before trimming)
   size_t reloc_at_ = 0;            // add_fields: the first relocation not before the instruction
   void add_fields(const Insn& ins, u32 image_base);
+  void add_to_shape(const Insn& ins, const Lean& l);
   void trim_padding();
   // what the `cmp reg, n; ja` guarding the instruction that indexes the table at `t` lets through; 0: no such check
   // reaches that instruction without another branch
   i64 table_entries(i64 t) const;
 };
+
+// The address fields of the code at [start, end) of `img`, when it decodes as `orig` does: the same bytes outside
+// orig's fields, relocations at the same places, and no field value that changes how the code decodes (a branch target
+// inside the function or out, a switch table, __ImageBase). A full decode of it (Code) then gives orig's instructions,
+// fields at the same places with these values, and the same length. nullopt when that cannot be shown: decode it.
+std::optional<std::vector<Field>> same_code_fields(const Code& orig, const Image& img, u64 start, u64 end);
+
+// The self-check of same_code_fields (VERIFIER_CHECK_FAST): with it on, each answer is checked against a full decode,
+// and a difference throws.
+bool& check_fast_path();
+// Why same_code_fields answered as it did, counted for VERIFIER_TIMING
+enum class FastPath { Taken, Shape, Length, Tail, Bytes, Target, Reloc, Count };
+const char* fast_path_name(FastPath p);
+std::vector<u64>& fast_path_counts();  // by FastPath
 
 // The decoded functions a run holds, by (start, end): decoded when first asked for, released when a comparison no
 // longer needs them
