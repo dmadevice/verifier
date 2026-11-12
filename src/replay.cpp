@@ -88,8 +88,10 @@ std::string stamp_key(const Args& a, const Config& p, const std::string& exe, co
   stamp(a.matched.value_or(""));
   if (p.cache_dir.empty())
     for (auto* f : p.snapshot_inputs()) stamp(*f);
+  else if (std::string k = Original::snapshot_key(p); !k.empty())
+    add(k);
   else
-    add(Original::snapshot_key(p));
+    racy = true;  // an input young enough that its stamp cannot tell a change
   for (auto& f : sources) {
     add(f.path);
     add(std::to_string(f.size) + "\t" + std::to_string(f.time));

@@ -1881,6 +1881,11 @@ Problems stamp_keys() {
   fs::last_write_time(files[3], old);
   write(files[0], "1");
   if (!stamp_key(a, p, exe).empty()) bad.push_back({"stamps", "a key while the rebuilt image is young"});
+  fs::last_write_time(files[0], old);
+  p.cache_dir = (d / "cache").string();  // the original's inputs then stamped by the snapshot's key
+  p.functions = (d / "functions.jsonl").string();
+  write(p.functions, "{}");
+  if (!stamp_key(a, p, exe).empty()) bad.push_back({"stamps", "a key while an original's input is young"});
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;
