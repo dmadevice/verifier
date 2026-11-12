@@ -65,15 +65,13 @@ bool write_file_atomic(const std::string& path, std::string_view data);
 std::vector<std::string> read_lines(const std::string& path);  // splitlines() semantics, newline stripped
 // for_each_line over a file's contents (with_contents: mapped when large)
 void for_each_file_line(const std::string& path, const std::function<void(std::string_view)>& fn);
+size_t line_break(std::string_view data, size_t i);  // the first '\n' or '\r' at or after i, data.size() for none
 // fn(line) for each line of `data` (as read_lines splits them), without copying
 template <class F>
 void for_each_line(std::string_view data, F&& fn) {
   size_t i = 0, n = data.size();
   while (i < n) {
-    const char* nl = static_cast<const char*>(std::memchr(data.data() + i, '\n', n - i));
-    size_t j = nl ? size_t(nl - data.data()) : n;
-    if (const void* cr = std::memchr(data.data() + i, '\r', j - i))
-      j = size_t(static_cast<const char*>(cr) - data.data());
+    size_t j = line_break(data, i);
     fn(data.substr(i, j - i));
     if (j < n && data[j] == '\r' && j + 1 < n && data[j + 1] == '\n')
       j += 2;

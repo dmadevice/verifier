@@ -20,8 +20,32 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#if defined(__x86_64__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
 
 namespace verifier {
+
+size_t line_break(std::string_view data, size_t i) {
+  const char* p = data.data();
+  size_t n = data.size();
+#if defined(__x86_64__) || defined(_M_X64)
+  // 16 bytes at a time, both characters in one pass
+  const __m128i nl = _mm_set1_epi8('\n'), cr = _mm_set1_epi8('\r');
+  for (; i + 16 <= n; i += 16) {
+    __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p + i));
+    int m = _mm_movemask_epi8(_mm_or_si128(_mm_cmpeq_epi8(b, nl), _mm_cmpeq_epi8(b, cr)));
+    if (m) {
+      int k = 0;
+      while (!(m >> k & 1)) ++k;
+      return i + size_t(k);
+    }
+  }
+#endif
+  for (; i < n; ++i)
+    if (p[i] == '\n' || p[i] == '\r') return i;
+  return n;
+}
 
 #ifdef _WIN32
 const char kSep = '\\';

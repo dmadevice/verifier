@@ -151,6 +151,13 @@ Findings line_splitting() {
   std::vector<std::string> want = {"a", "bb", "ccc", "dddd", "", "eee"}, got;
   for_each_line(text, [&](std::string_view l) { got.emplace_back(l); });
   if (got != want) bad.push_back({"lines", join(got, "|")});
+  // the break at every place in and after a 16-byte block, from every start before it
+  for (size_t at = 0; at <= 40; ++at) {
+    std::string s(40, 'x');
+    if (at < s.size()) s[at] = at % 2 ? '\r' : '\n';
+    for (size_t i = 0; i <= at && i < s.size(); ++i)
+      if (line_break(s, i) != std::min(at, s.size())) bad.push_back({"line break", std::to_string(at)});
+  }
   // streamed: lines across the 1 MB block boundary, a "\r\n" split by it
   namespace fs = std::filesystem;
   fs::path f = fs::temp_directory_path() / ("verifier-lines-" + unique_suffix());
