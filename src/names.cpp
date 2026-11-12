@@ -88,9 +88,15 @@ std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
   return syms;
 }
 
+bool is_norm_name(std::string_view s) {
+  for (size_t i = 0; i < s.size(); ++i)
+    if (is_space(s[i]) || (s[i] == '_' && s.compare(i, 7, "__ptr64") == 0)) return false;
+  return true;
+}
+
 std::string norm_name(const std::string& in) {
   // every rule below needs whitespace or `__ptr64` to apply: most names have neither, and are as they are
-  if (in.find_first_of(" \t\n\r\v\f") == std::string::npos && in.find("__ptr64") == std::string::npos) return in;
+  if (is_norm_name(in)) return in;
   // drop `__ptr64` (and the whitespace before it)
   std::string s;
   for (size_t i = 0; i < in.size();) {

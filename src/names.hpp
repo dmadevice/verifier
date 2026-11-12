@@ -35,6 +35,7 @@ i64 constant_size(std::string_view decorated);  // "`scalar deleting destructor'
 std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text);  // views of the text
 
 std::string norm_name(const std::string& s);
+bool is_norm_name(std::string_view s);  // norm_name leaves it as it is (it has no whitespace and no `__ptr64`)
 std::string norm_params(const std::string& p);
 long param_start(const std::string& s);  // -1 when none
 std::string last_token(const std::string& head);
