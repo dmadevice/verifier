@@ -17,7 +17,7 @@ class DiffStore {
  public:
   DiffStore(std::string path, const std::string& key);  // path empty: nothing kept
   struct Entry {
-    std::string category;
+    Category category;
     std::vector<std::string> diff;
   };
   // classify(ot, rt) and insn_diff(...) for these tokens: from the file when it has them, else made here

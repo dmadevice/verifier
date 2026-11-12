@@ -8,24 +8,16 @@ namespace verifier {
 
 namespace {
 
-bool any_prefix(std::string_view n, std::initializer_list<const char*> ps) {
-  for (auto p : ps)
-    if (starts_with(n, p)) return true;
-  return false;
-}
-
 // what a compared annotation is looked up by: its name and parameter list
 std::string paired_key(const Annotation& a) {
   auto sig = sig_flag(a.flags);
   return a.name + '\0' + (sig ? "1" + *sig : "0");
 }
 
-bool is_const_name(std::string_view n) { return any_prefix(n, {"__real@", "__xmm@", "__mask@"}); }
-
 // an original vftable name of a class with several bases, `??_7<class>@@6B@` or `??_7<class>@@6B@_<n>`: the part up to
 // `@@6B`, or "" for any other name
 std::string orig_mi_vftable(std::string_view n) {
-  if (!starts_with(n, "??_7")) return "";
+  if (name_kind(n) != NameKind::VfTable) return "";
   auto try_k = [&](size_t k) -> std::string {
     if (k < 4 + 4 || n.compare(k - 4, 4, "@@6B") != 0) return "";
     return std::string(n.substr(0, k));
@@ -43,7 +35,7 @@ std::string orig_mi_vftable(std::string_view n) {
 
 // a rebuilt one, `??_7<class>@@6B<base>@@`: the part up to the last `@@6B` that leaves a base name, or ""
 std::string reb_mi_vftable(std::string_view n) {
-  if (!starts_with(n, "??_7") || !ends_with(n, "@@") || n.size() < 4 + 4 + 3) return "";
+  if (name_kind(n) != NameKind::VfTable || !ends_with(n, "@@") || n.size() < 4 + 4 + 3) return "";
   for (size_t k = n.size() - 3; k >= 8; --k)  // k: end of group 1; n[k : len-2] is .+ (non-empty)
     if (n.compare(k - 4, 4, "@@6B") == 0) return std::string(n.substr(0, k));
   return "";
@@ -289,20 +281,21 @@ Key Pairing::resolve_symbol(u64 t) const {
 Key Pairing::resolve_symbol_uncached(u64 t) const {
   if (auto o = orig_of(t)) return Key::of_va(*o);
   auto names = reb.symbols.names(t);
-  for (auto& n : names)
-    if (is_const_name(n)) return Key::named_view(Key::CONST, n);
-  for (auto& n : names)
-    if (starts_with(n, "??_C@")) return Key::named_view(Key::STR, n);
+  // the name kinds in the order they decide: literals by value, then the original's names, then RTTI and EH types
+  auto first_of = [&](std::initializer_list<NameKind> kinds) -> const std::string_view* {
+    for (auto& n : names)
+      if (std::find(kinds.begin(), kinds.end(), name_kind(n)) != kinds.end()) return &n;
+    return nullptr;
+  };
+  if (auto n = first_of({NameKind::Constant})) return Key::named_view(Key::CONST, *n);
+  if (auto n = first_of({NameKind::String, NameKind::WideString})) return Key::named_view(Key::STR, *n);
   for (auto& n : names)
     if (auto va = named(n)) return Key::of_va(*va);
   for (auto& n : names)
     if (auto va = named(reb.qualified(n))) return Key::of_va(*va);
-  for (auto& n : names)
-    if (starts_with(n, "??_R0")) return Key::named_view(Key::TD, n);
-  for (auto& n : names)
-    if (starts_with(n, "_TI")) return Key::named_view(Key::TI, n);
-  for (auto& n : names)
-    if (starts_with(n, "??_8")) return Key::named_view(Key::VBT, n);
+  if (auto n = first_of({NameKind::TypeDescriptor})) return Key::named_view(Key::TD, *n);
+  if (auto n = first_of({NameKind::ThrowInfo})) return Key::named_view(Key::TI, *n);
+  if (auto n = first_of({NameKind::VbTable})) return Key::named_view(Key::VBT, *n);
   return names.empty() ? Key::named(Key::UNRESOLVED, hex(t)) : Key::named_view(Key::UNRESOLVED, names[0]);
 }
 

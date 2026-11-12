@@ -19,8 +19,8 @@ namespace verifier::test {
 namespace {
 
 // unit check: the SHA-256 paths agree (SHA instructions where the CPU has them, portable code), and known digests
-Problems sha256_paths() {
-  Problems bad;
+Findings sha256_paths() {
+  Findings bad;
   if (sha256_hex("abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     bad.push_back({"sha256", "abc"});
   if (sha256_hex("") != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
@@ -37,8 +37,8 @@ Problems sha256_paths() {
   return bad;
 }
 
-Problems content_hashes() {
-  Problems bad;
+Findings content_hashes() {
+  Findings bad;
   // XXH64's published values (the 39-byte input runs through the 32-byte stripes)
   const std::pair<const char*, u64> known[] = {{"", 0xEF46DB3751D8E999ull},
                                                {"a", 0xD24EC4F1A98C6E5Bull},
@@ -52,11 +52,11 @@ Problems content_hashes() {
 }
 
 // a file's contents read (below 1 MB) or mapped, each the bytes written; absent files and directories are absent
-Problems file_contents() {
+Findings file_contents() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-files-" + unique_suffix());
   fs::create_directories(d / "dir");
-  Problems bad;
+  Findings bad;
   for (size_t n : {size_t(0), size_t(1), size_t(4097), (size_t(1) << 20) - 1, size_t(1) << 20, (size_t(3) << 20) + 5}) {
     Bytes data(n, '\0');
     for (size_t i = 0; i < n; ++i) data[i] = char(i * 31 + (i >> 11));
@@ -86,11 +86,11 @@ Problems file_contents() {
 
 // unit check: line splitting (\n, \r\n, \r), in memory and streamed in blocks
 // the name table against a std::map, through many growths: a value set again keeps its place
-Problems name_table() {
+Findings name_table() {
   std::map<std::string, u64> want;
   std::vector<std::string> names;
   for (int i = 0; i < 20000; ++i) names.push_back("?name" + std::to_string(i * 7919 % 20000) + "@@");
-  Problems bad;
+  Findings bad;
   // growing from empty, reserved for all, and reserved for too few
   for (size_t reserved : {size_t(0), names.size(), size_t(100)}) {
     NameTable t;
@@ -159,8 +159,8 @@ Problems name_table() {
   return bad;
 }
 
-Problems line_splitting() {
-  Problems bad;
+Findings line_splitting() {
+  Findings bad;
   std::string text = "a\nbb\r\nccc\rdddd\n\neee";
   std::vector<std::string> want = {"a", "bb", "ccc", "dddd", "", "eee"}, got;
   for_each_line(text, [&](std::string_view l) { got.emplace_back(l); });

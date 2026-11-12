@@ -18,11 +18,11 @@ namespace verifier::test {
 
 namespace {
 
-Problems replay_key() {
+Findings replay_key() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-test-" + unique_suffix());
   fs::create_directories(d / "src");
-  Problems bad;
+  Findings bad;
   std::map<std::string, std::string> files{{"x.dll", (d / "x.dll").string()},
                                            {"x.map", (d / "x.map").string()},
                                            {"matched.txt", (d / "matched.txt").string()},
@@ -126,7 +126,7 @@ Problems replay_key() {
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
 // ids equal exactly when the strings are), and a damaged file is ignored. Names without a leading '?' need no
 // undname.
-Problems name_cache() {
+Findings name_cache() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-names-" + unique_suffix());
   fs::create_directories(d);
@@ -141,7 +141,7 @@ Problems name_cache() {
     }
     return out;
   };
-  Problems bad;
+  Findings bad;
   std::vector<std::string_view> first = {"N::A::f", "N::B::f", "g", "N::A::f", "M::N::A::f"};
   std::vector<std::string_view> second = {"h", "N::B::f", "M::N::A::f", "N::A::f", "N::C::f"};
   std::vector<std::string> want1, want2;
@@ -291,9 +291,9 @@ int write_other_code_store(const std::string& path) {
   return 0;
 }
 
-Problems code_store_case() {
+Findings code_store_case() {
   namespace fs = std::filesystem;
-  Problems bad;
+  Findings bad;
   fs::path d = fs::temp_directory_path() / ("verifier-code-" + unique_suffix());
   fs::create_directories(d);
   std::string path = (d / "code.bin").string();
@@ -400,9 +400,9 @@ Problems code_store_case() {
   return bad;
 }
 
-Problems diff_store_case() {
+Findings diff_store_case() {
   namespace fs = std::filesystem;
-  Problems bad;
+  Findings bad;
   fs::path d = fs::temp_directory_path() / ("verifier-diffs-" + unique_suffix());
   fs::create_directories(d);
   std::string path = (d / "diffs.bin").string();
@@ -477,9 +477,9 @@ Problems diff_store_case() {
   return bad;
 }
 
-Problems source_cache_case() {
+Findings source_cache_case() {
   namespace fs = std::filesystem;
-  Problems bad;
+  Findings bad;
   fs::path d = fs::temp_directory_path() / ("verifier-sources-" + unique_suffix());
   fs::create_directories(d / "src");
   std::string cache = (d / "sources.bin").string(), root = (d / "src").string();
@@ -547,9 +547,9 @@ Problems source_cache_case() {
   return bad;
 }
 
-Problems replay_record() {
+Findings replay_record() {
   namespace fs = std::filesystem;
-  Problems bad;
+  Findings bad;
   fs::path d = fs::temp_directory_path() / ("verifier-last-" + unique_suffix());
   fs::create_directories(d);
   std::string path = (d / "last.txt").string();
@@ -593,11 +593,11 @@ Problems replay_record() {
   return bad;
 }
 
-Problems stamp_keys() {
+Findings stamp_keys() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-stamps-" + unique_suffix());
   fs::create_directories(d / "src" / "sub");
-  Problems bad;
+  Findings bad;
   auto write = [](const fs::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; };
   auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
   std::vector<fs::path> files{

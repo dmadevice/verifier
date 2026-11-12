@@ -61,7 +61,7 @@ void add_tok(KeyHash& h, const Tok& t) {
 
 std::string entry_blob(const DiffStore::Entry& e) {
   BinWriter w;
-  w.str(e.category);
+  w.str(category_name(e.category));
   w.put(u32(e.diff.size()));
   for (auto& l : e.diff) w.str(l);
   return std::move(w.out);
@@ -70,7 +70,11 @@ std::string entry_blob(const DiffStore::Entry& e) {
 bool read_entry(std::string_view b, DiffStore::Entry& e) {
   BinReader r(b, 0);
   u32 lines = 0;
-  if (!r.str(e.category) || !r.get(lines) || lines > b.size()) return false;
+  std::string cat;
+  if (!r.str(cat) || !r.get(lines) || lines > b.size()) return false;
+  auto c = category_named(cat);
+  if (!c) return false;
+  e.category = *c;
   e.diff.resize(lines);
   for (auto& l : e.diff) r.str(l);
   return r.ok() && r.done();

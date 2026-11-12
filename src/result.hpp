@@ -47,7 +47,7 @@ struct Result {
   std::optional<std::string> symbol;
   bool compared = false;  // MATCH / DIFF: the members below
   i64 osize = 0, rsize = 0;
-  std::optional<std::string> category;
+  std::optional<Category> category;
   std::vector<std::string> unresolved, problems;
   struct FirstDiff {
     i64 index;

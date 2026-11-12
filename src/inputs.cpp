@@ -612,7 +612,7 @@ u64 Rebuilt::span(u64 t) const {
   // a vftable's RTTI locator slot, the 8 bytes before its symbol, belongs to the vftable, not to the object before
   if (nxt && *nxt == end && *nxt - 8 > t) {
     for (std::string_view n : symbols.names(*nxt))
-      if (n.starts_with("??_7")) {
+      if (name_kind(n) == NameKind::VfTable) {
         end = *nxt - 8;
         break;
       }

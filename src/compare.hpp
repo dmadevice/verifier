@@ -13,7 +13,9 @@
 #include <utility>
 #include <vector>
 
+#include "names.hpp"
 #include "pe.hpp"
+#include "problem.hpp"
 #include "x64.hpp"
 
 namespace verifier {
@@ -39,18 +41,13 @@ struct Key {
     return k;
   }  // n outlives the run
   bool is_va(u64 v) const { return kind == VA && va == v; }
+  bool wide() const { return kind == STR && name_kind(name) == NameKind::WideString; }  // a wide string literal
   bool operator==(const Key& o) const {
     return kind == o.kind && va == o.va && name == o.name && (imp == o.imp || (imp && o.imp && *imp == *o.imp));
   }
   std::string text() const;  // what a problem message shows: hex(va) or the name
 };
 
-// What differs: the category (`reference`, `data`, `eh`, ...) and what is wrong, in words
-struct Problem {
-  std::string category, detail;
-  bool operator==(const Problem&) const = default;
-};
-using Problems = std::vector<Problem>;
 
 // -- journal: undo log of the pairing state while a pairing is only assumed ------------------------------------
 class Journal {
@@ -98,7 +95,6 @@ struct PairHash {
 
 using NamePairs = std::vector<std::pair<Bytes, Bytes>>;  // (original decorated name, rebuilt one)
 
-i64 const_size(std::string_view name);
 i64 literal_size(const Image& img, u64 start, const Key& key);
 
 // What a comparison asks beyond the two images: where the rebuild's symbols lie, what the original's names and data

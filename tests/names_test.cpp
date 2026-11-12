@@ -18,7 +18,7 @@ namespace verifier::test {
 
 namespace {
 
-Problems qualified_names() {
+Findings qualified_names() {
   std::vector<std::pair<std::string, std::string>> cases = {
       {"public: virtual void * __cdecl A::B::`scalar deleting destructor'(unsigned int)",
        "A::B::`scalar deleting destructor'"},
@@ -57,7 +57,7 @@ Problems qualified_names() {
        "N::T<N::A,int>::Pick"},
       {"public: void __cdecl Foo::Set(void (__cdecl Foo::*)(void) __ptr64) __ptr64", "Foo::Set"},
   };
-  Problems bad;
+  Findings bad;
   for (auto& [u, want] : cases)
     if (qualified(u) != want) bad.push_back({"name", u + " -> " + qualified(u)});
   std::vector<std::pair<std::string, std::string>> owners = {
@@ -83,7 +83,7 @@ Problems qualified_names() {
   return bad;
 }
 
-Problems definition_names() {
+Findings definition_names() {
   std::vector<std::pair<std::string, std::optional<std::string>>> cases = {
       {"String& String::operator=(const Char* c)", "String::operator="},
       {"Value& Value::operator[](Int32 index)", "Value::operator[]"},
@@ -96,7 +96,7 @@ Problems definition_names() {
       {"// FUNCTION: EXAMPLE 0x180001000 (int)", std::nullopt},
       {"{", std::nullopt},
   };
-  Problems bad;
+  Findings bad;
   for (auto& [line, want] : cases)
     if (definition_name(line) != want) bad.push_back({"name", line + " -> " + definition_name(line).value_or("None")});
   return bad;
@@ -104,9 +104,9 @@ Problems definition_names() {
 
 // names far longer than the recursion of a backtracking regex engine allows (real builds have undecorated
 // names tens of thousands of characters long)
-Problems long_names() {
+Findings long_names() {
   const std::string x(200000, 'x');
-  Problems bad;
+  Findings bad;
   std::string dyn = "void __cdecl `dynamic initializer for 'N::g<" + x + ">''(void)";
   if (qualified(dyn) != "`dynamic initializer for 'N::g<" + x + ">''") bad.push_back({"name", "dynamic initializer"});
   std::string local =
@@ -126,7 +126,7 @@ Problems long_names() {
   return bad;
 }
 
-Problems destructor_pairing() {
+Findings destructor_pairing() {
   std::string dd = "N::X::`scalar deleting destructor'";
   auto both = [](const std::string&) { return true; };
   std::function<bool(const std::string&)> only_dd = [&](const std::string& n) { return n == dd; };
@@ -137,7 +137,7 @@ Problems destructor_pairing() {
     std::string want;
   };
   std::vector<C> cases = {{true, both, dd}, {false, both, "N::X::~X"}, {false, only_dd, dd}, {true, no_dd, "N::X::~X"}};
-  Problems bad;
+  Findings bad;
   for (auto& c : cases) {
     auto got = pick_destructor("N::X::~X", c.in_slot, c.has);
     if (got != c.want) bad.push_back({"name", got});
@@ -145,7 +145,7 @@ Problems destructor_pairing() {
   return bad;
 }
 
-Problems local_static_names() {
+Findings local_static_names() {
   std::vector<std::pair<std::string, bool>> cases = {
       {"?$S3@?1??GetSharedMutex@@YAPEAVmutex@std@@XZ@4IA", true},
       {"?unpacked@?1??unpack_language@@YAPEADG@Z@4PADA", true},
@@ -161,7 +161,7 @@ Problems local_static_names() {
       {"?x@Cls@@2HA", false},
       {"?x@?A0x12345678@ns@@3HA", false},
   };
-  Problems bad;
+  Findings bad;
   for (auto& [n, want] : cases)
     if ((local_static_match(n) != 0) != want) bad.push_back({"local static", n});
   return bad;

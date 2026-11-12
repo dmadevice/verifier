@@ -52,7 +52,7 @@ std::vector<u64> u64s(const Value* v) {
 }
 
 // one comparison, the hooks answering from the case's mapping
-Problems replay(const Value& c) {
+Findings replay(const Value& c) {
   Image O = side_image(c["orig"]), R = side_image(c["rebuilt"]);
   const Value& m = c["mapping"];
   auto keys = std::make_shared<std::map<u64, Key>>();
@@ -181,7 +181,7 @@ void data_cases(const Value& doc) {
     std::string name = c["name"].as_str();
     std::string want_s = c["want"].is_null() ? "" : c["want"].as_str();
     const char* want = want_s.empty() ? nullptr : want_s.c_str();
-    Problems probs, expected;
+    Findings probs, expected;
     for (auto& p : c["problems"].arr) expected.push_back({p.arr[0].as_str(), p.arr[1].as_str()});
     std::string note;
     bool ok;

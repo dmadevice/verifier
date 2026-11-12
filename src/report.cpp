@@ -183,13 +183,13 @@ std::string tok_text(const Tok& tok, const NameOf& names) {
   return out;
 }
 
-std::string classify(const Toks& a, const Toks& b) {
+Category classify(const Toks& a, const Toks& b) {
   auto ncalls = [](const Toks& ts) {
     size_t n = 0;
     for (auto& t : ts) n += t.mnemonic == "call" || (t.mnemonic == "jmp" && !t.ops.empty() && t.ops[0].k == Op::SYM);
     return n;
   };
-  if (ncalls(a) != ncalls(b)) return "inlining";
+  if (ncalls(a) != ncalls(b)) return Category::Inlining;
   std::vector<std::string_view> ma, mb;
   for (auto& t : a) ma.push_back(t.mnemonic);
   for (auto& t : b) mb.push_back(t.mnemonic);
@@ -209,18 +209,18 @@ std::string classify(const Toks& a, const Toks& b) {
                  (o.k == Op::M && p.k == Op::M && o.scale == p.scale && o.v == p.v && o.size == p.size &&
                   o.seg == p.seg);
         }))
-      return "regalloc";
-    if (!all_ops([](const Op& o, const Op& p) { return o.k == p.k; })) return "unexplained";
+      return Category::Regalloc;
+    if (!all_ops([](const Op& o, const Op& p) { return o.k == p.k; })) return Category::Unexplained;
     bool refs = all_ops([](const Op& o, const Op& p) { return o == p || o.k == Op::SYM || o.k == Op::MSYM; });
-    return refs ? "reference" : "immediate";
+    return refs ? Category::Reference : Category::Immediate;
   }
   auto sa = ma, sb = mb;
   std::sort(sa.begin(), sa.end());
   std::sort(sb.begin(), sb.end());
-  if (sa == sb) return "reorder";
+  if (sa == sb) return Category::Reorder;
   long d = long(ma.size()) - long(mb.size());
-  if (std::labs(d) > std::max<long>(4, long(ma.size()) / 4)) return "inlining";
-  return "unexplained";
+  if (std::labs(d) > std::max<long>(4, long(ma.size()) / 4)) return Category::Inlining;
+  return Category::Unexplained;
 }
 
 // -- opcodes of a sequence alignment ------------------------------------------------------------------------

@@ -66,7 +66,7 @@ Tok symbolise_one(const Insn& ins, u64 lo, u64 hi, const std::function<Key(u64)>
 // every instruction of `c`, decoded again one at a time
 Toks symbolise(const Code& c, const std::function<Key(u64)>& resolve, bool const_by_value);
 std::string tok_text(const Tok& t, const NameOf& names);
-std::string classify(const Toks& a, const Toks& b);
+Category classify(const Toks& a, const Toks& b);
 
 struct LongestMatch {
   size_t i, j, k;

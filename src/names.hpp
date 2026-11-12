@@ -13,7 +13,24 @@
 
 namespace verifier {
 
-extern const char* const SCALAR_DD;  // "`scalar deleting destructor'"
+extern const char* const SCALAR_DD;
+
+// What an MSVC decorated name says its object is, read from the name alone
+enum class NameKind : u8 {
+  Other,
+  Constant,        // __real@<hex>, __xmm@<hex>, __mask@<hex>: a compiler constant
+  String,          // ??_C@_0...: a narrow string literal
+  WideString,      // ??_C@_1...: a wide string literal
+  TypeDescriptor,  // ??_R0...: an RTTI type descriptor
+  ThrowInfo,       // _TI...: a ThrowInfo
+  VbTable,         // ??_8...: a virtual base table
+  VfTable,         // ??_7...: a virtual function table
+  LocalStatic,     // a function's local static or its guard (local_static_match)
+};
+NameKind name_kind(std::string_view decorated);
+bool is_literal(NameKind k);  // a constant or string: compared by value, also at an offset into it
+// the size of a compiler constant by its name (__real@ by its digits, __xmm@ and __mask@ 16), 0 for another name
+i64 constant_size(std::string_view decorated);  // "`scalar deleting destructor'"
 
 std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text);  // views of the text
 

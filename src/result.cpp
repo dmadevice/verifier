@@ -186,7 +186,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.rsize = i64(rc.code.size());
   rec.status = probs.empty() ? Status::Match : Status::Diff;
   rec.unresolved.assign(unresolved.begin(), unresolved.end());
-  for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].category + ": " + probs[i].detail);
+  for (size_t i = 0; i < probs.size() && i < 8; ++i) rec.problems.push_back(probs[i].text());
   if (!same) {
     for (size_t k = 0; k < std::min(ot.size(), rt.size()); ++k) {
       if (ot[k] == rt[k]) continue;
@@ -199,7 +199,7 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   if (show) {
     out.print("--- " + lk.qname + "  orig " + std::to_string(rec.osize) + "B | rebuilt " + std::to_string(rec.rsize) +
               "B  " + (probs.empty() ? "MATCH" : "DIFF"));
-    for (auto& [c, d] : probs) out.print("  problem " + c + ": " + d);
+    for (auto& p : probs) out.print("  problem " + p.text());
     for (size_t k = 0; k < std::max(oc.insns.size(), rc.insns.size()); ++k) {
       std::string x = k < oc.insns.size() ? oc.insn(oc.insns[k]).text() : "";
       std::string y = k < rc.insns.size() ? rc.insn(rc.insns[k]).text() : "";
@@ -257,7 +257,7 @@ void write_result(std::string& out, const Result& r, int level) {
   }
   if (r.compared) {
     o.key("category");
-    str_or_null(r.category);
+    str_or_null(r.category ? std::optional<std::string>(category_name(*r.category)) : std::nullopt);
     strs("unresolved", r.unresolved);
     strs("problems", r.problems);
     if (r.first_diff) {
@@ -280,7 +280,7 @@ std::string result_line(const Result& r, const std::string& module) {
   std::string line = pad_right(std::string(status_name(r.status)), 9) + " " + r.orig + " " +
                      pad_left(r.compared ? std::to_string(r.osize) : "-", 5) + "/" +
                      pad_right(r.compared ? std::to_string(r.rsize) : "-", 5) + " " +
-                     pad_right(r.category.value_or(""), 12) + " " + r.name;
+                     pad_right(r.category ? std::string(category_name(*r.category)) : "", 12) + " " + r.name;
   if (r.first_diff) {
     line += "\n            @" + std::to_string(r.first_diff->index) + ": orig `" + r.first_diff->orig +
             "` | rebuilt `" + r.first_diff->rebuilt + "`";

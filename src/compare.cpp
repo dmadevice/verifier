@@ -31,16 +31,10 @@ bool Journal::speculate(const std::function<bool()>& attempt) {
   return ok;
 }
 
-i64 const_size(std::string_view name) {
-  if (starts_with(name, "__real@")) return i64(name.size()) / 2 - 3;
-  if (starts_with(name, "__xmm@") || starts_with(name, "__mask@")) return 16;
-  return 0;
-}
-
 i64 literal_size(const Image& img, u64 start, const Key& key) {
   if (key.kind == Key::TD) return 16 + i64(type_name(img, start).size());  // the name counts its terminator
-  if (key.kind == Key::STR) return i64(img.cstring(start, starts_with(key.name, "??_C@_1")).size());
-  i64 n = const_size(key.name);
+  if (key.kind == Key::STR) return i64(img.cstring(start, key.wide()).size());
+  i64 n = constant_size(key.name);
   return n ? n : 1;
 }
 
@@ -171,11 +165,11 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
     return s;
   };
   if (!oc.complete || !rc.complete)
-    probs.push_back({"undecodable", "decoded " + std::to_string(decoded(oc)) + "/" + std::to_string(oc.cut) + " | " +
+    probs.push_back({Category::Undecodable, "decoded " + std::to_string(decoded(oc)) + "/" + std::to_string(oc.cut) + " | " +
                                         std::to_string(decoded(rc)) + "/" + std::to_string(rc.cut) + " code bytes"});
   if (oc.code.size() != rc.code.size() || oc.cut != rc.cut || oc.resume != rc.resume ||
       oc.insns.size() != rc.insns.size()) {
-    probs.push_back({"length", std::to_string(oc.code.size()) + "/" + std::to_string(rc.code.size()) + " bytes, code " +
+    probs.push_back({Category::Length, std::to_string(oc.code.size()) + "/" + std::to_string(rc.code.size()) + " bytes, code " +
                                    std::to_string(oc.cut) + "/" + std::to_string(rc.cut)});
     return probs;
   }
@@ -184,13 +178,13 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
     auto fa = oc.fields(a), fb = rc.fields(b);
     auto enc = [&] { return "@" + std::to_string(k) + ": `" + oc.insn(a).text() + "` | `" + rc.insn(b).text() + "`"; };
     if (!same_layout(a, fa, b, fb) || !same_outside_fields(oc.bytes(a), rc.bytes(b), fa)) {
-      probs.push_back({"encoding", enc()});
+      probs.push_back({Category::Encoding, enc()});
       continue;
     }
     for (size_t z = 0; z < fa.size(); ++z) {
       if (fa[z].kind == F_TBL) {
         if (fa[z].value != fb[z].value)
-          probs.push_back({"encoding", "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) + " vs " +
+          probs.push_back({Category::Encoding, "@" + std::to_string(k) + ": table offset " + hex_signed(fa[z].value) + " vs " +
                                            hex_signed(fb[z].value)});
         continue;
       }
@@ -200,9 +194,9 @@ Problems Comparer::code(u64 ostart, u64 oend, u64 rstart, u64 rend) {
       if (p) probs.push_back({p->category, "@" + std::to_string(k) + ": " + p->detail});
     }
   }
-  if (!(oc.table_region() == rc.table_region())) probs.push_back({"encoding", "switch table region differs"});
+  if (!(oc.table_region() == rc.table_region())) probs.push_back({Category::Encoding, "switch table region differs"});
   if (!(oc.outside_tables() == rc.outside_tables()))
-    probs.push_back({"encoding", "switch tables after the function differ"});
+    probs.push_back({Category::Encoding, "switch tables after the function differ"});
   return probs;
 }
 

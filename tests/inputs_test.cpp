@@ -18,7 +18,7 @@ namespace verifier::test {
 
 namespace {
 
-Problems leaf_extent_case() {
+Findings leaf_extent_case() {
   std::string mov = unhex("b801000000");
   auto times = [](const std::string& s, int n) {
     std::string r;
@@ -30,7 +30,7 @@ Problems leaf_extent_case() {
       {unhex("7466") + times(mov, 20) + unhex("c390c3"), TEXT + 105},
       {times(mov, 14) + unhex("06c3"), std::nullopt},
   };
-  Problems bad;
+  Findings bad;
   for (auto& [code, want] : cases) {
     Bytes mem(END, '\0');
     mem.replace(TEXT, code.size(), code);
@@ -44,7 +44,7 @@ Problems leaf_extent_case() {
 
 // the same code decoded at two addresses: sizes, mnemonics, absolute branch targets and RIP-relative operands
 // follow from the encoding
-Problems decode_case() {
+Findings decode_case() {
   Bytes code = unhex("e8f0ffffff7405e2fc488d0d10000000ff2510000000e9a0ffffffb801000000c3");
   struct Want {
     int size;
@@ -53,7 +53,7 @@ Problems decode_case() {
   };  // target: branch target or RIP displacement
   std::vector<Want> want = {{5, "call", -0x10}, {2, "jz", 5},      {2, "loop", -4}, {7, "lea", 0x10},
                             {6, "jmp", 0x10},   {5, "jmp", -0x60}, {5, "mov", 0},   {1, "ret", 0}};
-  Problems bad;
+  Findings bad;
   for (u64 address : {u64(0x180001000), u64(0x180123f30)}) {
     auto insns = decode_linear(code, address);
     bool ok = insns.size() == want.size();
@@ -73,11 +73,11 @@ Problems decode_case() {
   return bad;
 }
 
-Problems containing_reach() {
+Findings containing_reach() {
   // a large table with one symbol: every offset into it stays that symbol's, up to the next symbol
   FakeRebuilt reb;
   reb.symbols = symbols_at({BASE, BASE + 0x40000});
-  Problems bad;
+  Findings bad;
   if (reb.containing(BASE + 0x1c000) != BASE) bad.push_back({"containing", "inside a table past 64 KB"});
   if (reb.containing(BASE + 0x3ffff) != BASE) bad.push_back({"containing", "last byte before the next symbol"});
   if (reb.containing(BASE + 0x40000) != BASE + 0x40000) bad.push_back({"containing", "at the next symbol"});
@@ -86,14 +86,14 @@ Problems containing_reach() {
   return bad;
 }
 
-Problems span_before_vftable() {
+Findings span_before_vftable() {
   // a table followed by a vftable ends at the vftable's RTTI locator slot, the 8 bytes before its symbol
   FakeRebuilt reb;
   reb.symbols = Symbols({{BASE, "?table@@3PAY0A@P6AXXZB"},
                          {BASE + 0x20, "??_7Widget@@6B@"},
                          {BASE + 0x40, "?other@@3PAY0A@P6AXXZB"},
                          {BASE + 0x60, "?data@@3HA"}});
-  Problems bad;
+  Findings bad;
   if (reb.span(BASE) != 0x18) bad.push_back({"span", "table runs into the vftable's locator slot"});
   if (reb.span(BASE + 0x20) != 0x20) bad.push_back({"span", "vftable"});
   if (reb.span(BASE + 0x40) != 0x20) bad.push_back({"span", "table before plain data"});
@@ -102,7 +102,7 @@ Problems span_before_vftable() {
 }
 
 // the data items: every item ends the object before it, the alignment ones are padding, in either JSON layout
-Problems data_items_load() {
+Findings data_items_load() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-items-" + unique_suffix());
   fs::create_directories(d);
@@ -116,7 +116,7 @@ Problems data_items_load() {
   o.load_items(items, (d / "absent.jsonl").string());
   std::error_code ec;
   fs::remove_all(d, ec);
-  Problems bad;
+  Findings bad;
   if (o.object_end(4096) != 4106 || o.object_end(4100) != 4106) bad.push_back({"items", "a string's end"});
   if (o.object_end(4108) != 4112) bad.push_back({"items", "a data item (other key order) ends at the next one"});
   if (o.object_end(4112) != 4112) bad.push_back({"items", "the last item's end is unknown"});
@@ -126,7 +126,7 @@ Problems data_items_load() {
 
 // a PE file on disk: loading lays it out at its virtual addresses, and an image laid out elsewhere (the cache's) reads
 // the same tables from its headers
-Problems file_layout() {
+Findings file_layout() {
   namespace fs = std::filesystem;
   auto put = [](Bytes& b, size_t at, u64 v, int n) {
     for (int i = 0; i < n; ++i) b[at + i] = char(v >> (8 * i));
@@ -164,7 +164,7 @@ Problems file_layout() {
   std::string path = (d / "x.dll").string();
   Bytes file = pe_file(0x180000000);
   std::ofstream(path, std::ios::binary) << file;
-  Problems bad;
+  Findings bad;
   Image im = Image::load(path);
   if (im.base != 0x180000000 || im.img.size() != 0x2200 || im.sections.size() != 2 ||
       im.bytes(0x180001000, 1) != file.substr(0x200, 1) || im.bytes(0x180000300, 1) != Bytes(1, '\0'))
@@ -178,7 +178,7 @@ Problems file_layout() {
   return bad;
 }
 
-Problems ignored_annotations() {
+Findings ignored_annotations() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-ann-" + unique_suffix());
   fs::create_directories(d);
@@ -195,7 +195,7 @@ Problems ignored_annotations() {
   std::vector<std::pair<std::string, int>> got;
   for (auto& i : ignored) got.emplace_back(basename(i.path), i.line);
   std::sort(got.begin(), got.end());
-  Problems bad;
+  Findings bad;
   if (got != std::vector<std::pair<std::string, int>>{{"a.cpp", 1}, {"b.cpp", 1}, {"c.cpp", 1}})
     bad.push_back({"ignored", "wrong set"});
   if (anns.size() != 2) bad.push_back({"parsed", std::to_string(anns.size()) + " annotations, want 2"});

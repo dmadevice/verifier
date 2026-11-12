@@ -18,7 +18,7 @@ namespace verifier::test {
 
 namespace {
 
-Problems folded_annotations() {
+Findings folded_annotations() {
   Original orig;
   FakeRebuilt reb;
   reb.symbols = Symbols({{0x100, "?A@@YAXXZ"}, {0x100, "?B@@YAXXZ"}, {0x200, "?C@@YAXXZ"}});
@@ -34,7 +34,7 @@ Problems folded_annotations() {
   return bad_if(!ok, "alternates", "wrong alternates");
 }
 
-Problems stub_pairing() {
+Findings stub_pairing() {
   Original orig;
   FakeRebuilt reb;
   reb.symbols = Symbols({{0x100, "sub_1000"}, {0x200, "A"}});
@@ -45,7 +45,7 @@ Problems stub_pairing() {
   return bad_if(!ok, "paired", "stub/function paired wrongly");
 }
 
-Problems failed_inference() {
+Findings failed_inference() {
   Side o(0), r(0x240);
   struct Fns {
     u64 A, X, G, F;
@@ -83,12 +83,12 @@ Problems failed_inference() {
   p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
   auto g = p.cmp->function(fo.G, fo.G + 6, fr.G, fr.G + 6);
   auto f = p.cmp->function(fo.F, fo.F + 8, fr.F, fr.F + 8);
-  return g.empty() ? Problems{{"setup", "G should differ"}} : f;
+  return g.empty() ? Findings{{"setup", "G should differ"}} : f;
 }
 
 // inference pairs one rebuilt function with each original: G and H both call A in the original, and two copies of it
 // in the rebuild (A1, A2); once A1 is inferred to be A, H's call to A2 is a reference problem
-Problems inference_one_to_one() {
+Findings inference_one_to_one() {
   Side o(0), r(0x240);
   Bytes body = unhex("b801000000c3");
   u64 oa = o.put(TEXT, body, 16), og = o.reserve(TEXT, 16), oh = o.reserve(TEXT, 16);
@@ -115,12 +115,12 @@ Problems inference_one_to_one() {
   p.use(std::make_unique<Comparer>(&O, &R, [&p](u64 t) { return p.resolve_symbol(t); }, nullptr, nullptr, &infer_only));
   auto g = p.cmp->function(og, og + 6, rg, rg + 6);
   auto h = p.cmp->function(oh, oh + 6, rh, rh + 6);
-  return g.empty() ? h : Problems{{"setup", "G should match"}};
+  return g.empty() ? h : Findings{{"setup", "G should match"}};
 }
 
 // a leaf with no .pdata: the rebuild's extent reaches the next symbol, over the nop before a table, and the original's
 // stops at the last ret. The report gives both the same size
-Problems padded_leaf_sizes() {
+Findings padded_leaf_sizes() {
   Side o(0), r(0x240);
   Bytes code = unhex("b801000000c3");
   u64 of = o.put(TEXT, code + unhex("6690"));
@@ -136,14 +136,14 @@ Problems padded_leaf_sizes() {
   run.start({ann});
   Out out;
   Result res = evaluate(ann, run.orig, run.reb, *run.p, *run.c, ".", false, out);
-  Problems bad;
+  Findings bad;
   if (res.status != Status::Match) bad.push_back({"status", std::string(status_name(res.status))});
   if (res.osize != i64(code.size()) || res.rsize != res.osize)
     bad.push_back({"sizes", std::to_string(res.osize) + "/" + std::to_string(res.rsize)});
   return bad;
 }
 
-Problems prebound_static(bool owner_first) {
+Findings prebound_static(bool owner_first) {
   Side o(0), r(0x240);
   struct S {
     u64 sf, sg, F, G;
@@ -178,12 +178,12 @@ Problems prebound_static(bool owner_first) {
   std::vector<std::pair<u64, u64>> order;
   if (owner_first) order.emplace_back(so.G, sr.G);
   order.emplace_back(so.F, sr.F);
-  Problems probs;
+  Findings probs;
   for (auto [of, rf] : order) probs = run.c->function(of, of + 7, rf, rf + 7);
   return probs;
 }
 
-Problems consensus_static() {
+Findings consensus_static() {
   Side o(0), r(0x240);
   u64 ox = o.put(DATA, Bytes(8, '\0'), 16), oy = o.put(DATA, Bytes(8, '\0'), 16);
   u64 rs = r.put(DATA, Bytes(8, '\0'), 16);
@@ -225,7 +225,7 @@ Problems consensus_static() {
   return bad_if(!ok, "binding", "differs");
 }
 
-Problems folded_original(bool same_code) {
+Findings folded_original(bool same_code) {
   Side o(0), r(0x240);
   u64 oo = o.reserve(TEXT, 16);
   o.write(oo, "\x8b\x41\x18\xc3");
@@ -253,7 +253,7 @@ Problems folded_original(bool same_code) {
   return run.c->function(oG, oG + 6, rG, rG + 6);
 }
 
-Problems addend_across_annotation(u64 off) {
+Findings addend_across_annotation(u64 off) {
   Side o(0), r(0x240);
   u64 og = o.put(DATA, Bytes(0x20, '\0'), 16), oy = o.put(DATA, Bytes(4, '\0'), 16);
   u64 rg = r.put(DATA, Bytes(0x40, '\0'), 16), ry = r.put(DATA, Bytes(4, '\0'), 16);
@@ -271,7 +271,7 @@ Problems addend_across_annotation(u64 off) {
 }
 
 // a symbol does not run on into the next section: past its section's end, an address is no addend to it
-Problems addend_across_sections() {
+Findings addend_across_sections() {
   Side o(0), r(0x240);
   u64 og = o.put(RDATA, Bytes(0x20, '\0'), 16);
   u64 rg = r.put(RDATA, Bytes(0x20, '\0'), 16);
@@ -285,7 +285,7 @@ Problems addend_across_sections() {
   reb.fake.local_base = [](u64) { return std::optional<std::pair<u64, u64>>(); };
   Pairing p(orig, reb, {{Kind::Global, og, "g", {}, "g.cpp", 1}});
   p.use(std::make_unique<Comparer>(nullptr, nullptr, [&p](u64 t) { return p.resolve(t); }));
-  Problems bad;
+  Findings bad;
   if (!p.resolve(rg + 0x10).is_va(og + 0x10)) bad.push_back({"reference", "inside the symbol"});
   u64 last = BASE + DATA - 1, past = BASE + DATA + 8;
   if (!p.resolve(last).is_va(og + (last - rg))) bad.push_back({"reference", "the section's last byte"});

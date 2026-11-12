@@ -28,7 +28,7 @@ const Value& fixtures() {
   return doc;
 }
 
-void report(const std::string& name, const char* want, const Problems& probs, bool ok, std::string note) {
+void report(const std::string& name, const char* want, const Findings& probs, bool ok, std::string note) {
   std::replace(note.begin(), note.end(), '\n', ' ');
   std::set<std::string> cats;
   for (auto& p : probs) cats.insert(p.category);
@@ -41,7 +41,7 @@ void report(const std::string& name, const char* want, const Problems& probs, bo
 }
 
 // a case passes when MATCH is wanted and there are no problems, or the wanted category is among them
-bool verdict(const char* want, const Problems& probs) {
+bool verdict(const char* want, const Findings& probs) {
   if (!want) return probs.empty();
   for (auto& p : probs)
     if (p.category == want) return true;
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
   std::set<std::string> written;
   for (auto& c : cases) {
     written.insert(c.name);
-    Problems probs;
+    Findings probs;
     bool ok;
     std::string note;
     try {

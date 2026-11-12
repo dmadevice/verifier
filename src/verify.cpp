@@ -47,7 +47,7 @@ struct Outcome {
   u64 va;
   Kind kind;  // the annotation's
   Status status;
-  std::optional<std::string> category;
+  std::optional<Category> category;
   std::string name;
 };
 
@@ -92,7 +92,7 @@ Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>&
   for (auto& r : results) {
     if (r.status == Status::Match) continue;
     ++differ;
-    ++cat_counts[r.category ? *r.category : std::string(status_name(r.status))];
+    ++cat_counts[std::string(r.category ? category_name(*r.category) : status_name(r.status))];
   }
   auto cats = by_count(cat_counts);
   for (auto& [ea, l] : orig.linked) {

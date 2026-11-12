@@ -7,6 +7,25 @@ namespace verifier {
 
 const char* const SCALAR_DD = "`scalar deleting destructor'";
 
+NameKind name_kind(std::string_view d) {
+  if (d.starts_with("__real@") || d.starts_with("__xmm@") || d.starts_with("__mask@")) return NameKind::Constant;
+  if (d.starts_with("??_C@_1")) return NameKind::WideString;
+  if (d.starts_with("??_C@")) return NameKind::String;
+  if (d.starts_with("??_R0")) return NameKind::TypeDescriptor;
+  if (d.starts_with("_TI")) return NameKind::ThrowInfo;
+  if (d.starts_with("??_8")) return NameKind::VbTable;
+  if (d.starts_with("??_7")) return NameKind::VfTable;
+  if (local_static_match(d)) return NameKind::LocalStatic;
+  return NameKind::Other;
+}
+
+bool is_literal(NameKind k) { return k == NameKind::Constant || k == NameKind::String || k == NameKind::WideString; }
+
+i64 constant_size(std::string_view d) {
+  if (d.starts_with("__real@")) return i64(d.size()) / 2 - 3;
+  return name_kind(d) == NameKind::Constant ? 16 : 0;
+}
+
 namespace {
 
 bool is_hex_lower(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }

@@ -127,7 +127,7 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
     const Import* a = oi == O->imports.end() ? nullptr : &oi->second;
     const Import* b = ri == R->imports.end() ? nullptr : &ri->second;
     if ((a == nullptr) == (b == nullptr) && (!a || *a == *b)) return std::nullopt;
-    return Problem{"reference", "import " + imp_str(a) + " vs " + imp_str(b)};
+    return Problem{Category::Reference, "import " + imp_str(a) + " vs " + imp_str(b)};
   }
   Key key = resolve(r_t);
   if (!key.is_va(o_t) && is_alternate(o_t, r_t)) key = Key::of_va(o_t);
@@ -153,25 +153,25 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
   }
   // a literal is read-only data: the original reading a global with the same bytes is another program
   if ((key.kind == Key::CONST || key.kind == Key::STR) && O->writable(o_t))
-    return Problem{"reference", hex(o_t) + " is writable data, not " + std::string(key.name.substr(0, 40))};
+    return Problem{Category::Reference, hex(o_t) + " is writable data, not " + std::string(key.name.substr(0, 40))};
   if (key.kind == Key::CONST) {
-    i64 n = const_size(key.name);
+    i64 n = constant_size(key.name);
     if (!n) n = access ? access : 4;
     if (O->bytes(o_at, n) != R->bytes(r_at, n) || (lit && !same_read(o_t, r_t, access, r_at + u64(n))))
-      return Problem{"data", "constant " + std::string(key.name) + " differs from " + hex(o_t)};
+      return Problem{Category::Data, "constant " + std::string(key.name) + " differs from " + hex(o_t)};
     return std::nullopt;
   }
   if (key.kind == Key::STR) {
-    bool wide = starts_with(key.name, "??_C@_1");
+    bool wide = key.wide();
     Bytes rs = R->cstring(r_at, wide);
     if (O->cstring(o_at, wide) != rs || (lit && !same_read(o_t, r_t, access, r_at + rs.size(), wide)))
-      return Problem{"data", "string " + std::string(key.name.substr(0, 40)) + " differs from " + hex(o_t)};
+      return Problem{Category::Data, "string " + std::string(key.name.substr(0, 40)) + " differs from " + hex(o_t)};
     return std::nullopt;
   }
   if (key.kind == Key::TD) {
     bool same = same_names({{type_name(*O, o_at), type_name(*R, r_at)}});
     if (same) return std::nullopt;
-    return Problem{"reference", hex(o_t) + " vs " + std::string(key.name)};
+    return Problem{Category::Reference, hex(o_t) + " vs " + std::string(key.name)};
   }
   if (key.kind == Key::TI && o_at == o_t && r_at == r_t) return throw_info_cmp(o_t, r_t, key.name);
   if (key.kind == Key::VBT && o_at == o_t && r_at == r_t) {
@@ -179,14 +179,14 @@ std::optional<Problem> Comparer::ref(u64 o_t, u64 r_t, int access) {
     size_t i = R->reloc_lower_bound(r_t);
     if (i < R->reloc_sorted.size() && R->reloc_sorted[i] < r_t + n) n = R->reloc_sorted[i] - r_t;
     if (O->bytes(o_t, i64(n)) == R->bytes(r_t, i64(n))) return std::nullopt;
-    return Problem{"data", "vbtable " + std::string(key.name.substr(0, 40)) + " differs from " + hex(o_t)};
+    return Problem{Category::Data, "vbtable " + std::string(key.name.substr(0, 40)) + " differs from " + hex(o_t)};
   }
   if (!key.is_va(o_t)) {
     if (!access && !O->executable(o_t) && !ctx->orig_named(o_t)) {
       auto e = ctx->end_of_previous(r_t);
       if (e && *e == o_t) return std::nullopt;  // one past the end of the data object before (a loop bound)
     }
-    return Problem{"reference",
+    return Problem{Category::Reference,
                    hex(o_t) + " vs " + (key.kind == Key::UNRESOLVED ? std::string(key.name) : hex(key.va))};
   }
   if (vtables.count(o_t)) return vtable(o_t, r_t);
@@ -207,7 +207,7 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
   for (i64 p = i64(r_t) - 7; p < i64(r_t) + n; ++p) {
     if (R->has_reloc(u64(p))) {
       if (!O->has_reloc(u64(i64(o_t) + (p - i64(r_t)))))
-        return Problem{"data", std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
+        return Problem{Category::Data, std::to_string(n) + " bytes at " + hex(o_t) + " differ: a pointer only in the rebuild"};
       ptrs.push_back(p - i64(r_t));
     }
   }
@@ -216,7 +216,7 @@ std::optional<Problem> Comparer::accessed(u64 o_t, u64 r_t, int n) {
     mask(a, lo, hi);
     mask(b, lo, hi);
   }
-  if (a != b) return Problem{"data", std::to_string(n) + " bytes at " + hex(o_t) + " differ"};
+  if (a != b) return Problem{Category::Data, std::to_string(n) + " bytes at " + hex(o_t) + " differ"};
   for (i64 off : ptrs) {
     u64 o_p = O->u64_at(u64(i64(o_t) + off)), r_p = R->u64_at(u64(i64(r_t) + off));
     if (infer_data(o_p, r_p)) continue;
@@ -275,18 +275,18 @@ std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   }
   std::optional<Problem> res;
   std::string what = (O->writable(o_t) || R->writable(r_t)) ? "initial data" : "read-only data";
-  if (a != b) res = Problem{"data", what + " at " + hex(o_t) + " differs"};
+  if (a != b) res = Problem{Category::Data, what + " at " + hex(o_t) + " differs"};
   if (!res) {
     // a pointer only in the original: its relocations in the range are more than the rebuilt pointers kept
     size_t o_lo = O->reloc_lower_bound(o_t), o_hi = O->reloc_lower_bound(o_t + u64(size));
     if (o_hi - o_lo > kept.size())
-      res = Problem{"data", what + " at " + hex(o_t) + ": +" + hex(O->reloc_sorted[o_lo] - o_t) +
+      res = Problem{Category::Data, what + " at " + hex(o_t) + ": +" + hex(O->reloc_sorted[o_lo] - o_t) +
                                 " or after is a pointer only in the original"};
   }
   if (!res) {
     for (i64 off : kept) {
       if (!O->has_reloc(o_t + u64(off))) {
-        res = Problem{"data", what + " at " + hex(o_t) + ": +" + hex(u64(off)) + " is a pointer only in the rebuild"};
+        res = Problem{Category::Data, what + " at " + hex(o_t) + ": +" + hex(u64(off)) + " is a pointer only in the rebuild"};
         break;
       }
       u64 o_p = O->u64_at(o_t + u64(off)), r_p = R->u64_at(r_t + u64(off));
@@ -321,11 +321,11 @@ bool Comparer::infer_data(u64 o_t, u64 r_t) {
 std::optional<Problem> Comparer::throw_info_cmp(u64 o_t, u64 r_t, std::string_view name) {
   ThrowInfoSig os = throw_info(*O, o_t), rs = throw_info(*R, r_t);
   if (!same_catchables(os, rs))
-    return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": catchable types differ"};
+    return Problem{Category::Reference, hex(o_t) + " vs " + std::string(name) + ": catchable types differ"};
   for (size_t i = 0; i < std::min(os.funcs.size(), rs.funcs.size()); ++i) {
     u64 a = os.funcs[i], b = rs.funcs[i];
     if (bool(a) != bool(b))
-      return Problem{"reference", hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
+      return Problem{Category::Reference, hex(o_t) + " vs " + std::string(name) + ": function " + hex(a) + " vs " + hex(b)};
     if (a) {
       auto p = ref(a, b, 0);
       if (p) return Problem{p->category, std::string(name) + ": " + p->detail};
@@ -347,11 +347,11 @@ std::optional<Problem> Comparer::vtable_body(u64 o_vt, u64 r_vt) {
     Key got = resolve(r_s);
     if (got.is_va(s) || is_alternate(s, r_s)) continue;
     if (got.kind == Key::UNRESOLVED && O->executable(s) && ctx->infer(s, r_s)) continue;
-    res = Problem{"vtable", "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
+    res = Problem{Category::Vtable, "slot " + std::to_string(i) + " of " + hex(o_vt) + ": " + hex(s) + " vs " + got.text()};
     break;
   }
   if (!res && !same_rtti(rtti(*O, O->u64_at(o_vt - 8)), rtti(*R, R->u64_at(r_vt - 8))))
-    res = Problem{"vtable", "RTTI of " + hex(o_vt) + " differs"};
+    res = Problem{Category::Vtable, "RTTI of " + hex(o_vt) + " differs"};
   return res;
 }
 

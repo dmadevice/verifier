@@ -18,7 +18,7 @@ namespace verifier::test {
 
 namespace {
 
-Problems build_hashes() {
+Findings build_hashes() {
   Comparer c(nullptr, nullptr, [](u64) { return Key::named(Key::UNRESOLVED, ""); });
   Bytes a = ".?AVX@?A0x11111111@@", b = ".?AVX@?A0x22222222@@";
   auto rtti_of = [](const Bytes& name, u32 off) {
@@ -28,7 +28,7 @@ Problems build_hashes() {
     r.off = off;
     return r;
   };
-  Problems bad;
+  Findings bad;
   if (!c.same_names({{a, b}}) || !c.same_rtti(rtti_of(a, 1), rtti_of(b, 1)))
     bad.push_back({"hash", "same name, other hash"});
   if (c.same_names({{a, ".?AVX@?A0x33333333@@"}}) || c.same_names({{".?AVX@?A0x44444444@@", b}}))
@@ -49,7 +49,7 @@ Problems build_hashes() {
   return bad;
 }
 
-Problems global_bytes() {
+Findings global_bytes() {
   Side o(0), r(0x240);
   u64 oa = o.put(RDATA, Bytes("STANDARD\0", 9)), ob = o.put(RDATA, Bytes("EXPANDED\0", 9)),
       ow = o.put(DATA, Bytes("\1\0\0\0", 4));
@@ -88,7 +88,7 @@ Problems global_bytes() {
 
 // a compiler constant or string literal pairs with read-only data only: the original reading a global that holds the
 // same bytes is another program (the global can change)
-Problems literal_vs_global(bool string) {
+Findings literal_vs_global(bool string) {
   Side o(0), r(0x240);
   Bytes v = string ? Bytes("abc\0", 4) : unhex("0000803f");
   u64 og = o.put(DATA, v, 4), rk = r.put(RDATA, v, 4);
@@ -104,7 +104,7 @@ Problems literal_vs_global(bool string) {
 // read-only data whose original extent is known (from its padding): compared to that end, so a table cut short
 // ({1,2,3,4} vs {1,2,3,0}) differs, either way round. Without the extent only the rebuilt nonzero bytes are compared:
 // past them the original's bytes may as well be the next object, which the rebuild put after its padding
-Problems short_table(bool rebuilt_short) {
+Findings short_table(bool rebuilt_short) {
   Side o(0), r(0x240);
   Bytes full = unhex("01020304"), cut = unhex("01020300");
   u64 ot = o.put(RDATA, rebuilt_short ? full : cut, 16), rt = r.put(RDATA, rebuilt_short ? cut : full, 16);
@@ -124,7 +124,7 @@ Problems short_table(bool rebuilt_short) {
 
 // an end pointer: the address one past a table, which the rebuild's padding holds and the original's next object
 // starts at, compares nothing (the original object's end being known)
-Problems end_pointer() {
+Findings end_pointer() {
   Side o(0), r(0x240);
   u64 ot = o.put(RDATA, unhex("01000000020000000300000004000000"), 16);
   o.put(RDATA, unhex("05000000"), 4);
@@ -151,7 +151,7 @@ Problems end_pointer() {
 }
 
 // a pointer only in the original: the rebuilt table holds the same eight bytes as a plain number
-Problems pointer_only_in_original() {
+Findings pointer_only_in_original() {
   Side o(0), r(0x240);
   u64 ot = o.reserve(RDATA, 16), rt = r.reserve(RDATA, 16);
   u64 v = BASE + DATA;
@@ -173,7 +173,7 @@ Problems pointer_only_in_original() {
 
 // tables that point at each other: A = {&B, &C}, B = {&A}, and C differs. B was found consistent while A was assumed
 // to be, so A's failure takes B's success back: a function taking B's address differs whichever is compared first
-Problems table_cycle(bool a_first) {
+Findings table_cycle(bool a_first) {
   Side o(0), r(0x240);
   struct Tables {
     u64 A, B, C, FA, FB;
@@ -204,13 +204,13 @@ Problems table_cycle(bool a_first) {
       nullptr, nullptr, &spans);
   auto fa = [&] { return c.function(to.FA, to.FA + 8, tr.FA, tr.FA + 8); };
   auto fb = [&] { return c.function(to.FB, to.FB + 8, tr.FB, tr.FB + 8); };
-  Problems pa = a_first ? fa() : Problems(), pb = fb();
+  Findings pa = a_first ? fa() : Findings(), pb = fb();
   if (!a_first) pa = fa();
   if (pa.empty()) return {{"setup", "A should differ"}};
   return pb;
 }
 
-Problems malformed_unwind() {
+Findings malformed_unwind() {
   Side o(0), r(0x240);
   u64 fo = 0, fr = 0;
   for (auto [s, f] : {std::pair<Side*, u64*>{&o, &fo}, {&r, &fr}}) {
@@ -234,7 +234,7 @@ Problems malformed_unwind() {
 
 // a read-only table of 5 KB whose address a function takes, and the next symbol after it; with `same` false the
 // rebuilt table differs in one byte past its first 4 KB
-Problems long_table(bool same) {
+Findings long_table(bool same) {
   Side o(0), r(0x240);
   Bytes t(0x1400, '\x01'), u = t;
   if (!same) u[0x1200] = '\x02';
@@ -258,7 +258,7 @@ Problems long_table(bool same) {
 
 // a table read through an __ImageBase-relative indexed operand (lea rcx, __ImageBase; mov eax, [rcx+rdx*4+table]):
 // with `same` false the rebuilt table's third entry differs
-Problems image_relative_table(bool same) {
+Findings image_relative_table(bool same) {
   Side o(0), r(0x240);
   Bytes t = le32b(1) + le32b(2) + le32b(3) + le32b(4), u = t;
   if (!same) u.replace(8, 4, le32b(9));

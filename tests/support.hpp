@@ -34,10 +34,22 @@ using json::Value;
 
 // -- the harness ---------------------------------------------------------------------------------------------
 
+// what a case found: a comparison's problems (their categories by name), or a check's own failures
+struct Finding {
+  std::string category, detail;
+  bool operator==(const Finding&) const = default;
+};
+struct Findings : std::vector<Finding> {
+  using std::vector<Finding>::vector;
+  Findings(const Problems& ps) {
+    for (auto& p : ps) push_back({std::string(category_name(p.category)), p.detail});
+  }
+};
+
 struct Case {
   std::string name;
   const char* want;  // the category the problems must include; nullptr: no problems (a MATCH)
-  std::function<Problems()> fn;
+  std::function<Findings()> fn;
 };
 using Cases = std::vector<Case>;
 
@@ -53,12 +65,12 @@ void add_inputs_cases(Cases&);
 void add_cache_cases(Cases&);
 void add_util_cases(Cases&);
 void run_fixture_cases(const Value& doc);  // reported as they run
-void report(const std::string& name, const char* want, const Problems& probs, bool ok, std::string note = "");
-bool verdict(const char* want, const Problems& probs);
+void report(const std::string& name, const char* want, const Findings& probs, bool ok, std::string note = "");
+bool verdict(const char* want, const Findings& probs);
 int write_code_store(const std::string& path);  // cache_test.cpp: the second process's part
 
-inline Problems bad_if(bool bad, const std::string& cat, const std::string& why) {
-  return bad ? Problems{{cat, why}} : Problems{};
+inline Findings bad_if(bool bad, const std::string& cat, const std::string& why) {
+  return bad ? Findings{{cat, why}} : Findings{};
 }
 
 // a name for temporary files no other run uses at the same time
