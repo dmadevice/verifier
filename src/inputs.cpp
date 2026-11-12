@@ -191,9 +191,12 @@ void Original::load_exports() {
     if (e2s[ea].size() == 1 && (!at || *at == ea)) by_name.set(keep(sym), ea);
   }
   if (file_exists(p.symbols)) {
+    size_t n = 0;
     for (auto& line : read_lines(p.symbols)) {
+      ++n;
       if (strip(line).empty() || starts_with(line, "#")) continue;
       auto w = split_ws(line);
+      if (w.size() < 2) throw std::runtime_error(p.symbols + ":" + std::to_string(n) + ": want a name and an address");
       by_name.set(keep(w[0]), parse_hex(w[1]));
     }
   }
@@ -207,6 +210,7 @@ void Original::load_exports() {
     auto doc = json::parse(read_file(p.library_functions));
     for (auto& m : doc.arr) {
       u64 ea = u64(m["ea"].as_int());
+      if (!functions.contains(ea)) continue;  // as the matches above: only function starts are counted as library code
       linked[ea] = Linked{m["lib"].as_str(), "", false};
     }
   }
@@ -214,7 +218,7 @@ void Original::load_exports() {
 }
 
 std::string Original::snapshot_key(const Config& p) {
-  std::string key = "verifier original snapshot 4\n" + p.original_sha256 + "\n";
+  std::string key = "verifier original snapshot 5\n" + p.original_sha256 + "\n";
   i64 recent = two_seconds_ago();
   for (auto* f : p.snapshot_inputs()) {
     i64 time = std::numeric_limits<i64>::min();
