@@ -167,10 +167,39 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 43 cases in code: pairing (inference taken back when it fails, local
-statics, folded functions), name handling, the annotation parser, the instruction diff, the replay key and
-record, hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache directory's code,
-diff and sources stores. `ctest` also runs fadec's own decoder tests.
+exact problems it must report, and 52 cases in code: pairing (inference taken back when it fails and kept
+one-to-one, local statics, folded functions), data (literals against globals, tables cut short, tables that
+point at each other), name handling, the annotation parser, the instruction diff, the replay key and record,
+hashing, the report's JSON escaping, the stamp key, file reading, line splitting, the name table, and the cache
+directory's code, diff and sources stores. `ctest` also runs fadec's own decoder tests.
+
+## How it works
+
+A run, in the order `verify.cpp`'s `run` takes it:
+
+1. **Replay** (`replay.cpp`): when nothing it read has changed since the last run, that run's output, report and
+   exit status are given again.
+2. **Original** (`inputs.cpp`, `pe.cpp`): the image with its exports (functions, vtables, data items, library
+   attribution), kept between runs as a snapshot.
+3. **Annotations** (`annotations.cpp`, kept between runs by `source_cache.cpp`): every annotation in the source
+   trees.
+4. **Rebuilt** (`inputs.cpp`, `pe.cpp`): the image and its map. Each symbol gets its undecorated name, qualified
+   name and signature (`names.cpp`, `undname.cpp`, kept between runs by `name_cache.cpp`).
+5. **Pairing** (`pairing.cpp`): which rebuilt symbol each annotation names, and what every other rebuilt address
+   stands for in the original (by name, as a literal, by containing symbol). Local statics are paired here, by
+   votes from the code that references them.
+6. **Comparison** (`compare.cpp`, `compare_refs.cpp`, `compare_eh.cpp`, decoding in `x64.cpp` and
+   `code_store.cpp`): each annotated function against its original. This covers the instruction bytes with
+   address fields set aside, then what each address field refers to, then unwind and EH data. What a comparison
+   finds out (an unannotated function inferred to be an original, two tables found consistent) is speculative.
+   It goes into a journal and is taken back when the comparison that assumed it fails.
+7. **Result** (`result.cpp`): each annotation's status and category. For a DIFF this includes the symbolised
+   instruction diff (`report.cpp`, kept between runs by `diff_store.cpp`), its stdout line and its report entry.
+8. **Summary and gate** (`verify.cpp`): coverage, the regression gate against the matched list, and the replay
+   record.
+
+The comparison asks the pairing what it needs through `ComparerContext` (`compare.hpp`), never through the
+pairing's tables directly. The tests answer the same questions with small fakes.
 
 ## Performance
 

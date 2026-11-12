@@ -71,19 +71,21 @@ class Pairing : public ComparerContext {
 
  private:
   void pair_vftables();
-  SvViewMap<u64> vftables_;
-  std::unordered_map<std::string, Paired> paired_;  // by paired_key()   // rebuilt vftable names of classes with
-                                                    // several bases, not among the original's names
   void prebind_locals();
+  Key resolve_symbol_uncached(u64 t) const;
+
+  // rebuilt vftable names of classes with several bases, not among the original's names: the original vftable each
+  // stands for
+  SvViewMap<u64> vftables_;
+  std::unordered_map<std::string, Paired> paired_;  // by paired_key()
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
   JMap<u64, u64> inferred_r_, inferred_o_;  // unresolved rebuilt functions inferred to be originals, both ways
-  Key resolve_symbol_uncached(u64 t) const;
-  mutable std::unordered_map<u64, Key> resolved_;  // resolve_symbol's answers
-  int infer_depth_ = 0;
-  std::unordered_map<u64, std::vector<u64>> refs_of_;
+  int infer_depth_ = 0;                     // inferences in progress, one inside another (at most 4)
+  mutable std::unordered_map<u64, Key> resolved_;      // resolve_symbol's answers
+  std::unordered_map<u64, std::vector<u64>> refs_of_;  // orig_refs' answers
 };
 
 }  // namespace verifier
