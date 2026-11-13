@@ -88,6 +88,11 @@ std::vector<std::pair<u64, std::string_view>> parse_map(std::string_view text) {
   return syms;
 }
 
+std::string deleting_destructor(const std::string& name) {
+  size_t p = name.rfind("::");
+  return (p == std::string::npos ? name : name.substr(0, p)) + "::" + SCALAR_DD;
+}
+
 bool is_norm_name(std::string_view s) {
   for (size_t i = 0; i < s.size(); ++i)
     if (is_space(s[i]) || (s[i] == '_' && s.compare(i, 7, "__ptr64") == 0)) return false;

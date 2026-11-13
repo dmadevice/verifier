@@ -195,8 +195,8 @@ struct FakeRebuilt : Rebuilt {
   std::string qualified(std::string_view d) const override {
     return fake.qualified ? fake.qualified(d) : Rebuilt::qualified(d);
   }
-  Lookup lookup(const std::string& k, const std::optional<std::string>& sig, bool code) const override {
-    return fake.lookup ? fake.lookup(k, sig, code) : Rebuilt::lookup(k, sig, code);
+  Lookup lookup(const std::string& k, const std::optional<std::string>& sig, bool code, bool normed) const override {
+    return fake.lookup ? fake.lookup(k, sig, code) : Rebuilt::lookup(k, sig, code, normed);
   }
   u64 extent(u64 va) const override { return fake.extent ? fake.extent(va) : Rebuilt::extent(va); }
   u64 span(u64 t) const override { return fake.span ? fake.span(t) : Rebuilt::span(t); }

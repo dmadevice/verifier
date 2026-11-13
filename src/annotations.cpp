@@ -26,6 +26,13 @@ constexpr std::string_view KIND_NAMES[] = {"FUNCTION", "STUB", "SYNTHETIC", "TEM
 
 std::string_view kind_name(Kind k) { return KIND_NAMES[size_t(k)]; }
 
+void set_keys(Annotation& a) {
+  a.key = norm_name(a.kind == Kind::Vtable ? a.name + "::`vftable'" : a.name);
+  if (a.key == a.name) a.key.clear();
+  a.deleting_key = a.flags.dtor ? norm_name(deleting_destructor(a.name)) : std::string();
+  a.keyed = true;
+}
+
 std::optional<Kind> kind_named(std::string_view name) {
   for (size_t i = 0; i < std::size(KIND_NAMES); ++i)
     if (KIND_NAMES[i] == name) return Kind(i);
@@ -173,6 +180,7 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
         name = strip(name.substr(0, size_t(p)));
       }
       out.push_back({kind, va, name, flags, kept_path, int(i + 1)});
+      set_keys(out.back());
       continue;
     }
     if (starts_with(rest, "(") && ends_with(rest, ")")) flags.sig = norm_params(rest);
@@ -201,6 +209,7 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
       }
     }
     if (out.size() == before && ignored) ignored->push_back({path, int(i + 1), strip(lines[i])});
+    for (size_t k = before; k < out.size(); ++k) set_keys(out[k]);
   }
 }
 
@@ -217,10 +226,11 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
       if (!source) continue;
       if (const SourceCache::Entry* e = cache ? cache->find(file) : nullptr) {  // as the cache has it: not read
         std::string_view kept_path = keep_text(path);
-        for (auto& a : e->anns) out.push_back({a.kind, a.va, a.name, a.flags, kept_path, a.line});
+        for (auto& a : e->anns)
+          out.push_back({a.kind, a.va, a.name, a.flags, kept_path, a.line, true, a.key, a.deleting_key});
         if (ignored)
           for (auto& ig : e->ignored) ignored->push_back({path, ig.line, ig.text});
-        cache->keep(file, *e);
+        cache->keep(file, e);
         continue;
       }
       std::string data = read_file(path);
@@ -232,7 +242,7 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
         out.insert(out.end(), anns.begin(), anns.end());
         if (ignored) ignored->insert(ignored->end(), ign.begin(), ign.end());
         if (cache) {
-          for (auto& a : anns) e.anns.push_back({a.kind, a.va, a.name, a.flags, a.line});
+          for (auto& a : anns) e.anns.push_back({a.kind, a.va, a.name, a.flags, a.line, a.key, a.deleting_key});
           for (auto& ig : ign) e.ignored.push_back({ig.line, ig.text});
         }
       }
@@ -247,9 +257,9 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
 namespace {
 
 // the file: header; then for each source file listed, in order: its path, size and time, its annotations (kind,
-// address, name, FOLDED, destructor, parameter list, line) and the annotations naming nothing (line, text); strings as
-// u32 length and bytes, counts as u32
-constexpr std::string_view SOURCES_MAGIC = "verifier-sources 2\n";
+// address, name, FOLDED, destructor, parameter list, line, the lookup keys: Annotation's) and the annotations naming
+// nothing (line, text); strings as u32 length and bytes, counts as u32
+constexpr std::string_view SOURCES_MAGIC = "verifier-sources 3\n";
 
 }  // namespace
 
@@ -281,6 +291,8 @@ SourceCache::SourceCache(std::string path, std::string key, i64 recent)
       r.get(dtor);
       r.str(a.flags.sig);
       r.get(a.line);
+      r.str(a.key);
+      r.str(a.deleting_key);
       a.flags.folded = folded;
       a.flags.dtor = dtor;
       st.e.anns.push_back(std::move(a));
@@ -310,14 +322,17 @@ void SourceCache::keep(const ListedFile& f, Entry e) {
   }
   auto it = old_.find(f.path);
   if (it == old_.end() || it->second.size != f.size || it->second.time != f.time) changed_ = true;
-  new_.emplace_back(f, std::move(e));
+  new_.emplace_back(f, &made_.emplace_back(std::move(e)));
 }
+
+void SourceCache::keep(const ListedFile& f, const Entry* found) { new_.emplace_back(f, found); }
 
 void SourceCache::save() {
   if (path_.empty() || (!changed_ && new_.size() == old_.size())) return;
   BinWriter w;
   w.out = cache_header(SOURCES_MAGIC, key_);
-  for (auto& [f, e] : new_) {
+  for (auto& [f, ep] : new_) {
+    const Entry& e = *ep;
     w.str(f.path);
     w.put(f.size);
     w.put(f.time);
@@ -330,6 +345,8 @@ void SourceCache::save() {
       w.put(u8(a.flags.dtor));
       w.str(a.flags.sig);
       w.put(i32(a.line));
+      w.str(a.key);
+      w.str(a.deleting_key);
     }
     w.put(u32(e.ignored.size()));
     for (auto& g : e.ignored) {

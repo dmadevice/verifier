@@ -134,8 +134,9 @@ With a `cache_dir`, runs keep there what the next run can use again:
 - `rebuilt-code.bin`: the rebuilt functions runs decoded, found again by name and size wherever the next link puts
   them and used only where the bytes outside their address fields and their relocations are as they were (the
   fields are then read from the bytes); a run keeps the functions it used or decoded.
-- `sources-cache.bin`: each source file's annotations, used while the file keeps its size and modification time
-  (a file changed within two seconds of the run is read again and not kept).
+- `sources-cache.bin`: each source file's annotations, with each name as the lookups take it (normalised), used while
+  the file keeps its size and modification time (a file changed within two seconds of the run is read again and not
+  kept).
 - `diff-cache.bin`: each DIFF's category from its instructions, instruction diff and first difference, kept with
   the snapshot's key and found again by a hash of everything else they read (both functions' places and bytes, the
   rebuilt one's address fields and what each stands for); a run keeps the entries it used.

@@ -563,12 +563,12 @@ std::vector<u32> Rebuilt::matching(const std::string& key) const {
   return out;
 }
 
-Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>& sig, bool code) const {
-  std::optional<std::string> normed;  // most names are normal already: no copy
-  if (!is_norm_name(key0)) normed = norm_name(key0);
-  const std::string& key = normed ? *normed : key0;
+Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>& sig, bool code, bool normed) const {
+  std::optional<std::string> own;  // most names are normal already: no copy
+  if (!normed && !is_norm_name(key0)) own = norm_name(key0);
+  const std::string& key = own ? *own : key0;
   std::vector<u32> hits = matching(key);
-  last_.name = key0;  // overloads_of on the same name (pairing asks for both) reads these
+  last_.name = key;  // overloads_of on the same name (pairing asks for both) reads these
   last_.hits = hits;
   std::vector<u64> vas;
   for (u32 q : hits) {
@@ -584,9 +584,12 @@ Lookup Rebuilt::lookup(const std::string& key0, const std::optional<std::string>
   return {std::move(vas), hits.size() == 1 ? std::string(names_->text(qual_ids_[hits[0]])) : key, hits.size()};
 }
 
-std::vector<std::string> Rebuilt::overloads_of(const std::string& key) const {
+std::vector<std::string> Rebuilt::overloads_of(const std::string& key0, bool normed) const {
+  std::optional<std::string> own;
+  if (!normed && !is_norm_name(key0)) own = norm_name(key0);
+  const std::string& key = own ? *own : key0;
   std::set<std::string_view> out;
-  for (u32 q : key == last_.name ? last_.hits : matching(norm_name(key)))
+  for (u32 q : key == last_.name ? last_.hits : matching(key))
     for (u32 k = qual_first_[q]; k < qual_first_[q + 1]; ++k)
       if (img.executable(qual_syms_[k].va)) out.insert(qual_syms_[k].sig);
   return std::vector<std::string>(out.begin(), out.end());

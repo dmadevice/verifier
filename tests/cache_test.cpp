@@ -65,6 +65,49 @@ Findings sources_cache() {
   return bad;
 }
 
+// each annotation's lookup keys: worked out when the file is read, and the same when the file comes from the cache
+Findings sources_cache_keys() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-sources-keys-" + unique_suffix());
+  fs::create_directories(d / "src");
+  std::string file = (d / "src" / "a.cpp").string(), cache = (d / "sources.bin").string();
+  std::ofstream(file, std::ios::binary) << "// VTABLE: MOD 0x10\nclass Box<int, char> {\n};\n"
+                                        << "// FUNCTION: MOD 0x20\nBox<int, char>::~Box() {}\n"
+                                        << "// FUNCTION: MOD 0x30\nvoid Get() {}\n"
+                                        << "// SYNTHETIC: MOD 0x40 Box<unsigned int, class Item *>::Put\n";
+  fs::last_write_time(file, fs::file_time_type::clock::now() - std::chrono::hours(1));
+  auto run = [&] {
+    SourceCache c(cache, "key", two_seconds_ago());
+    auto anns = parse_annotations({(d / "src").string()}, "MOD", nullptr, &c);
+    c.save();
+    return anns;
+  };
+  struct Want {
+    std::string key, deleting_key;
+  };
+  std::vector<Want> want = {{"Box::`vftable'", ""},
+                            {"Box<int,char>::~Box", "Box<int,char>::`scalar deleting destructor'"},
+                            {"", ""},
+                            {"Box<unsigned int,Item*>::Put", ""}};
+  Findings bad;
+  for (const char* pass : {"read", "cached"}) {
+    auto anns = run();
+    if (anns.size() != want.size()) {
+      bad.push_back({"sources keys", std::string(pass) + ": " + std::to_string(anns.size()) + " annotations"});
+      continue;
+    }
+    for (size_t i = 0; i < anns.size(); ++i) {
+      const Annotation& a = anns[i];
+      if (!a.keyed || a.key != want[i].key || a.deleting_key != want[i].deleting_key)
+        bad.push_back(
+            {"sources keys", std::string(pass) + " " + a.name + ": `" + a.key + "` `" + a.deleting_key + "`"});
+    }
+  }
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 // the original's snapshot key: none while an input is younger than two seconds (the snapshot is neither used nor
 // written), and the configured hash part of it
 Findings snapshot_key() {
@@ -387,6 +430,7 @@ void add_cache_cases(Cases& cases) {
                                 {"name cache file", nullptr, name_cache},
                                 {"snapshot key", nullptr, snapshot_key},
                                 {"sources cache", nullptr, sources_cache},
+                                {"sources cache keys", nullptr, sources_cache_keys},
                                 {"original code store", nullptr, code_store},
                                 {"rebuilt code store", nullptr, rebuilt_store},
                                 {"DIFF report store", nullptr, diff_store},

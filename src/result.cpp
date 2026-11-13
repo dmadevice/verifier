@@ -85,7 +85,7 @@ std::optional<FnPair> compared_pair(const Annotation& ann, const Original& orig,
   u64 ova = ann.va;
   if (!orig.functions.contains(ova) || library_code(ann, orig)) return std::nullopt;
   const Pairing::Paired* pd = pairing.paired(ann);
-  Lookup lk = pd ? pd->lookup : reb.lookup(ann.name, sig_flag(ann.flags), true);
+  Lookup lk = pd ? pd->lookup : lookup_annotation(reb, ann, sig_flag(ann.flags), true);
   if (lk.vas.empty() || lk.nhits > 1) return std::nullopt;
   return FnPair{ova, orig.extent(ova), lk.vas[0], reb.extent(lk.vas[0])};
 }
@@ -106,8 +106,8 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
     lkp = &pd->lookup;
     rec.overloads = pd->overloads;
   } else {
-    own = reb.lookup(ann.name, sig_flag(ann.flags), true);
-    rec.overloads = reb.overloads_of(ann.name);
+    own = lookup_annotation(reb, ann, sig_flag(ann.flags), true);
+    rec.overloads = overloads_of_annotation(reb, ann);
   }
   const Lookup& lk = *lkp;
   if (!orig.functions.contains(ova)) {

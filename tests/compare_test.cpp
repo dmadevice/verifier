@@ -95,8 +95,8 @@ Findings global_bytes() {
         return it != reb_to_orig.end() ? Key::of_va(it->second) : Key::named(Key::UNRESOLVED, "");
       },
       nullptr, nullptr, &spans);
-  auto lookup = [&](const std::string& n) {
-    auto it = names.find(n);
+  auto lookup = [&](const Annotation& a) {
+    auto it = names.find(a.name);
     return it == names.end() ? std::vector<u64>() : std::vector<u64>{it->second};
   };
   std::vector<std::string> got;

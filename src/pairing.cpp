@@ -53,11 +53,21 @@ std::string reb_mi_vftable(std::string_view n) {
 
 }  // namespace
 
+Lookup lookup_annotation(const Rebuilt& reb, const Annotation& a, const std::optional<std::string>& sig, bool code) {
+  if (a.keyed) return reb.lookup(a.key.empty() ? a.name : a.key, sig, code, true);
+  return reb.lookup(a.kind == Kind::Vtable ? a.name + "::`vftable'" : a.name, sig, code);
+}
+
+std::vector<std::string> overloads_of_annotation(const Rebuilt& reb, const Annotation& a) {
+  // a VTABLE's key is its vftable's: the name's own
+  if (a.keyed && a.kind != Kind::Vtable) return reb.overloads_of(a.key.empty() ? a.name : a.key, true);
+  return reb.overloads_of(a.name);
+}
+
 Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotation>& anns) : orig(o), reb(r) {
   pair_vftables();
   for (auto& a : anns) {
-    std::string key = a.kind == Kind::Vtable ? a.name + "::`vftable'" : a.name;
-    Lookup lk = reb.lookup(key, sig_flag(a.flags), is_paired(a.kind));
+    Lookup lk = lookup_annotation(reb, a, sig_flag(a.flags), is_paired(a.kind));
     for (u64 rva : lk.vas) {
       reb_to_origs_.push_back({rva, a.va});  // in annotation order: the last of each rebuilt address wins
       if (a.kind != Kind::Stub) paired_o.push_back(a.va);
@@ -66,7 +76,7 @@ Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotati
       std::string pk = paired_key(a);
       auto it = paired_.find(pk);
       if (it == paired_.end())
-        it = paired_.emplace(std::move(pk), Paired{std::move(lk), reb.overloads_of(a.name)}).first;
+        it = paired_.emplace(std::move(pk), Paired{std::move(lk), overloads_of_annotation(reb, a)}).first;
       paired_by_ann_.insert(u64(reinterpret_cast<uintptr_t>(&a)), &*it);
     }
   }

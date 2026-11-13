@@ -1,5 +1,6 @@
 // Source annotations: `// FUNCTION: <module> 0x<va>` and friends, read from the source trees.
 #pragma once
+#include <deque>
 #include <optional>
 #include <set>
 #include <string>
@@ -14,7 +15,7 @@ namespace verifier {
 
 // What an annotation says its definition is
 enum class Kind : u8 { Function, Stub, Synthetic, Template, Library, Global, Vtable };
-std::string_view kind_name(Kind k);                    // as written in source: FUNCTION, STUB, ...
+std::string_view kind_name(Kind k);                     // as written in source: FUNCTION, STUB, ...
 std::optional<Kind> kind_named(std::string_view name);  // the kind written `name`
 
 struct AnnotationFlags {
@@ -30,7 +31,13 @@ struct Annotation {
   AnnotationFlags flags;
   std::string_view path;  // text kept for the run (keep_text)
   int line = 0;
+  // what the rebuilt names are looked up by, worked out from the name once (kept in the sources cache) when `keyed`:
+  // the name as norm_name gives it (a VTABLE's with "::`vftable'"; "" when that is the name itself), and a destructor's
+  // scalar deleting destructor's (see pick_destructor)
+  bool keyed = false;
+  std::string key, deleting_key;
 };
+void set_keys(Annotation& a);  // a's keys, from its kind, name and destructor flag
 
 struct Ignored {
   std::string path;
@@ -61,6 +68,7 @@ class SourceCache {
       std::string name;
       AnnotationFlags flags;
       int line;
+      std::string key, deleting_key;  // the annotation's (keyed)
     };
     struct Ign {
       int line;
@@ -72,6 +80,7 @@ class SourceCache {
   SourceCache(std::string path, std::string key, i64 recent);  // path empty: nothing kept
   const Entry* find(const ListedFile& f) const;                // the file's entry when it can be used
   void keep(const ListedFile& f, Entry e);                     // this run's entry for the file
+  void keep(const ListedFile& f, const Entry* found);          // the entry find() gave (not copied)
   void save();                                                 // when an entry changed or the files listed differ
 
  private:
@@ -83,7 +92,8 @@ class SourceCache {
     Entry e;
   };
   std::unordered_map<std::string, Stored> old_;
-  std::vector<std::pair<ListedFile, Entry>> new_;
+  std::deque<Entry> made_;                                // the entries made this run
+  std::vector<std::pair<ListedFile, const Entry*>> new_;  // this run's: old_'s or made_'s
   bool changed_ = false;
 };
 

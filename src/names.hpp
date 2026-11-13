@@ -51,12 +51,13 @@ std::string_view last_components(std::string_view q, int n);
 size_t local_static_match(
     std::string_view dec);  // end of the local static prefix of a decorated name, 0 if it is not one
 
+// the scalar deleting destructor of a destructor's class (the whole name when it has no "::")
+std::string deleting_destructor(const std::string& name);
+
 // pick_destructor(name, va, va is a vtable slot, has_code)
 template <class HasCode>
 std::string pick_destructor(const std::string& name, bool in_slot, HasCode has_code) {
-  size_t p = name.rfind("::");
-  std::string deleting = (p == std::string::npos ? name : name.substr(0, p)) + "::" + SCALAR_DD;
-  // the deleting destructor of the destructor's class (the whole name when it has no "::")
+  std::string deleting = deleting_destructor(name);
   const std::string& plain = name;
   const std::string& first = in_slot ? deleting : plain;
   const std::string& second = in_slot ? plain : deleting;

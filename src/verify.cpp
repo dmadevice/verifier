@@ -18,7 +18,7 @@ namespace verifier {
 using json::Value;
 
 std::vector<GlobalRoot> global_roots(const std::vector<Annotation>& anns,
-                                     const std::function<std::vector<u64>(const std::string&)>& lookup,
+                                     const std::function<std::vector<u64>(const Annotation&)>& lookup,
                                      const std::function<std::optional<u64>(u64)>& orig_of, const Image& O,
                                      const Image& R) {
   std::vector<const Annotation*> sorted;
@@ -28,7 +28,7 @@ std::vector<GlobalRoot> global_roots(const std::vector<Annotation>& anns,
   for (auto* a : sorted) {
     u64 va = a->va;
     if (a->kind != Kind::Global || !O.flags(va) || O.writable(va) || O.executable(va)) continue;
-    for (u64 rva : lookup(a->name))
+    for (u64 rva : lookup(*a))
       if (orig_of(rva) == va && !R.writable(rva) && !R.executable(rva)) out.push_back({a, rva});
   }
   return out;
@@ -199,8 +199,24 @@ void pick_destructors(std::vector<Annotation>& anns, const Original& orig, const
   std::unordered_set<u64> slots;
   for (auto& [v, ss] : orig.vtables) slots.insert(ss.begin(), ss.end());
   auto has_code = [&](const std::string& n) { return !reb.lookup(n, std::nullopt, true).vas.empty(); };
-  for (auto& ann : anns)
-    if (ann.flags.dtor) ann.name = pick_destructor(ann.name, slots.count(ann.va) != 0, has_code);
+  for (auto& ann : anns) {
+    if (!ann.flags.dtor) continue;
+    bool in_slot = slots.count(ann.va) != 0;
+    if (!ann.keyed) {  // keys not worked out: the names looked up as they are
+      ann.name = pick_destructor(ann.name, in_slot, has_code);
+      continue;
+    }
+    // pick_destructor by the keys worked out with the name
+    auto has = [&](bool deleting) {
+      const std::string& k = deleting ? ann.deleting_key : ann.key.empty() ? ann.name : ann.key;
+      return !reb.lookup(k, std::nullopt, true, true).vas.empty();
+    };
+    bool deleting = (has(in_slot) || !has(!in_slot)) ? in_slot : !in_slot;
+    if (deleting) {
+      ann.name = deleting_destructor(ann.name);
+      ann.key = ann.deleting_key;
+    }
+  }
 }
 
 // the comparison's exploring of every root (the compared annotations' functions, the GLOBALs' data) and its matching,
@@ -358,8 +374,8 @@ int run(int argc, char** argv) {
   pairing.prebind(cmp.m);
   ph.mark("prebind votes");
   auto globals = global_roots(
-      anns, [&](const std::string& n) { return reb.lookup(n).vas; }, [&](u64 rva) { return pairing.orig_of(rva); },
-      orig.img, reb.img);
+      anns, [&](const Annotation& a) { return lookup_annotation(reb, a, std::nullopt, false).vas; },
+      [&](u64 rva) { return pairing.orig_of(rva); }, orig.img, reb.img);
   explore_all(anns, orig, reb, pairing, cmp, globals);
   ph.mark("explore+solve");
 

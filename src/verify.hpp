@@ -21,7 +21,7 @@ struct GlobalRoot {
   u64 rva;
 };
 std::vector<GlobalRoot> global_roots(const std::vector<Annotation>& anns,
-                                     const std::function<std::vector<u64>(const std::string&)>& lookup,
+                                     const std::function<std::vector<u64>(const Annotation&)>& lookup,
                                      const std::function<std::optional<u64>(u64)>& orig_of, const Image& O,
                                      const Image& R);
 std::vector<std::pair<u64, u64>> data_pairs(const std::vector<GlobalRoot>& roots);  // (original, rebuilt)

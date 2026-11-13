@@ -15,6 +15,11 @@
 
 namespace verifier {
 
+// the rebuilt symbols an annotation's name pairs with: Rebuilt::lookup by its key (VTABLE: its class's vftable)
+Lookup lookup_annotation(const Rebuilt& reb, const Annotation& a, const std::optional<std::string>& sig, bool code);
+// the parameter lists of the rebuilt functions an annotation's name names (Rebuilt::overloads_of by its key)
+std::vector<std::string> overloads_of_annotation(const Rebuilt& reb, const Annotation& a);
+
 class Pairing : public ComparerContext {
  public:
   Pairing(const Original& orig, const Rebuilt& reb, const std::vector<Annotation>& anns);

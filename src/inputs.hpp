@@ -136,14 +136,15 @@ class Rebuilt {
   virtual std::string qualified(std::string_view dec) const {
     return names_ ? std::string(names_->info(dec).qualified) : std::string(dec);
   }
-  // the rebuilt addresses an annotation's name (and parameter list) pairs with; code: executable ones only
-  virtual Lookup lookup(const std::string& key, const std::optional<std::string>& sig = std::nullopt,
-                        bool code = false) const;
+  // the rebuilt addresses an annotation's name (and parameter list) pairs with; code: executable ones only; normed:
+  // the key is as norm_name gives it already
+  virtual Lookup lookup(const std::string& key, const std::optional<std::string>& sig = std::nullopt, bool code = false,
+                        bool normed = false) const;
   virtual u64 extent(u64 va) const;  // a function's end: its .pdata chain, else the next symbol (padding trimmed)
   virtual u64 span(u64 t) const;     // bytes to the next symbol, or to the end of the section
   // (local static, offset into it) for an address inside a local static
   virtual std::optional<std::pair<u64, u64>> local_base(u64 t) const;
-  std::vector<std::string> overloads_of(const std::string& key) const;
+  std::vector<std::string> overloads_of(const std::string& key, bool normed = false) const;
   std::optional<u64> containing(u64 t) const;
   std::optional<u64> next_symbol(u64 t) const;
   const std::optional<std::set<u64>>* owners_of(u64 base) const {
@@ -171,7 +172,7 @@ class Rebuilt {
   struct {
     std::string name;
     std::vector<u32> hits;
-  } mutable last_;  // the last name lookup() matched, and its matches
+  } mutable last_;  // the last key lookup() matched (normalised), and its matches
 };
 
 }  // namespace verifier
