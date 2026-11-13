@@ -38,7 +38,7 @@ std::string head_chars(const std::string& s, size_t n) {
 const std::string& where_of(std::string_view path, const std::string& root) {
   static std::string memo_root;  // the root the memos are for (a run has one)
   static SvMap<std::string> memo;
-  static std::unordered_map<std::string, std::string> dirs;
+  static std::unordered_map<std::string, std::optional<std::string>> dirs;  // nullopt: another drive than the root's
   if (root != memo_root) {
     memo.clear();
     dirs.clear();
@@ -48,19 +48,32 @@ const std::string& where_of(std::string_view path, const std::string& root) {
   if (it != memo.end()) return it->second;
   std::string key(path);
   std::string p(path), dir = dirname(p), base = basename(p), rel;
-#ifdef _WIN32
-  bool by_dir = false;  // another drive than the root's: relpath gives the path as it is
-#else
   bool by_dir = !base.empty() && base != "." && base != "..";
+#ifdef _WIN32
+  // the full path is the directory's and the name (no drive-relative directory like `C:`, no name the full path
+  // changes: a stream, or trailing dots or spaces)
+  by_dir = by_dir && (dir.empty() || (dir.size() >= 2 && dir.back() != ':')) && base.find(':') == std::string::npos &&
+           base.back() != '.' && base.back() != ' ';
 #endif
   if (by_dir) {
     auto d = dirs.find(dir);
-    if (d == dirs.end()) d = dirs.emplace(dir, relpath(dir.empty() ? "." : dir, root)).first;
-    rel = d->second == "." ? base : path_join(d->second, base);
+    if (d == dirs.end()) d = dirs.emplace(dir, relpath_on_drive(dir.empty() ? "." : dir, root)).first;
+    rel = !d->second ? p : *d->second == "." ? base : path_join(*d->second, base);  // another drive: as given
   } else {
     rel = relpath(p, root);
   }
   return memo.emplace(std::move(key), std::move(rel)).first->second;
+}
+
+void set_where(std::vector<Annotation>& anns, const std::string& root) {
+  std::string_view path, where;  // the last file's (a file's annotations come together)
+  for (auto& a : anns) {
+    if (a.path.data() != path.data() || a.path.size() != path.size()) {
+      path = a.path;
+      where = keep_text(where_of(path, root));
+    }
+    a.where = where;
+  }
 }
 
 namespace {
@@ -98,7 +111,9 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
   rec.orig = hex(ova);
   rec.name = ann.name;
   rec.kind = ann.kind;
-  rec.src = where_of(ann.path, root) + ":" + std::to_string(ann.line);
+  rec.src = ann.where.empty() ? where_of(ann.path, root) : std::string(ann.where);
+  rec.src += ':';
+  rec.src += std::to_string(ann.line);
   // pairing has looked the name up already (the same key: a compared annotation's name, its parameter list, code)
   Lookup own;
   const Lookup* lkp = &own;

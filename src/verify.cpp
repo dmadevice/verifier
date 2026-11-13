@@ -290,7 +290,8 @@ Evaluated evaluate_all(const std::vector<Annotation>& anns, const Original& orig
 void print_warnings(const std::vector<GlobalRoot>& globals, const std::vector<Ignored>& ignored, Comparer& cmp,
                     const std::string& root, Out& out) {
   for (auto& g : check_globals(globals, cmp))
-    out.print("GLOBAL DIFFERS " + hex(g.ann->va) + " " + g.ann->name + " (" + where_of(g.ann->path, root) + ":" +
+    out.print("GLOBAL DIFFERS " + hex(g.ann->va) + " " + g.ann->name + " (" +
+              (g.ann->where.empty() ? where_of(g.ann->path, root) : std::string(g.ann->where)) + ":" +
               std::to_string(g.ann->line) + "): " + g.problem + "; is the address right?");
   for (auto& ig : ignored)
     out.print(
@@ -340,6 +341,7 @@ int run(int argc, char** argv) {
     sources.save();
   }
   check_duplicates(anns);
+  set_where(anns, p.root);
   ph.mark("annotations");
 
   // what is read from the map's names, kept between runs: keyed by this verifier (its demangler)

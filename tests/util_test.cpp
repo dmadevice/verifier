@@ -1,4 +1,4 @@
-// Small units: hashes, file reading, line splitting, the name table.
+// Small units: hashes, file reading, line splitting, the name table, report paths.
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -181,6 +181,32 @@ Findings line_splitting() {
   return bad;
 }
 
+// a source path as the report gives it: what relpath gives for it, worked out by its directory or not, for paths under
+// the root, beside it, relative to the working directory, and with either separator
+Findings report_paths() {
+  namespace fs = std::filesystem;
+  Findings bad;
+  std::string root = (fs::temp_directory_path() / "verifier-root").string();
+  std::string sep(1, fs::path::preferred_separator);
+  std::vector<std::string> paths = {root + sep + "a.cpp",
+                                    root + sep + "src" + sep + "b.cpp",
+                                    root + sep + "src" + sep + "c.cpp",
+                                    root + "/src/d.cpp",
+                                    root + sep + "src" + sep + ".." + sep + "e.cpp",
+                                    root + "-other" + sep + "f.cpp",
+                                    (fs::temp_directory_path() / "g.cpp").string(),
+                                    "h.cpp",
+                                    "src" + sep + "i.cpp",
+                                    "src/j.cpp",
+                                    ".." + sep + "k.cpp",
+                                    root + sep + "src" + sep + "l.cpp."};
+  for (int pass = 0; pass < 2; ++pass)  // the second from the memo
+    for (auto& p : paths)
+      if (where_of(p, root) != relpath(p, root))
+        bad.push_back({"paths", p + ": " + where_of(p, root) + " vs " + relpath(p, root)});
+  return bad;
+}
+
 }  // namespace
 
 void add_util_cases(Cases& cases) {
@@ -189,6 +215,7 @@ void add_util_cases(Cases& cases) {
                                 {"unit: file contents", nullptr, file_contents},
                                 {"unit: line splitting", nullptr, line_splitting},
                                 {"unit: name table", nullptr, name_table},
+                                {"unit: report paths", nullptr, report_paths},
                             });
 }
 

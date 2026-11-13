@@ -191,12 +191,12 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 66 cases in code: pairing (a guessed function or table that fails, guesses
+exact problems it must report, and 67 cases in code: pairing (a guessed function or table that fails, guesses
 kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items
 export, literals against globals, tables cut short, tables that point at each other), each record of the EH
 handler data, name handling, the demangler (each kind of decorated name; names cut short, damaged, very long or
 nested too deeply), the annotation parser, the exports in any key order, the instruction diff, hashing,
-the report's JSON escaping, file reading, line splitting, the name table, the name cache file, the snapshot
+the report's JSON escaping and source paths, file reading, line splitting, the name table, the name cache file, the snapshot
 key, the sources cache and the stored decoded code. The comparison cases run a second time with every
 `same_code_fields` answer checked against a full decode. `ctest` also runs fadec's own decoder tests.
 

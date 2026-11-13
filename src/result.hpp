@@ -67,5 +67,7 @@ std::string result_line(const Result& r, const std::string& module);
 
 // a source path as the report gives it: relative to the project root
 const std::string& where_of(std::string_view path, const std::string& root);
+// each annotation's path as the report gives it (Annotation::where), worked out once for each file
+void set_where(std::vector<Annotation>& anns, const std::string& root);
 
 }  // namespace verifier

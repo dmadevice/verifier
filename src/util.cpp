@@ -72,7 +72,7 @@ class OpenFile {
     }
 #else
     fd_ = ::open(path.c_str(), O_RDONLY);
-    struct stat st {};
+    struct stat st{};
     if (fd_ >= 0 && fstat(fd_, &st) == 0 && S_ISREG(st.st_mode)) {
       n_ = size_t(st.st_size);
       ok_ = true;
@@ -483,13 +483,18 @@ std::string basename(const std::string& p) {
   return p.substr(i);
 }
 
-std::string relpath(const std::string& path, const std::string& root) {
+std::optional<std::string> relpath_on_drive(const std::string& path, const std::string& root) {
   std::filesystem::path a = std::filesystem::path(abspath(path)), b = std::filesystem::path(abspath(root));
 #ifdef _WIN32
-  if (lower(a.root_name().string()) != lower(b.root_name().string())) return path;  // another drive: as given
+  if (lower(a.root_name().string()) != lower(b.root_name().string())) return std::nullopt;
 #endif
   std::string r = a.lexically_relative(b).make_preferred().string();
   return r.empty() ? "." : r;
+}
+
+std::string relpath(const std::string& path, const std::string& root) {
+  auto r = relpath_on_drive(path, root);
+  return r ? *r : path;  // another drive: as given
 }
 
 // this program's path ("" when unknown)

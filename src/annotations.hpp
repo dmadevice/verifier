@@ -36,6 +36,7 @@ struct Annotation {
   // scalar deleting destructor's (see pick_destructor)
   bool keyed = false;
   std::string key, deleting_key;
+  std::string_view where;  // the path as the report gives it (kept text; set_where), "" when not worked out
 };
 void set_keys(Annotation& a);  // a's keys, from its kind, name and destructor flag
 

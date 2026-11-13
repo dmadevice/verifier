@@ -230,8 +230,10 @@ class ZeroBuffer {
 
 std::string percent(u64 part, u64 whole);  // "12.34%"
 
-// path relative to root ('/' or '\\' as the platform separator)
+// path relative to root ('/' or '\\' as the platform separator); a path on another drive than root's (Windows) as given
 std::string relpath(const std::string& path, const std::string& root);
+std::optional<std::string> relpath_on_drive(const std::string& path,
+                                            const std::string& root);  // nullopt: another drive
 std::string path_join(const std::string& a, const std::string& b);
 std::string self_exe();  // this program's path ("" when unknown)
 std::string abspath(const std::string& p);
