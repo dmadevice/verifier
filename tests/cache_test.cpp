@@ -100,8 +100,8 @@ Findings snapshot_key() {
 }
 
 // the name cache file: what a run stores is what the next run reads (in the order of its map, new names added,
-// ids equal exactly when the strings are), and a damaged file is ignored. Names without a leading '?' need no
-// undname.
+// ids equal exactly when the strings are), and a damaged file is ignored. A few new names do not make a run write
+// the file; enough of them, or --update, do. A name the demangler cannot read keeps its spelling and is reported.
 Findings name_cache() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-names-" + unique_suffix());
@@ -122,16 +122,16 @@ Findings name_cache() {
   std::vector<std::string_view> second = {"h", "N::B::f", "M::N::A::f", "N::A::f", "N::C::f"};
   std::vector<std::string> want1, want2;
   {
-    NameCache nc(file, "key", "");
+    NameCache nc(file, "key");
     want1 = infos_of(nc, first);
-    nc.save();
+    nc.save(true);
   }
   {
-    NameCache nc(file, "key", "");
+    NameCache nc(file, "key");
     if (infos_of(nc, first) != want1) bad.push_back({"names", "reloaded entries differ"});
     auto infos = nc.load(second);
     want2 = infos_of(nc, second);
-    nc.save();
+    nc.save(true);
     // the same qualified name, the same id; f is every name's last component
     if (infos[1].last1 != infos[3].last1 || infos[1].qualified == infos[3].qualified ||
         nc.text(infos[1].qualified) != nc.info(infos[1]).qualified)
@@ -139,59 +139,88 @@ Findings name_cache() {
     if (!nc.id_of("f") || nc.id_of("no such string")) bad.push_back({"names", "id_of"});
   }
   {
-    NameCache nc(file, "key", "");
+    NameCache nc(file, "key");
     if (infos_of(nc, second) != want2) bad.push_back({"names", "entries after adding names differ"});
   }
   {
-    NameCache nc(file, "other key", "");  // another undname: the file is not used
+    NameCache nc(file, "other key");  // another verifier build: the file is not used
     if (nc.string_count() != 0) bad.push_back({"names", "file of another key read"});
   }
   {
     // a run replaces the file while another has it mapped: the other goes on reading the old one
-    NameCache reader(file, "key", "");
-    NameCache writer(file, "key", "");
+    NameCache reader(file, "key");
+    NameCache writer(file, "key");
     writer.load({"i"});
-    writer.save();
+    writer.save(true);
     if (infos_of(reader, second) != want2) bad.push_back({"names", "the mapped file changed"});
   }
   {
-    NameCache nc(file, "key", "");
+    NameCache nc(file, "key");
     if (!nc.id_of("i")) bad.push_back({"names", "not replaced while mapped"});
     nc.load(second);
-    nc.save();
+    nc.save(true);
   }
   {
     // the names of other builds are kept after this build's, the most recent first, as many as this build has
-    NameCache a(file, "key", "");
+    NameCache a(file, "key");
     a.load({"p", "q", "r"});
-    a.save();
-    NameCache b(file, "key", "");
+    a.save(true);
+    NameCache b(file, "key");
     b.load({"s", "t"});
-    if (b.has_new() != true || !b.id_of("p")) bad.push_back({"names", "has_new, or the old file read"});
-    b.save();
-    NameCache c(file, "key", "");
+    if (b.new_names() != 2 || !b.id_of("p")) bad.push_back({"names", "new_names, or the old file read"});
+    b.save(true);
+    NameCache c(file, "key");
     c.load({"s", "t"});
-    if (c.has_new() || !c.id_of("p") || !c.id_of("q") || c.id_of("r"))
+    if (c.new_names() || !c.id_of("p") || !c.id_of("q") || c.id_of("r"))
       bad.push_back({"names", "other builds' names kept: not p, q only"});
     auto before = fs::last_write_time(file);
-    c.save();  // starts with s, t and keeps two others: nothing to write
+    c.save(true);  // starts with s, t and keeps two others: nothing to write
     if (fs::last_write_time(file) != before) bad.push_back({"names", "rewritten with nothing new"});
-    NameCache e(file, "key", "");
+    NameCache e(file, "key");
     e.load({"p"});  // in the file, not first: a save puts it first
-    if (e.has_new()) bad.push_back({"names", "a name of another build undecorated again"});
-    e.save();
-    NameCache f2(file, "key", "");
+    if (e.new_names()) bad.push_back({"names", "a name of another build demangled again"});
+    e.save(true);
+    NameCache f2(file, "key");
     f2.load({"p"});
     if (!f2.id_of("s") || f2.id_of("t")) bad.push_back({"names", "after reordering: not p then s"});
   }
   {
-    NameCache nc(file, "key", "");
+    // a few new names are demangled again by each run rather than written; enough of them are written
+    NameCache a(file, "key");
+    a.load({"p", "few"});
+    auto before = fs::last_write_time(file);
+    a.save();
+    if (fs::last_write_time(file) != before) bad.push_back({"names", "rewritten for one new name"});
+    std::vector<std::string> many;
+    for (size_t i = 0; i < NameCache::SAVE_THRESHOLD; ++i) many.push_back("n" + std::to_string(i));
+    std::vector<std::string_view> views(many.begin(), many.end());
+    NameCache b(file, "key");
+    b.load(views);
+    b.save();
+    NameCache c(file, "key");
+    c.load(views);
+    if (c.new_names() != 0) bad.push_back({"names", "not written for many new names"});
+  }
+  {
+    // a name the demangler cannot read: its keys are its spelling, and every run reports it
+    std::vector<std::string_view> names = {"?Get@Widget@@QEBAHXZ", "?Get@Widget@@QEBA", "?Get@Widget@@QEBA"};
+    for (int run = 0; run < 2; ++run) {
+      NameCache nc(file, "key");
+      auto infos = nc.load(names);
+      if (nc.failed() != std::vector<std::string_view>{"?Get@Widget@@QEBA"} || infos[0].failed || !infos[1].failed ||
+          nc.info(infos[1]).qualified != "?Get@Widget@@QEBA" || nc.info(infos[0]).qualified != "Widget::Get")
+        bad.push_back({"names", "failed names, run " + std::to_string(run)});
+      nc.save(true);
+    }
+  }
+  {
+    NameCache nc(file, "key");
     nc.load(second);
-    nc.save();
+    nc.save(true);
   }
   fs::resize_file(file, fs::file_size(file) - 3);
   {
-    NameCache nc(file, "key", "");
+    NameCache nc(file, "key");
     if (nc.string_count() != 0) bad.push_back({"names", "truncated file read"});
     if (infos_of(nc, second) != want2) bad.push_back({"names", "entries without the file differ"});
   }

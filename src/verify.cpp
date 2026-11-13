@@ -326,10 +326,15 @@ int run(int argc, char** argv) {
   check_duplicates(anns);
   ph.mark("annotations");
 
-  // keyed by undname and by this verifier: the qualified names, signatures and owners kept with the undecorated
-  // names are worked out by names.cpp, so another verifier build may give others
-  NameCache name_cache(p.names_cache(), "verifier names 2 " + sha256_of(p.undname) + " " + self, p.undname);
+  // what is read from the map's names, kept between runs: keyed by this verifier (its demangler)
+  NameCache name_cache(self.empty() ? std::string() : p.names_cache(), "verifier " + self);
   Rebuilt reb(a.rebuilt, a.map, name_cache);
+  if (size_t n = name_cache.failed().size()) {  // kept as written: they pair only by that spelling
+    std::string some;
+    for (size_t i = 0; i < n && i < 5; ++i) some += std::string(i ? ", " : "") + std::string(name_cache.failed()[i]);
+    std::fprintf(stderr, "verifier: %zu map name%s could not be demangled and keep their decorated spelling: %s%s\n", n,
+                 n == 1 ? "" : "s", some.c_str(), n > 5 ? ", ..." : "");
+  }
   ph.mark("rebuilt+names");
 
   pick_destructors(anns, orig, reb);
@@ -385,9 +390,9 @@ int run(int argc, char** argv) {
   Totals totals = summarize(ev.results, ev.libcode, orig, out, p.module);
   ph.mark("globals+summary");
 
-  // the names undname gave, for the next run (a check too: until the next --update, every run on this build would run
-  // undname for them again)
-  if (a.update || name_cache.has_new()) name_cache.save();
+  // the names demangled this run, for the next run (when there are enough of them to be worth writing the file for;
+  // --update writes it whenever it lacks one)
+  name_cache.save(a.update);
   orig_cache.clear();  // the functions read from the store let it be replaced
   orig_store.save();
   rebuilt_store.save();

@@ -58,11 +58,10 @@ Config Config::load(const std::string& path) {
   c.library_matches = take("library_matches", true, false);
   c.library_functions = take("library_functions", true, false);
   c.symbols = take("symbols", true, false);
-  c.undname = take("undname", true, true);
   c.cache_dir = take("cache_dir", true, false);
   if (!kv.empty()) fail(path + ": unknown key `" + kv.begin()->first + "`");
   for (const std::string* f : {&c.original, &c.functions, &c.vtables, &c.data_items, &c.data_names, &c.library_matches,
-                               &c.library_functions, &c.symbols, &c.undname})
+                               &c.library_functions, &c.symbols})
     if (!f->empty() && !file_exists(*f)) fail(path + ": no file " + *f);
   for (char ch : c.module)
     if (!is_word(ch)) fail(path + ": `module` must be a single word (letters, digits, _)");

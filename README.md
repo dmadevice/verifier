@@ -85,9 +85,9 @@ class Player { ... };
 
 ## Inputs
 
-- The original binary, and your rebuild of it with its linker map (`/MAP`).
-- MSVC's `undname.exe` (from the toolchain you build with) to undecorate the map's names; any program that
-  prints `undname`'s output format works.
+- The original binary, and your rebuild of it with its linker map (`/MAP`). The map's decorated names are read by
+  the verifier's own demangler (`demangle.cpp`); a name it cannot read keeps its decorated spelling, and every run
+  names such names on stderr.
 - Exports from your disassembler database, as JSON Lines (one object per line; keys in any order, other keys
   ignored, addresses as decimal integers). The key names are IDA's, but any disassembler or script that writes
   these objects will do:
@@ -119,8 +119,9 @@ With a `cache_dir`, runs keep there what the next run can use again:
   and library attribution; used while every one of those files keeps its size and modification time (the
   original is checked against `original_sha256` when the snapshot is made). While one of them changed within
   two seconds of the run, they are read directly and the snapshot is left as it is.
-- `undname-cache.bin`: the undecorated names, with the qualified names and signatures worked out from them. A
-  run that had to run undname saves them, this build's names first, then as many of other builds' names.
+- `names-cache.bin`: what was read from the map's names (qualified names, signatures, owners), this build's names
+  first, then as many of other builds' names. A run saves it when it had none or demangled at least 4096 names
+  the file lacks (fewer cost each run less than writing the file); `--update` saves it whenever it lacks a name.
 - `original-code.bin`: the original's functions as runs decoded them (instructions, address fields, switch
   tables), read back instead of decoded again; kept with the snapshot's key, and added to when a run decodes
   functions it does not hold.
@@ -183,10 +184,11 @@ ctest --test-dir build -C Release
 The sources are formatted by `.clang-format` (clang-format 18): `cmake --build build --target format`.
 
 The tests (`verifier-tests`) are 117 comparison cases on pairs of small synthetic PE images, each with the
-exact problems it must report, and 58 cases in code: pairing (a guessed function or table that fails, guesses
+exact problems it must report, and 66 cases in code: pairing (a guessed function or table that fails, guesses
 kept one-to-one whichever function is compared first, local statics, folded functions), data (the data items
 export, literals against globals, tables cut short, tables that point at each other), each record of the EH
-handler data, name handling, the annotation parser, the exports in any key order, the instruction diff, hashing,
+handler data, name handling, the demangler (each kind of decorated name; names cut short, damaged, very long or
+nested too deeply), the annotation parser, the exports in any key order, the instruction diff, hashing,
 the report's JSON escaping, file reading, line splitting, the name table, the name cache file, the snapshot
 key, the sources cache and the stored decoded code. The comparison cases run a second time with every
 `same_code_fields` answer checked against a full decode. `ctest` also runs fadec's own decoder tests.
@@ -196,7 +198,7 @@ key, the sources cache and the stored decoded code. The comparison cases run a s
 - The engine, which knows MSVC x64 binaries and nothing of a project: `pe.cpp` (the image), `x64.cpp`
   (decoding, address fields), `layouts.cpp` (EH and RTTI records), `compare.cpp`, `compare_refs.cpp`,
   `compare_eh.cpp` (the comparison), `matching.cpp` (the guesses), `report.cpp` (tokens, the instruction diff,
-  the classifier), `align.cpp` (the alignment), `names.cpp`, `undname.cpp`.
+  the classifier), `align.cpp` (the alignment), `names.cpp`, `demangle.cpp`.
 - The inputs: `inputs.cpp` (the original with its exports, the rebuild with its map), `annotations.cpp`,
   `pairing.cpp` (what each rebuilt address stands for), `config.cpp`, `args.cpp`, and the caches
   (`name_cache.cpp`, the snapshot in `inputs.cpp`, the decoded code in `code_store.cpp`).
@@ -210,8 +212,8 @@ A run, in the order `verify.cpp`'s `run` takes it:
 1. **Original** (`inputs.cpp`, `pe.cpp`): the image with its exports (functions, vtables, data items, library
    attribution), kept between runs as a snapshot.
 2. **Annotations** (`annotations.cpp`): every annotation in the source trees.
-3. **Rebuilt** (`inputs.cpp`, `pe.cpp`): the image and its map. Each symbol gets its undecorated name, qualified
-   name and signature (`names.cpp`, `undname.cpp`, kept between runs by `name_cache.cpp`).
+3. **Rebuilt** (`inputs.cpp`, `pe.cpp`): the image and its map. Each symbol's decorated name is read for its
+   qualified name, signature and owner (`demangle.cpp`, kept between runs by `name_cache.cpp`).
 4. **Pairing** (`pairing.cpp`): which rebuilt symbol each annotation names, and what every other rebuilt address
    stands for in the original (by name, as a literal, by containing symbol). Local statics are paired here, by
    votes from the code that references them.
@@ -244,7 +246,7 @@ are as they were takes its report from `diff-cache.bin`; a DIFF's diff is otherw
 lines it shows. Zero-filled data past a section's file data is not read. `VERIFIER_CHECK_DIFFS` makes every kept
 DIFF report again and stops on a difference; `VERIFIER_CHECK_ALIGN` names on stderr each diff whose alignment
 leaves more instructions unaligned than a shortest edit script (only parts past the cost limit may).
-A run without the name cache runs undname for every rebuilt name and takes several times as long.
+A run without the name cache demangles every rebuilt name, which takes its name phase about twice as long.
 
 ## License
 

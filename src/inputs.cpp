@@ -486,22 +486,27 @@ Rebuilt::Rebuilt(const std::string& path, const std::string& map_path, NameCache
     for (size_t i = 0; i < syms.size(); ++i)
       qual_syms_[fill[local[infos[i].qualified] - 1]++] = {syms[i].first, nc.text(infos[i].signature)};
   }
-  // the numbers by the ids of their last one and two components (counting sort by id: map order within each)
+  // the numbers by the ids of their last one and two components (counting sort by id: map order within each). A
+  // function's local static goes by its function and name: the name alone, which other functions' statics share,
+  // does not reach it (its last component is taken to be its last two).
   {
     std::vector<u32> firsts[2];  // by_last_[n] index of the first with each id
     for (auto& f : firsts) f.assign(size_t(nids) + 1, 0);
-    for (u32 q = 0; q < nq; ++q) {  // a qualified name's components are those of its first symbol's
+    auto last1 = [&](u32 q) {  // a qualified name's components are those of its first symbol's
       const NameIds& ni = infos[first_sym[q]];
-      ++firsts[0][ni.last1 + 1];
-      ++firsts[1][ni.last2 + 1];
+      return ni.owner != ni.qualified && !img.executable(syms[first_sym[q]].first) ? ni.last2 : ni.last1;
+    };
+    for (u32 q = 0; q < nq; ++q) {
+      ++firsts[0][last1(q) + 1];
+      ++firsts[1][infos[first_sym[q]].last2 + 1];
     }
     for (auto& f : firsts)
       for (u32 k = 0; k < nids; ++k) f[k + 1] += f[k];
     for (auto& b : by_last_) b.resize(nq);
     for (u32 q = 0; q < nq; ++q) {
-      const NameIds& ni = infos[first_sym[q]];
-      by_last_[0][firsts[0][ni.last1]++] = {ni.last1, q};
-      by_last_[1][firsts[1][ni.last2]++] = {ni.last2, q};
+      u32 l1 = last1(q), l2 = infos[first_sym[q]].last2;
+      by_last_[0][firsts[0][l1]++] = {l1, q};
+      by_last_[1][firsts[1][l2]++] = {l2, q};
     }
   }
   std::vector<char> code_q(nids);
