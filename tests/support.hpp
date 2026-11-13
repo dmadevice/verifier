@@ -53,6 +53,7 @@ const Value& fixtures();  // tests/data/fixtures.json, read once
 
 // each test file's cases (main runs them in this order)
 void add_names_cases(Cases&);
+void add_demangle_cases(Cases&);
 void add_report_cases(Cases&);
 void add_compare_cases(Cases&);
 void add_eh_cases(Cases&);

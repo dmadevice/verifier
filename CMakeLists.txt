@@ -33,7 +33,7 @@ FetchContent_Declare(fadec
 FetchContent_MakeAvailable(fadec)
 
 set(CORE_SOURCES
-  src/util.cpp src/problem.cpp src/json.cpp src/sha256.cpp src/pe.cpp src/x64.cpp src/names.cpp src/annotations.cpp
+  src/util.cpp src/problem.cpp src/json.cpp src/sha256.cpp src/pe.cpp src/x64.cpp src/names.cpp src/demangle.cpp src/annotations.cpp
   src/config.cpp src/inputs.cpp src/matching.cpp src/compare.cpp src/compare_refs.cpp src/compare_eh.cpp src/layouts.cpp src/policy.cpp src/pairing.cpp src/align.cpp src/report.cpp src/diff_store.cpp src/result.cpp src/verify.cpp src/cache_file.cpp src/code_store.cpp src/args.cpp src/timing.cpp src/undname.cpp src/name_cache.cpp)
 add_library(verifier_core STATIC ${CORE_SOURCES})
 target_include_directories(verifier_core PUBLIC src)
@@ -48,7 +48,7 @@ add_executable(verifier src/main.cpp)
 target_link_libraries(verifier PRIVATE verifier_core)
 
 enable_testing()
-add_executable(verifier-tests tests/main.cpp tests/fixture_cases.cpp tests/names_test.cpp tests/report_test.cpp
+add_executable(verifier-tests tests/main.cpp tests/fixture_cases.cpp tests/names_test.cpp tests/demangle_test.cpp tests/report_test.cpp
   tests/compare_test.cpp tests/eh_test.cpp tests/pairing_test.cpp tests/inputs_test.cpp tests/cache_test.cpp tests/util_test.cpp)
 target_include_directories(verifier-tests PRIVATE tests)
 target_link_libraries(verifier-tests PRIVATE verifier_core)

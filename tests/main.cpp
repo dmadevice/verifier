@@ -57,8 +57,8 @@ int main(int argc, char** argv) {
   const Value& doc = fixtures();
   run_fixture_cases(doc);
   Cases cases;
-  for (auto add : {add_names_cases, add_report_cases, add_compare_cases, add_eh_cases, add_pairing_cases,
-                   add_inputs_cases, add_cache_cases, add_util_cases})
+  for (auto add : {add_names_cases, add_demangle_cases, add_report_cases, add_compare_cases, add_eh_cases,
+                   add_pairing_cases, add_inputs_cases, add_cache_cases, add_util_cases})
     add(cases);
   std::set<std::string> written;
   for (auto& c : cases) {
