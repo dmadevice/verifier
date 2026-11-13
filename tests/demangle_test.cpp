@@ -1,4 +1,4 @@
-// The demangler: the keys and text of each kind of decorated name, and names it must fail on cleanly (cut short,
+// The demangler: the keys of each kind of decorated name, and names it must fail on cleanly (cut short,
 // damaged, nested too deeply) or read in full however long.
 #include <random>
 #include <string>
@@ -22,6 +22,10 @@ const std::vector<KeyCase>& key_cases() {
       {"?Get@Widget@@QEBAHXZ", "Widget::Get", "(void)", nullptr},
       {"??0Widget@@QEAA@AEBV0@@Z", "Widget::Widget", "(Widget const&)", nullptr},
       {"??1Widget@@UEAA@XZ", "Widget::~Widget", "(void)", nullptr},
+      // a class template's constructors and destructor: the class's name without its arguments
+      {"??1?$Vector@H@N@@QEAA@XZ", "N::Vector<int>::~Vector", "(void)", nullptr},
+      {"??0?$Vector@H@N@@QEAA@AEBV01@@Z", "N::Vector<int>::Vector", "(Vector<int>const&)", nullptr},
+      {"??$?0M@?$Vector@H@N@@QEAA@M@Z", "N::Vector<int>::Vector<float>", "(float)", nullptr},
       {"??_GWidget@@UEAAPEAXI@Z", "Widget::`scalar deleting destructor'", "(unsigned int)", nullptr},
       {"??MWidget@@QEBA_NAEBV0@@Z", "Widget::operator<", "(Widget const&)", nullptr},
       {"??RWidget@@QEAAHH@Z", "Widget::operator()", "(int)", nullptr},
@@ -41,8 +45,12 @@ const std::vector<KeyCase>& key_cases() {
       // parameters: back references, function and member pointers, arrays, references, nullptr_t
       {"?Swap@N@@YAXAEAVWidget@1@0@Z", "N::Swap", "(Widget&,Widget&)", nullptr},
       {"?select@@YAP6AHPEAUBox@@H@Z0@Z", "select", "(Box*)", nullptr},
-      {"?f@@YAXP6AXH@Z@Z", "f", "(void (__cdecl*)(int))", nullptr},
-      {"?Set@Widget@@QEAAXP81@EAAXXZ@Z", "Widget::Set", "(void (__cdecl *)(void))", nullptr},
+      {"?f@@YAXP6AXH@Z@Z", "f", "(void (*)(int))", nullptr},  // __cdecl is not written
+      {"?f@@YAXP6GXH@Z@Z", "f", "(void (__stdcall*)(int))", nullptr},
+      {"?f@@YAXV?$Fn@$$A6AXH@Z@@@Z", "f", "(Fn<void(int)>)", nullptr},
+      {"?Set@Widget@@QEAAXP81@EAAXXZ@Z", "Widget::Set", "(void (*)(void))", nullptr},
+      // a pointer keeps its own qualifiers as an array's element
+      {"?g@@YAXPEAY03QEAH@Z", "g", "(int*const (*)[4])", nullptr},
       {"?g@@YAXPEAY03H@Z", "g", "(int (*)[4])", nullptr},
       {"?f@@YAX$$QEAVWidget@@@Z", "f", "(Widget&&)", nullptr},
       {"?f@@YAX$$T@Z", "f", "(nullptr_t)", nullptr},
@@ -61,14 +69,18 @@ const std::vector<KeyCase>& key_cases() {
       {"?v@@3PECHEC", "v", "", nullptr},
       {"?m@Widget@@0QEAHEA", "Widget::m", "", nullptr},
       {"?x@@3U?$Holder@$1?g_count@N@@3HA@@A", "x", "", nullptr},
+      // a template argument that is an address: the object's name
+      {"?Get@?$Holder@$1?g_count@N@@3HA@@QEAAHXZ", "Holder<&N::g_count>::Get", "(void)", nullptr},
       // local statics, their guards and destructors, and code the compiler names inside a function
       {"?count@?1??Get@Widget@@QEAAHXZ@4HA", "Widget::Get::count", "", "Widget::Get"},
       {"?$S1@?1??Get@Widget@@QEAAHXZ@4IA", "Widget::Get::$S1", "", "Widget::Get"},
       {"??__Fcount@?1??Get@Widget@@QEAAHXZ@YAXXZ", "Widget::Get::`dynamic atexit destructor for 'count''", "(void)",
        "Widget::Get"},
       {"?dtor$5@?0??Get@Widget@@QEAAHXZ@4HA", "Widget::Get::dtor$5", "", "Widget::Get"},
-      {"??R<lambda_1>@?1??Run@Widget@@QEAAXXZ@QEBAXH@Z",
-       "`public: void __cdecl Widget::Run(void)'::`2'::<lambda_1>::operator()", "(int)", nullptr},
+      // a function's local scope is the function, wherever it is in a name
+      {"??R<lambda_1>@?1??Run@Widget@@QEAAXXZ@QEBAXH@Z", "Widget::Run::<lambda_1>::operator()", "(int)", nullptr},
+      {"?Size@?$Box@UItem@?1??Run@Widget@@QEAAXXZ@@@QEBA_KXZ", "Box<Widget::Run::Item>::Size", "(void)", nullptr},
+      {"?f@@YAXV?$Box@UItem@?1??Run@Widget@@QEAAXXZ@@@@Z", "f", "(Box<Item>)", nullptr},
       // dynamic initializers and atexit destructors
       {"??__Eg_table@N@@YAXXZ", "N::`dynamic initializer for 'g_table''", "(void)", nullptr},
       {"??__Fg_table@N@@YAXXZ", "N::`dynamic atexit destructor for 'g_table''", "(void)", nullptr},
@@ -103,31 +115,6 @@ Findings keys_of_each_kind() {
   return bad;
 }
 
-Findings whole_text() {
-  std::vector<std::pair<const char*, const char*>> cases = {
-      {"?Get@Widget@@QEBAHXZ", "public: int __cdecl Widget::Get(void)const"},
-      {"??_EWidget@@W7EAAPEAXI@Z",
-       "[thunk]:public: virtual void*__cdecl Widget::`vector deleting destructor'`adjustor{8}' (unsigned int)"},
-      {"?select@@YAP6AHPEAUBox@@H@Z0@Z", "int (__cdecl*__cdecl select(Box*))(Box*,int)"},
-      {"?count@?1??Get@Widget@@QEAAHXZ@4HA", "int `public: int __cdecl Widget::Get(void)'::`2'::count"},
-      {"?$S1@?1??Get@Widget@@QEAAHXZ@4IA", "unsigned int `public: int __cdecl Widget::Get(void)'::`2'::$S1"},
-      {"?g_grid@@3PAY03HA", "int (*g_grid)[4]"},
-      {"?v@@3PECHEC", "int volatile*volatile v"},
-      {"?PushBack@?$Vector@PEBUId@N@@@N@@QEAAXAEBQEBUId@2@_N@Z",
-       "public: void __cdecl N::Vector<N::Id const*>::PushBack(N::Id const*const&,bool)"},
-      {"??_7Derived@@6BBase@@@", "const Derived::`vftable'{for `Base'}"},
-      {"??_R0?AVWidget@@@8", "Widget `RTTI Type Descriptor'"},
-  };
-  Findings bad;
-  Demangler dm;
-  for (auto& [d, want] : cases) {
-    auto t = dm.text(d);
-    if (t != want) bad.push_back({"text", std::string(d) + " -> " + t.value_or("(none)")});
-  }
-  if (dm.text("memcpy")) bad.push_back({"text", "a C name has a text"});
-  return bad;
-}
-
 // a name that cannot be read: false, and the keys are the name itself
 bool failed_cleanly(const std::string& d, bool ok, const NameKeys& k) {
   return ok || (k.qualified == d && k.owner == d && k.signature.empty());
@@ -147,7 +134,6 @@ Findings damaged_names() {
       NameKeys k;
       bool ok = dm.keys(cut, k);
       if (!failed_cleanly(cut, ok, k)) bad.push_back({"cut", cut});
-      (void)dm.text(cut);
       ++checked;
     }
     for (int i = 0; i < 400; ++i) {
@@ -169,7 +155,6 @@ Findings damaged_names() {
       NameKeys k;
       bool ok = dm.keys(m, k);
       if (!failed_cleanly(m, ok, k)) bad.push_back({"mutated", m});
-      (void)dm.text(m);
       ++checked;
     }
   }
@@ -216,7 +201,6 @@ Findings long_and_deep_names() {
   for (auto* d : {&deep_tmpl, &deep_ptr, &deep_local}) {
     bool ok = dm.keys(*d, k);
     if (!failed_cleanly(*d, ok, k)) bad.push_back({"deep", d->substr(0, 16)});
-    (void)dm.text(*d);
   }
   // moderate nesting is read
   std::string ptrs = "?f@@YAX";
@@ -231,7 +215,6 @@ Findings long_and_deep_names() {
 void add_demangle_cases(Cases& cases) {
   cases.insert(cases.end(), {
                                 {"qualified names", nullptr, keys_of_each_kind},
-                                {"demangled text", nullptr, whole_text},
                                 {"damaged decorated names", nullptr, damaged_names},
                                 {"long and deep decorated names", nullptr, long_and_deep_names},
                             });

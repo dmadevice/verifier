@@ -74,8 +74,14 @@ class Player { ... };
 - Add `FOLDED` after the address when the linker's identical-code folding (`/OPT:ICF`) gave several
   functions that address.
 - A parameter list after the address (`FUNCTION`/`STUB`) or at the end of the name pairs with that overload
-  only; spell it as undname prints it, namespaces optional. Without one, all overloads of the name pair and the
-  lowest address is compared.
+  only; namespaces are optional in it. Without one, all overloads of the name pair and the lowest address is compared.
+- Names and parameter lists are spelled as MSVC's tools print them (`unsigned __int64`, `char const*`,
+  `` `anonymous namespace'::f ``; `class`/`struct` words, `__ptr64` and whitespace next to `< > , * &` do not
+  matter), with these differences: `__cdecl` is not written in function types (`void (*)(int)`, `void(int)`); a class
+  template's constructor and destructor take the class's name alone (`Vector<int>::Vector`, `Vector<int>::~Vector`); a
+  name inside a function is qualified by the function (`Player::Update::s_count`, `Player::Update::Local::Get`);
+  and a template argument that is an address is `&name`. A DIFF's `overloads:` line and the report show the
+  spelling of each rebuilt symbol.
 - A `FUNCTION` on `~X` pairs with the scalar deleting destructor when the original address is a vtable slot,
   else with the plain destructor.
 - An annotation that names nothing (no definition, variable or class within three lines) is reported as

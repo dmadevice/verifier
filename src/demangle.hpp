@@ -1,9 +1,7 @@
 // MSVC decorated names read in one pass into the keys symbols are paired by (names.hpp): the qualified name, the
-// normalised parameter list and the function a local static belongs to, spelled as norm_name and norm_params would
-// spell undname's text of them.
+// normalised parameter list and the function a local static belongs to. demangle.cpp says how they are spelled.
 #pragma once
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -23,8 +21,6 @@ class Demangler {
   // '?') or is an MD5-hashed one is its own qualified name and owner. false when the name cannot be read: the keys are
   // then the name itself as well.
   bool keys(std::string_view decorated, NameKeys& out);
-  // The whole undecorated text of a decorated name, normalised (norm_name), or nullopt when it cannot be read.
-  std::optional<std::string> text(std::string_view decorated);
 
  private:
   struct Impl;

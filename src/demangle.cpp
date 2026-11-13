@@ -9,9 +9,18 @@
 // The grammar is MSVC's (as LLVM's MicrosoftDemangle reads it): a symbol is a qualified name and an encoding (a
 // function's class and type, or a variable's storage class and type), names and types refer back to earlier ones,
 // and a template's arguments have back references of their own. A name is parsed into a small tree held in reusable
-// arrays, then printed: the keys as norm_name and norm_params spell undname's text, and the whole text on request.
+// arrays, then its keys are printed from the tree.
 //
-// Where undname is wrong the tree is read as the compiler meant it:
+// The spelling is undname's, normalised (names.hpp: norm_name, norm_params), except where that says less or more
+// than the name:
+// - a function's local scope is the function's qualified name (`f::x`, `f::Local::g`), not its whole text and a
+//   scope number;
+// - a class template's constructor and destructor are named by the class's name alone (`V<int>::~V`);
+// - __cdecl is not written in function types; a template argument that is an address is `&name`, without a type;
+// - a pointer keeps its own const and volatile where undname drops them (returned, or an array's element), and a
+//   variable that is a pointer has the qualifiers of its storage class, not its pointee's.
+//
+// And the tree is read as the compiler meant it where undname does not:
 // - a name the compiler builds by joining a function's own decorated name into another (an EH funclet's label such as
 //   `dtor$4`, a dynamic initializer or atexit destructor of a local static) has that function's back references
 //   counted from its start, not shared with the enclosing name;
@@ -202,7 +211,7 @@ struct Demangler::Impl {
   std::string* out = nullptr;
   bool sig = false;                              // dropping `word::` as norm_params does
   std::vector<std::pair<size_t, size_t>> drops;  // [from, to) of *out, in order
-  std::string qual, sigbuf, owner, tmp;
+  std::string qual, sigbuf, owner;
 
   struct Depth {
     Impl& p;
@@ -732,8 +741,6 @@ struct Demangler::Impl {
     }
     u32 elem = err ? 0 : type(Mode::Drop);
     if (err) return 0;
-    // nor an array element pointer's
-    if (n(elem).kind == NK::Pointer) n(elem).a &= u8(~(Q_CONST | Q_VOLATILE));
     u32 t = add(NK::Array);
     if (!t) return 0;
     n(t).x = head;
@@ -828,12 +835,7 @@ struct Demangler::Impl {
     const char* cc = calling_convention(take());
     if (err || !cc) return fail();
     u32 ret = 0;
-    if (!eat('@')) {
-      bool explicit_cv = peek() == '?';
-      ret = type(Mode::Result);
-      // a returned pointer's own cv qualifiers are not printed
-      if (!err && !explicit_cv && n(ret).kind == NK::Pointer) n(ret).a &= u8(~(Q_CONST | Q_VOLATILE));
-    }
+    if (!eat('@')) ret = type(Mode::Result);
     if (err) return 0;
     u8 flags = 0;
     u32 params = parameters(flags);
@@ -1225,7 +1227,7 @@ struct Demangler::Impl {
         else if (x.b)
           put("&");
         if (x.x) {
-          symbol_text(x.x);
+          qualified_key(x.x, nullptr);
           if (braces) put(",");
         }
         list(x.y, ",", &Impl::targ);
@@ -1259,17 +1261,15 @@ struct Demangler::Impl {
         if (conv) type_full(n(conv).x);
         return;
       }
-      case NK::Local:
-        put("`");
-        symbol_text(x.x);
-        put("'::`");
-        put_number(x.v);
-        put("'");
+      case NK::Local:  // a function's local scope: the function
+        qualified_key(x.x, nullptr);
         return;
-      case NK::Structor:
+      case NK::Structor: {  // the class's name, without its template arguments
         if (x.a) put("~");
-        ident(x.x);
+        u32 cls = x.x;
+        ident(n(cls).kind == NK::Template ? n(cls).x : cls);
         return;
+      }
       case NK::Conversion:
         put("operator ");
         type_full(x.x);
@@ -1343,13 +1343,13 @@ struct Demangler::Impl {
         quals(x.a);
         return;
       case NK::Function:
-        function_pre(t, true);
+        function_pre(t, false);
         return;
       case NK::Pointer: {
         u32 pointee = x.x;
         NK pk = n(pointee).kind;
         if (pk == NK::Function)
-          function_pre(pointee, false);
+          function_pre(pointee, true);
         else
           type_pre(pointee);
         space_if_needed();
@@ -1359,8 +1359,10 @@ struct Demangler::Impl {
           put("(");
         } else if (pk == NK::Function) {
           put("(");
-          put(n(pointee).s);
-          put(" ");
+          if (!is_cdecl(pointee)) {
+            put(n(pointee).s);
+            put(" ");
+          }
         }
         if (p.y) {
           name(p.y);
@@ -1408,11 +1410,16 @@ struct Demangler::Impl {
     type_post(t);
   }
 
-  void function_pre(u32 f, bool cc) {
-    const Node& x = n(f);
-    if (x.x) {
-      type_pre(x.x);
-      put(" ");
+  // __cdecl, the convention of nearly every function, is not printed: `void (*)(int)`, `void(int)`
+  bool is_cdecl(u32 f) const { return nodes[f].s == "__cdecl"; }
+
+  // what goes before a function type's parameters, or (pointed) before the `(*` of a pointer to it: the return type,
+  // and for the type itself a calling convention other than __cdecl
+  void function_pre(u32 f, bool pointed) {
+    bool cc = !pointed && !is_cdecl(f);
+    if (u32 ret = n(f).x) {
+      type_pre(ret);
+      if (pointed || cc) put(" ");
     }
     if (cc) put(n(f).s);
   }
@@ -1466,83 +1473,6 @@ struct Demangler::Impl {
         num();
       }
       put("}'");
-    }
-  }
-
-  // the whole text of a symbol, as undname prints it (normalised)
-  void symbol_text(u32 s) {
-    Depth d(*this);
-    if (err || !s) return;
-    const Node& x = n(s);
-    switch (x.kind) {
-      case NK::FuncSym: {
-        u32 fc = u32(x.v), f = x.y, qn = x.x;
-        if (fc & FC_NO_PARAMS) {  // an extern "C" function: its name
-          name(qn);
-          return;
-        }
-        bool thunk = fc & (FC_ADJUSTOR | FC_VTORDISP);
-        if (thunk) put("[thunk]:");
-        if (!(fc & FC_GLOBAL)) {
-          if (fc & FC_PUBLIC) put("public: ");
-          if (fc & FC_PROTECTED) put("protected: ");
-          if (fc & FC_PRIVATE) put("private: ");
-          if (fc & FC_STATIC) put("static ");
-        }
-        if (fc & FC_VIRTUAL) put("virtual ");
-        if (fc & FC_EXTERN_C) put("extern \"C\" ");
-        bool conv = qn && n(qn).kind == NK::Qualified && conversion_of(component(qn, 0));
-        if (n(f).x && !conv) {
-          type_pre(n(f).x);
-          put(" ");
-        }
-        put(n(f).s);
-        space_if_needed();
-        name(qn);
-        if (thunk) {
-          thunk_suffix(s);
-          put(" ");
-        }
-        if (conv) {  // the return type is the name's
-          params(f);
-          this_qualifiers(f);
-          return;
-        }
-        function_post(f);
-        return;
-      }
-      case NK::VarSym: {
-        static const char* access[] = {"private: static ", "protected: static ", "public: static "};
-        if (x.a < 3) put(access[x.a]);
-        u32 t = x.y, qn = x.x;
-        type_pre(t);
-        space_if_needed();
-        name(qn);
-        type_post(t);
-        return;
-      }
-      case NK::Table: {
-        u32 qn = x.x, targets = x.y;
-        if (x.a & Q_CONST) put("const ");
-        name(qn);
-        for_list(targets);
-        return;
-      }
-      case NK::TypeDesc:
-        type_full(x.x);
-        put(" `RTTI Type Descriptor'");
-        return;
-      case NK::Untyped:
-        name(x.x);
-        return;
-      case NK::StrLit:
-        put("`string'");
-        return;
-      case NK::Md5:
-        put(x.s);
-        return;
-      default:
-        err = true;
     }
   }
 
@@ -1605,7 +1535,7 @@ struct Demangler::Impl {
     u32 parent = component(qn, 1);
     if (parent && n(parent).kind == NK::Local) {
       owner_key(n(parent).x, owner_out);
-      put("::");
+      scope_sep();
       ident(leaf);
     } else {
       name(qn);
@@ -1679,26 +1609,11 @@ struct Demangler::Impl {
       s = replace_all(replace_all(s, "( ", "("), " )", ")");
     if (s == "()") s = "(void)";
   }
-
-  std::optional<std::string> text(std::string_view d) {
-    if (d.empty() || d[0] != '?') return std::nullopt;
-    reset(d);
-    u32 s = symbol();
-    if (err || !s || pos != in.size()) return std::nullopt;
-    tmp.clear();
-    out = &tmp;
-    sig = false;
-    symbol_text(s);
-    if (err) return std::nullopt;
-    return tmp;
-  }
 };
 
 Demangler::Demangler() : impl_(std::make_unique<Impl>()) {}
 Demangler::~Demangler() = default;
 
 bool Demangler::keys(std::string_view decorated, NameKeys& out) { return impl_->keys(decorated, out); }
-
-std::optional<std::string> Demangler::text(std::string_view decorated) { return impl_->text(decorated); }
 
 }  // namespace verifier
