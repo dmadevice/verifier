@@ -304,6 +304,39 @@ std::string strip_declspec(const std::string& s) {
   return out;
 }
 
+// A specialisation's constructor or destructor written with the class's arguments, `X<A>::X<A>` or `X<A>::~X<A>`,
+// as the map's names have it: by the class's name alone
+static std::string plain_structor(std::string name) {
+  if (name.empty() || name.back() != '>') return name;
+  // the last two components: [cls, sep) "::" [leaf, end), split at the last "::" outside angle brackets
+  size_t sep = std::string::npos, cls = 0;
+  int depth = 0;
+  for (size_t k = name.size(); k-- > 0;) {
+    if (name[k] == '>')
+      ++depth;
+    else if (name[k] == '<')
+      --depth;
+    else if (depth == 0 && k > 0 && name[k] == ':' && name[k - 1] == ':') {
+      if (sep == std::string::npos) {
+        sep = k - 1;
+      } else {
+        cls = k + 1;
+        break;
+      }
+      --k;
+    }
+  }
+  if (sep == std::string::npos) return name;
+  size_t leaf = sep + 2 + (name[sep + 2] == '~' ? 1 : 0);
+  size_t args = name.find('<', cls);
+  if (args == std::string::npos || args >= sep) return name;
+  std::string_view n = name;
+  // the leaf is the class's name and arguments again
+  if (n.substr(leaf) != n.substr(cls, sep - cls)) return name;
+  name.resize(leaf + (args - cls));
+  return name;
+}
+
 std::optional<std::string> definition_name(const std::string& ls) {
   size_t a = skip_space(ls, 0);
   if (ls.compare(a, 2, "//") == 0 || ls.compare(a, 1, "#") == 0) return std::nullopt;
@@ -316,7 +349,7 @@ std::optional<std::string> definition_name(const std::string& ls) {
     while (k < name.size() && (name[k] == '*' || name[k] == '&')) ++k;
     name = name.substr(k);
   }
-  if (!name.empty() && (alpha_(name[0]) || name[0] == '~')) return name;
+  if (!name.empty() && (alpha_(name[0]) || name[0] == '~')) return plain_structor(std::move(name));
   return std::nullopt;
 }
 
