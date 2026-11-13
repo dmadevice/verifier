@@ -285,9 +285,6 @@ fields, and each field standing for the same thing. A paired line is marked `; e
 bytes differ and `; target not aligned` when two branches to the same offset reach instructions that do not
 pair.
 
-[`tools/report_diff.py`](tools/report_diff.py) compares two reports result by result, which shows what a
-source change did.
-
 ## What a match means
 
 A function is a `MATCH` when all four of these hold.

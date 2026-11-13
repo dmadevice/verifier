@@ -2,7 +2,7 @@
 //   verifier-tests [fixtures.json] [-v]       exit code = number of failures
 // The comparison cases of tests/data/fixtures.json (pairs of small synthetic PE images, the two functions to compare,
 // the symbol mapping the comparer's hooks answer from, and the exact problems the comparison must report) run first,
-// then the cases written in code, file by file. tools/fixture_dump prints a fixture case readably.
+// then the cases written in code, file by file. fixture-dump (tests/fixture_dump.cpp) prints a fixture case readably.
 #include <cstdio>
 #include <set>
 #include <string>
