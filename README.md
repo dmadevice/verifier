@@ -247,8 +247,9 @@ pairing's tables directly. The tests answer the same questions with small fakes.
 ## Performance
 
 A run is single-threaded. With the cache directory warm it maps the original's snapshot and decoded functions,
-reads the source files that changed and the map, and compares every annotated function. A rebuilt function that
-matches is mostly compared from its address fields, without a decode of its own, and a DIFF whose code and targets
+reads the source files that changed and the map, and compares every annotated function. Annotation names are
+looked up as the sources cache keeps them (normalised once), and the report's source paths are worked out once for
+each file. A rebuilt function that matches is mostly compared from its address fields, without a decode of its own, and a DIFF whose code and targets
 are as they were takes its report from `diff-cache.bin`; a DIFF's diff is otherwise made with text only for the
 lines it shows. Zero-filled data past a section's file data is not read. `VERIFIER_CHECK_DIFFS` makes every kept
 DIFF report again and stops on a difference; `VERIFIER_CHECK_ALIGN` names on stderr each diff whose alignment
