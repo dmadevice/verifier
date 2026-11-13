@@ -82,259 +82,92 @@ constexpr int MAX_DEPTH = 192;           // parse and print recursion
 constexpr size_t MAX_NODES = 1u << 20;   // per name
 constexpr size_t MAX_OUTPUT = 1u << 20;  // bytes of one printed key
 
-bool is_digit_c(char c) { return c >= '0' && c <= '9'; }
-bool is_word_c(char c) {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-}
-bool is_alnum_c(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); }
 // norm_name keeps no whitespace next to these
 bool tight(char c) { return c == '<' || c == '>' || c == ',' || c == '*' || c == '&'; }
 
-const char* basic_operator(char c) {
-  switch (c) {
-    case '2':
-      return "operator new";
-    case '3':
-      return "operator delete";
-    case '4':
-      return "operator=";
-    case '5':
-      return "operator>>";
-    case '6':
-      return "operator<<";
-    case '7':
-      return "operator!";
-    case '8':
-      return "operator==";
-    case '9':
-      return "operator!=";
-    case 'A':
-      return "operator[]";
-    case 'C':
-      return "operator->";
-    case 'D':
-      return "operator*";
-    case 'E':
-      return "operator++";
-    case 'F':
-      return "operator--";
-    case 'G':
-      return "operator-";
-    case 'H':
-      return "operator+";
-    case 'I':
-      return "operator&";
-    case 'J':
-      return "operator->*";
-    case 'K':
-      return "operator/";
-    case 'L':
-      return "operator%";
-    case 'M':
-      return "operator<";
-    case 'N':
-      return "operator<=";
-    case 'O':
-      return "operator>";
-    case 'P':
-      return "operator>=";
-    case 'Q':
-      return "operator,";
-    case 'R':
-      return "operator()";
-    case 'S':
-      return "operator~";
-    case 'T':
-      return "operator^";
-    case 'U':
-      return "operator|";
-    case 'V':
-      return "operator&&";
-    case 'W':
-      return "operator||";
-    case 'X':
-      return "operator*=";
-    case 'Y':
-      return "operator+=";
-    case 'Z':
-      return "operator-=";
-  }
+// The text a code character stands for, in a table of them; nullptr when the table has none for it
+struct Coded {
+  char code;
+  const char* text;
+};
+template <size_t N>
+const char* coded(const Coded (&table)[N], char c) {
+  for (const Coded& e : table)
+    if (e.code == c) return e.text;
   return nullptr;
 }
 
-const char* under_operator(char c) {
-  switch (c) {
-    case '0':
-      return "operator/=";
-    case '1':
-      return "operator%=";
-    case '2':
-      return "operator>>=";
-    case '3':
-      return "operator<<=";
-    case '4':
-      return "operator&=";
-    case '5':
-      return "operator|=";
-    case '6':
-      return "operator^=";
-    case 'D':
-      return "`vbase destructor'";
-    case 'E':
-      return "`vector deleting destructor'";
-    case 'F':
-      return "`default constructor closure'";
-    case 'G':
-      return "`scalar deleting destructor'";
-    case 'H':
-      return "`vector constructor iterator'";
-    case 'I':
-      return "`vector destructor iterator'";
-    case 'J':
-      return "`vector vbase constructor iterator'";
-    case 'K':
-      return "`virtual displacement map'";
-    case 'L':
-      return "`eh vector constructor iterator'";
-    case 'M':
-      return "`eh vector destructor iterator'";
-    case 'N':
-      return "`eh vector vbase constructor iterator'";
-    case 'O':
-      return "`copy constructor closure'";
-    case 'T':
-      return "`local vftable constructor closure'";
-    case 'U':
-      return "operator new[]";
-    case 'V':
-      return "operator delete[]";
-    case 'X':
-      return "`placement delete closure'";
-    case 'Y':
-      return "`placement delete[] closure'";
-  }
-  return nullptr;
-}
+constexpr Coded BASIC_OPERATORS[] = {
+    // ?<code>
+    {'2', "operator new"}, {'3', "operator delete"}, {'4', "operator="},  {'5', "operator>>"}, {'6', "operator<<"},
+    {'7', "operator!"},    {'8', "operator=="},      {'9', "operator!="}, {'A', "operator[]"}, {'C', "operator->"},
+    {'D', "operator*"},    {'E', "operator++"},      {'F', "operator--"}, {'G', "operator-"},  {'H', "operator+"},
+    {'I', "operator&"},    {'J', "operator->*"},     {'K', "operator/"},  {'L', "operator%"},  {'M', "operator<"},
+    {'N', "operator<="},   {'O', "operator>"},       {'P', "operator>="}, {'Q', "operator,"},  {'R', "operator()"},
+    {'S', "operator~"},    {'T', "operator^"},       {'U', "operator|"},  {'V', "operator&&"}, {'W', "operator||"},
+    {'X', "operator*="},   {'Y', "operator+="},      {'Z', "operator-="},
+};
 
-const char* double_under_operator(char c) {
-  switch (c) {
-    case 'A':
-      return "`managed vector constructor iterator'";
-    case 'B':
-      return "`managed vector destructor iterator'";
-    case 'C':
-      return "`eh vector copy constructor iterator'";
-    case 'D':
-      return "`eh vector vbase copy constructor iterator'";
-    case 'G':
-      return "`vector copy constructor iterator'";
-    case 'H':
-      return "`vector vbase copy constructor iterator'";
-    case 'I':
-      return "`managed vector copy constructor iterator'";
-    case 'L':
-      return "operator co_await";
-    case 'M':
-      return "operator<=>";
-  }
-  return nullptr;
-}
+constexpr Coded UNDER_OPERATORS[] = {
+    // ?_<code>
+    {'0', "operator/="},
+    {'1', "operator%="},
+    {'2', "operator>>="},
+    {'3', "operator<<="},
+    {'4', "operator&="},
+    {'5', "operator|="},
+    {'6', "operator^="},
+    {'D', "`vbase destructor'"},
+    {'E', "`vector deleting destructor'"},
+    {'F', "`default constructor closure'"},
+    {'G', "`scalar deleting destructor'"},
+    {'H', "`vector constructor iterator'"},
+    {'I', "`vector destructor iterator'"},
+    {'J', "`vector vbase constructor iterator'"},
+    {'K', "`virtual displacement map'"},
+    {'L', "`eh vector constructor iterator'"},
+    {'M', "`eh vector destructor iterator'"},
+    {'N', "`eh vector vbase constructor iterator'"},
+    {'O', "`copy constructor closure'"},
+    {'T', "`local vftable constructor closure'"},
+    {'U', "operator new[]"},
+    {'V', "operator delete[]"},
+    {'X', "`placement delete closure'"},
+    {'Y', "`placement delete[] closure'"},
+};
 
+constexpr Coded DOUBLE_UNDER_OPERATORS[] = {
+    // ?__<code>
+    {'A', "`managed vector constructor iterator'"},
+    {'B', "`managed vector destructor iterator'"},
+    {'C', "`eh vector copy constructor iterator'"},
+    {'D', "`eh vector vbase copy constructor iterator'"},
+    {'G', "`vector copy constructor iterator'"},
+    {'H', "`vector vbase copy constructor iterator'"},
+    {'I', "`managed vector copy constructor iterator'"},
+    {'L', "operator co_await"},
+    {'M', "operator<=>"},
+};
+
+constexpr Coded PRIMITIVES[] = {
+    {'X', "void"},           {'D', "char"},   {'C', "signed char"},  {'E', "unsigned char"}, {'F', "short"},
+    {'G', "unsigned short"}, {'H', "int"},    {'I', "unsigned int"}, {'J', "long"},          {'K', "unsigned long"},
+    {'M', "float"},          {'N', "double"}, {'O', "long double"},
+};
+
+constexpr Coded EXTENDED_PRIMITIVES[] = {
+    // _<code>
+    {'D', "__int8"},   {'E', "unsigned __int8"},   {'F', "__int16"}, {'G', "unsigned __int16"},
+    {'H', "__int32"},  {'I', "unsigned __int32"},  {'J', "__int64"}, {'K', "unsigned __int64"},
+    {'L', "__int128"}, {'M', "unsigned __int128"}, {'N', "bool"},    {'Q', "char8_t"},
+    {'S', "char16_t"}, {'U', "char32_t"},          {'W', "wchar_t"},
+};
+
+// A to Q: two codes each; K and L have none
 const char* calling_convention(char c) {
-  switch (c) {
-    case 'A':
-    case 'B':
-      return "__cdecl";
-    case 'C':
-    case 'D':
-      return "__pascal";
-    case 'E':
-    case 'F':
-      return "__thiscall";
-    case 'G':
-    case 'H':
-      return "__stdcall";
-    case 'I':
-    case 'J':
-      return "__fastcall";
-    case 'M':
-    case 'N':
-      return "__clrcall";
-    case 'O':
-    case 'P':
-      return "__eabi";
-    case 'Q':
-      return "__vectorcall";
-  }
-  return nullptr;
-}
-
-const char* primitive(char c) {
-  switch (c) {
-    case 'X':
-      return "void";
-    case 'D':
-      return "char";
-    case 'C':
-      return "signed char";
-    case 'E':
-      return "unsigned char";
-    case 'F':
-      return "short";
-    case 'G':
-      return "unsigned short";
-    case 'H':
-      return "int";
-    case 'I':
-      return "unsigned int";
-    case 'J':
-      return "long";
-    case 'K':
-      return "unsigned long";
-    case 'M':
-      return "float";
-    case 'N':
-      return "double";
-    case 'O':
-      return "long double";
-  }
-  return nullptr;
-}
-
-const char* extended_primitive(char c) {  // after '_'
-  switch (c) {
-    case 'D':
-      return "__int8";
-    case 'E':
-      return "unsigned __int8";
-    case 'F':
-      return "__int16";
-    case 'G':
-      return "unsigned __int16";
-    case 'H':
-      return "__int32";
-    case 'I':
-      return "unsigned __int32";
-    case 'J':
-      return "__int64";
-    case 'K':
-      return "unsigned __int64";
-    case 'L':
-      return "__int128";
-    case 'M':
-      return "unsigned __int128";
-    case 'N':
-      return "bool";
-    case 'Q':
-      return "char8_t";
-    case 'S':
-      return "char16_t";
-    case 'U':
-      return "char32_t";
-    case 'W':
-      return "wchar_t";
-  }
-  return nullptr;
+  static constexpr const char* names[] = {"__cdecl", "__pascal",  "__thiscall", "__stdcall",   "__fastcall",
+                                          nullptr,   "__clrcall", "__eabi",     "__vectorcall"};
+  return c >= 'A' && c <= 'Q' ? names[(c - 'A') / 2] : nullptr;
 }
 
 // a funclet's label (`dtor$4`, `catch$0`): letters, '$', digits
@@ -343,7 +176,7 @@ bool generated_label(std::string_view s) {
   while (i < s.size() && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || s[i] == '_')) ++i;
   if (i == 0 || i == s.size() || s[i] != '$') return false;
   size_t d = ++i;
-  while (i < s.size() && is_digit_c(s[i])) ++i;
+  while (i < s.size() && is_digit(s[i])) ++i;
   return i > d && i == s.size();
 }
 
@@ -435,7 +268,7 @@ struct Demangler::Impl {
   u64 number(bool& neg) {
     neg = eat('?');
     char c = peek();
-    if (is_digit_c(c)) {
+    if (is_digit(c)) {
       ++pos;
       return u64(c - '0') + 1;
     }
@@ -530,7 +363,7 @@ struct Demangler::Impl {
 
   u32 unqualified_symbol_name(bool memo_simple, bool memo_template) {
     char c = peek();
-    if (is_digit_c(c)) return backref_name();
+    if (is_digit(c)) return backref_name();
     if (starts("?$")) return template_name(memo_template);
     if (c == '?') return operator_name();
     return simple(memo_simple);
@@ -555,9 +388,9 @@ struct Demangler::Impl {
         if (i) n(i).s = s;
         return i;
       }
-      return text_node(double_under_operator(c));
+      return text_node(coded(DOUBLE_UNDER_OPERATORS, c));
     }
-    if (eat('_')) return text_node(under_operator(take()));
+    if (eat('_')) return text_node(coded(UNDER_OPERATORS, take()));
     char c = take();
     if (c == '0' || c == '1') {
       u32 i = add(NK::Structor);
@@ -565,7 +398,7 @@ struct Demangler::Impl {
       return i;
     }
     if (c == 'B') return add(NK::Conversion);
-    return text_node(basic_operator(c));
+    return text_node(coded(BASIC_OPERATORS, c));
   }
 
   // ?<number>? : a function's local scope
@@ -575,7 +408,7 @@ struct Demangler::Impl {
     while (e < in.size() && e - i < 20 && in[e] != '?') ++e;
     if (e >= in.size() || in[e] != '?' || e == i) return false;
     std::string_view c = in.substr(i, e - i);
-    if (c.size() == 1) return c[0] == '@' || is_digit_c(c[0]);
+    if (c.size() == 1) return c[0] == '@' || is_digit(c[0]);
     if (c.back() != '@' || c[0] < 'B' || c[0] > 'P') return false;
     for (size_t k = 1; k + 1 < c.size(); ++k)
       if (c[k] < 'A' || c[k] > 'P') return false;
@@ -615,7 +448,7 @@ struct Demangler::Impl {
 
   u32 scope_piece(bool& fresh) {
     char c = peek();
-    if (is_digit_c(c)) return backref_name();
+    if (is_digit(c)) return backref_name();
     if (starts("?$")) return template_name(true);
     if (starts("?A")) return anonymous_namespace();
     if (local_scope_ahead()) {
@@ -672,17 +505,15 @@ struct Demangler::Impl {
     return nodes[c].x;
   }
 
-  // the structor whose class is the component before it (a template's name when it is a templated constructor)
-  u32 structor_of(u32 id) const {
-    if (nodes[id].kind == NK::Structor) return id;
-    if (nodes[id].kind == NK::Template && nodes[nodes[id].x].kind == NK::Structor) return nodes[id].x;
+  // an identifier of this kind, or the name of a template that is one (a templated constructor or conversion
+  // operator); 0 when `id` is neither
+  u32 named(u32 id, NK kind) const {
+    if (nodes[id].kind == kind) return id;
+    if (nodes[id].kind == NK::Template && nodes[nodes[id].x].kind == kind) return nodes[id].x;
     return 0;
   }
-  u32 conversion_of(u32 id) const {
-    if (nodes[id].kind == NK::Conversion) return id;
-    if (nodes[id].kind == NK::Template && nodes[nodes[id].x].kind == NK::Conversion) return nodes[id].x;
-    return 0;
-  }
+  u32 structor_of(u32 id) const { return named(id, NK::Structor); }  // its class is the component before it
+  u32 conversion_of(u32 id) const { return named(id, NK::Conversion); }
 
   u32 symbol_name(bool fresh_local) {
     u32 leaf = unqualified_symbol_name(true, false);
@@ -699,7 +530,7 @@ struct Demangler::Impl {
 
   u32 type_name() {
     u32 leaf;
-    if (is_digit_c(peek()))
+    if (is_digit(peek()))
       leaf = backref_name();
     else if (starts("?$"))
       leaf = template_name(true);
@@ -714,37 +545,14 @@ struct Demangler::Impl {
   // A B C D (Q R S T: of a member)
   u8 qualifiers(bool* member = nullptr) {
     char c = take();
-    bool m = false;
-    u8 q = 0;
-    switch (c) {
-      case 'Q':
-        m = true;
-        [[fallthrough]];
-      case 'A':
-        break;
-      case 'R':
-        m = true;
-        [[fallthrough]];
-      case 'B':
-        q = Q_CONST;
-        break;
-      case 'S':
-        m = true;
-        [[fallthrough]];
-      case 'C':
-        q = Q_VOLATILE;
-        break;
-      case 'T':
-        m = true;
-        [[fallthrough]];
-      case 'D':
-        q = Q_CONST | Q_VOLATILE;
-        break;
-      default:
-        err = true;
+    bool m = c >= 'Q';
+    unsigned k = unsigned(c - (m ? 'Q' : 'A'));  // 0 to 3: none, const, volatile, both
+    if (c < 'A' || k > 3) {
+      err = true;
+      k = 0;
     }
     if (member) *member = m;
-    return q;
+    return u8((k & 1 ? Q_CONST : 0) | (k & 2 ? Q_VOLATILE : 0));
   }
 
   u8 ext_qualifiers() {
@@ -766,7 +574,7 @@ struct Demangler::Impl {
     char c = peek();
     if (c != 'P' && c != 'Q' && c != 'R' && c != 'S') return false;
     size_t i = pos + 1;
-    if (i < in.size() && is_digit_c(in[i])) {
+    if (i < in.size() && is_digit(in[i])) {
       if (in[i] != '6' && in[i] != '8') err = true;
       return in[i] == '8';
     }
@@ -912,14 +720,9 @@ struct Demangler::Impl {
     if (err || rank == 0 || rank > 64) return fail();
     u32 head = 0, tail = 0;
     for (u64 k = 0; k < rank && !err; ++k) {
-      bool neg;
-      u64 v = number(neg);
-      if (neg) err = true;
-      if (err) break;
-      u32 i = add(NK::Int);
-      if (!i) break;
-      n(i).v = v;
-      append(head, tail, i);
+      u32 i = int_node();
+      if (i && n(i).a) err = true;  // a negative dimension
+      if (!err) append(head, tail, i);
     }
     u8 q = 0;
     if (!err && eat("$$C")) {
@@ -941,7 +744,7 @@ struct Demangler::Impl {
 
   u32 primitive_type() {
     char c = take();
-    const char* t = c == '_' ? extended_primitive(take()) : primitive(c);
+    const char* t = c == '_' ? coded(EXTENDED_PRIMITIVES, take()) : coded(PRIMITIVES, c);
     if (err || !t) return fail();
     u32 i = add(NK::Prim);
     if (i) n(i).s = t;
@@ -989,7 +792,7 @@ struct Demangler::Impl {
     u32 head = 0, tail = 0;
     while (!err && peek() != '@' && peek() != 'Z') {
       if (at_end()) return fail();
-      if (is_digit_c(peek())) {
+      if (is_digit(peek())) {
         u32 k = u32(take() - '0');
         if (k >= br.nparams) return fail();
         append(head, tail, br.params[k]);
@@ -1117,64 +920,19 @@ struct Demangler::Impl {
 
   // --- symbols --------------------------------------------------------------------------------------------------
 
+  // A to X: private, protected, public, eight codes each: plain, static, virtual, virtual with an adjustor (two codes
+  // each). Y Z: not a member. 9: extern "C", no type. $[R]0 to $[R]5: a vtordisp thunk, two codes for each access.
   u32 function_class() {
-    switch (take()) {
-      case '9':
-        return FC_EXTERN_C | FC_NO_PARAMS;
-      case 'A':
-      case 'B':
-        return FC_PRIVATE;
-      case 'C':
-      case 'D':
-        return FC_PRIVATE | FC_STATIC;
-      case 'E':
-      case 'F':
-        return FC_PRIVATE | FC_VIRTUAL;
-      case 'G':
-      case 'H':
-        return FC_PRIVATE | FC_VIRTUAL | FC_ADJUSTOR;
-      case 'I':
-      case 'J':
-        return FC_PROTECTED;
-      case 'K':
-      case 'L':
-        return FC_PROTECTED | FC_STATIC;
-      case 'M':
-      case 'N':
-        return FC_PROTECTED | FC_VIRTUAL;
-      case 'O':
-      case 'P':
-        return FC_PROTECTED | FC_VIRTUAL | FC_ADJUSTOR;
-      case 'Q':
-      case 'R':
-        return FC_PUBLIC;
-      case 'S':
-      case 'T':
-        return FC_PUBLIC | FC_STATIC;
-      case 'U':
-      case 'V':
-        return FC_PUBLIC | FC_VIRTUAL;
-      case 'W':
-      case 'X':
-        return FC_PUBLIC | FC_VIRTUAL | FC_ADJUSTOR;
-      case 'Y':
-      case 'Z':
-        return FC_GLOBAL;
-      case '$': {
-        u32 v = FC_VTORDISP;
-        if (eat('R')) v |= FC_VTORDISP_EX;
-        switch (take()) {
-          case '0':
-          case '1':
-            return FC_PRIVATE | FC_VIRTUAL | v;
-          case '2':
-          case '3':
-            return FC_PROTECTED | FC_VIRTUAL | v;
-          case '4':
-          case '5':
-            return FC_PUBLIC | FC_VIRTUAL | v;
-        }
-      }
+    static constexpr u32 access[] = {FC_PRIVATE, FC_PROTECTED, FC_PUBLIC};
+    static constexpr u32 kind[] = {0, FC_STATIC, FC_VIRTUAL, FC_VIRTUAL | FC_ADJUSTOR};
+    char c = take();
+    if (c >= 'A' && c <= 'X') return access[(c - 'A') / 8] | kind[(c - 'A') / 2 % 4];
+    if (c == 'Y' || c == 'Z') return FC_GLOBAL;
+    if (c == '9') return FC_EXTERN_C | FC_NO_PARAMS;
+    if (c == '$') {
+      u32 v = FC_VTORDISP | (eat('R') ? FC_VTORDISP_EX : 0);
+      c = take();
+      if (c >= '0' && c <= '5') return access[(c - '0') / 2] | FC_VIRTUAL | v;
     }
     err = true;
     return 0;
@@ -1356,7 +1114,7 @@ struct Demangler::Impl {
       if (err) return 0;
       if (!eat("4IA") && !eat('5')) return fail();
       char c = peek();
-      if (is_digit_c(c) || (c >= 'A' && c <= 'P')) n(leaf).v = unsigned_number();
+      if (is_digit(c) || (c >= 'A' && c <= 'P')) n(leaf).v = unsigned_number();
       return err ? 0 : s;
     }
     if (eat("?_9")) {
@@ -1412,7 +1170,7 @@ struct Demangler::Impl {
     put(std::string_view(b, size_t(r.ptr - b)));
   }
   void space_if_needed() {
-    if (!out->empty() && (is_word_c(out->back()) || out->back() == '>')) put(" ");
+    if (!out->empty() && (is_word(out->back()) || out->back() == '>')) put(" ");
   }
   // "::" after a scope; in a parameter list the scope's last word, or an anonymous namespace, goes with it, as
   // norm_params drops them
@@ -1422,7 +1180,7 @@ struct Demangler::Impl {
       if (out->ends_with(ANON))
         w -= ANON.size();
       else
-        while (w > 0 && is_word_c((*out)[w - 1])) --w;
+        while (w > 0 && is_word((*out)[w - 1])) --w;
       if (w < out->size()) drops.emplace_back(w, out->size() + 2);
     }
     put("::");
@@ -1516,20 +1274,9 @@ struct Demangler::Impl {
         put("operator ");
         type_full(x.x);
         return;
-      case NK::Dynamic: {  // the variable's scopes, then the special name with its own name
-        bool atexit = x.a;
-        for (u32 c = n(x.x).x; c && !err; c = n(c).next) {
-          if (n(c).next) {
-            ident(n(c).x);
-            scope_sep();
-            continue;
-          }
-          put(atexit ? "`dynamic atexit destructor for '" : "`dynamic initializer for '");
-          ident(n(c).x);
-          put("''");
-        }
+      case NK::Dynamic:
+        dynamic_name(id, n(x.x).x, false);
         return;
-      }
       case NK::Guard:
         put(x.a ? "`local static thread guard'" : "`local static guard'");
         if (x.v) {
@@ -1554,6 +1301,22 @@ struct Demangler::Impl {
         return;
       default:
         err = true;
+    }
+  }
+
+  // a dynamic initializer's or atexit destructor's name from the variable's component cell `from` on: the scopes,
+  // then the special name, which holds the variable's own name only (as undname prints it). lead: "::" before the
+  // first as well
+  void dynamic_name(u32 dyn, u32 from, bool lead) {
+    for (u32 c = from; c && !err; c = n(c).next) {
+      if (lead || c != from) scope_sep();
+      if (n(c).next) {
+        ident(n(c).x);
+        continue;
+      }
+      put(n(dyn).a ? "`dynamic atexit destructor for '" : "`dynamic initializer for '");
+      ident(n(c).x);
+      put("''");
     }
   }
 
@@ -1831,27 +1594,12 @@ struct Demangler::Impl {
     u32 qn = n(s).x;
     u32 leaf = component(qn, 0);
     if (n(leaf).kind == NK::Dynamic) {
-      // the variable's scopes go before the special name, which holds its own name only (as undname prints it); its
-      // scopes up to the last local scope are that scope's function
-      u32 var = n(leaf).x;
-      u32 last = 0;
-      u64 k = 0, at = 0, count = n(var).v;
-      for (u32 c = n(var).x; c; c = n(c).next, ++k)
-        if (n(n(c).x).kind == NK::Local) last = n(c).x, at = k;
-      if (last) owner_key(n(last).x, owner_out);
-      k = 0;
-      for (u32 c = n(var).x; c && !err; c = n(c).next, ++k) {
-        if (last && k < at) continue;
-        if (k + 1 == count) {
-          if (k > 0) put("::");
-          put(n(leaf).a ? "`dynamic atexit destructor for '" : "`dynamic initializer for '");
-          ident(n(c).x);
-          put("''");
-        } else if (k != at || !last) {
-          if (k > 0) put("::");
-          ident(n(c).x);
-        }
-      }
+      // the variable's scopes up to its last local scope are that scope's function
+      u32 cells = n(n(leaf).x).x, local = 0;
+      for (u32 c = cells; c; c = n(c).next)
+        if (n(n(c).x).kind == NK::Local) local = c;
+      if (local) owner_key(n(n(local).x).x, owner_out);
+      dynamic_name(leaf, local ? n(local).next : cells, local != 0);
       return;
     }
     u32 parent = component(qn, 1);
@@ -1894,9 +1642,7 @@ struct Demangler::Impl {
     sigbuf.clear();
     out = &qual;
     sig = false;
-    bool local = false;
-    qualified_key(s, &owner);
-    local = !owner.empty();
+    qualified_key(s, &owner);  // the owner stays empty unless the name is in a function's local scope
     if (!err && n(s).kind == NK::FuncSym && !(n(n(s).y).c & F_NO_PARAMS)) {
       out = &sigbuf;
       sig = true;
@@ -1911,7 +1657,7 @@ struct Demangler::Impl {
     }
     k.qualified = qual;
     k.signature = sigbuf;
-    k.owner = local ? std::string_view(owner) : std::string_view(qual);
+    k.owner = owner.empty() ? std::string_view(qual) : std::string_view(owner);
     return true;
   }
 
