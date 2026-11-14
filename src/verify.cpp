@@ -330,7 +330,7 @@ void finish_report(ReportFile& file, const Totals& totals) {
 
 }  // namespace
 
-int run(int argc, char** argv) {
+void run(int argc, char** argv) {
   Args a = parse_args(argc, argv);
   Config p = Config::load(a.config);
   // a missing regression list or an unwritable report fails the run before the comparison, not after it
@@ -440,7 +440,11 @@ int run(int argc, char** argv) {
   int rc = totals.libcode.empty() ? 0 : 1;
   if (a.matched && regression_gate(*a.matched, totals.matched, ev.results, a.update, out)) rc = 1;
   rc = (a.check || a.update) ? rc : 0;
-  return rc;
+  // everything is written: the process ends here, its memory returned whole rather than freed object by object (the
+  // run's tables take longer to free than the rest of the exit)
+  std::fflush(stdout);
+  std::fflush(stderr);
+  std::_Exit(rc);
 }
 
 }  // namespace verifier

@@ -31,7 +31,8 @@ struct GlobalDiff {
 };
 std::vector<GlobalDiff> check_globals(const std::vector<GlobalRoot>& roots, Comparer& cmp);  // judged (after solve)
 
-// the command line: the exit status (errors that end the run are thrown, RunError with their status)
-int run(int argc, char** argv);
+// the command line, run: ends the process with the exit status once everything is written (errors that end the run
+// are thrown, RunError with their status)
+[[noreturn]] void run(int argc, char** argv);
 
 }  // namespace verifier
