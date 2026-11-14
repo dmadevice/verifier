@@ -1,9 +1,12 @@
-// A DIFF's report from its code (its category from the instructions, its instruction diff, its first difference) kept
-// in the cache directory between runs, so a DIFF whose code and targets are as they were is not aligned and written
-// again. The file is keyed by the verifier (its own hash) and the original's inputs (the snapshot's key), which fix
-// the original's code and names; each entry by a 128-bit hash of everything else the report reads: both functions'
-// places and bytes, the rebuilt one's address fields, what each stands for in the alignment, what its name resolves
-// to, and the bytes there when it is a compiler constant.
+// A DIFF's report from its code (its category from the instructions and its instruction diff) kept in the cache
+// directory between runs, so a DIFF whose code and targets are as they were is not aligned and written again. The
+// file is keyed by the verifier (its own hash) and the original's inputs (the snapshot's key), which fix the
+// original's code and names; each entry by a 128-bit hash of everything else the report reads: the original
+// function's place and bytes, the rebuilt one's bytes and address fields, what each field stands for in the
+// alignment, what its name resolves to, and the bytes there when it is a compiler constant.
+// That hash leaves out the rebuilt function's place, and the bytes and values of its fields that only say where a
+// target is (branches out of the function, RIP-relative operands), so a relink that moves a function keeps its
+// report. A report whose lines read those bytes (CodeDiff::placed) is kept under a hash that has them, and the place.
 #pragma once
 #include <functional>
 #include <map>
@@ -20,10 +23,9 @@ namespace verifier {
 struct DiffReport {
   std::optional<Category> category;  // nullopt: the instructions are the same as tokens (the problems decide)
   CodeDiff diff;
-  std::string first_orig, first_rebuilt;  // the first difference's instructions, as the decoder writes them
   bool operator==(const DiffReport& o) const {
     return category == o.category && diff.differs == o.diff.differs && diff.first == o.diff.first &&
-           diff.lines == o.diff.lines && first_orig == o.first_orig && first_rebuilt == o.first_rebuilt;
+           diff.lines == o.diff.lines && diff.placed == o.diff.placed;
   }
 };
 
@@ -59,6 +61,8 @@ class DiffStore {
   std::map<std::pair<u64, u64>, Used> used_;
   Stats stats_;
   void load();
+  // the report kept under `k`: this run's, or the file's
+  std::optional<DiffReport> find(std::pair<u64, u64> k, const std::function<DiffReport()>& make);
 };
 
 }  // namespace verifier

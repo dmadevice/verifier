@@ -649,6 +649,7 @@ CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool w
     std::string_view x = oc.bytes(oc.insns[i]), y = rc.bytes(rc.insns[j]);
     if (oc.insns[i].mnem != rc.insns[j].mnem || otext(i, j) != rtext(j)) return std::string();
     if (ra[i] != NO_TARGET && rb[j] != NO_TARGET) return std::string("  ; target not aligned");
+    if (!rc.fields(rc.insns[j]).empty()) out.placed = true;  // its bytes hold where its targets are
     if (x == y) return std::string();
     return "  ; encoding " + hex_bytes(e.mark == '-' ? x : y);
   };

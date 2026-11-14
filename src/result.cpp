@@ -182,18 +182,14 @@ Result evaluate(const Annotation& ann, const Original& orig, const Rebuilt& reb,
         if (!(a == b)) e.category = classify(a, b);
       }
       e.diff = code_diff(oc, rc, cx, want_diff);
-      if (e.diff.first) {
-        e.first_orig = oc.insn(oc.insns[e.diff.first->first]).text();
-        e.first_rebuilt = rc.insn(rc.insns[e.diff.first->second]).text();
-      }
       return e;
     };
     DiffReport e = diffs && want_diff && !show ? diffs->get(oc, rc, cx, make) : make();
     if (!probs.empty()) rec.category = e.category ? *e.category : probs[0].category;
     if (e.diff.differs) {
-      if (e.diff.first)
-        rec.first_diff =
-            Result::FirstDiff{i64(e.diff.first->first), std::move(e.first_orig), std::move(e.first_rebuilt)};
+      if (e.diff.first)  // as the decoder writes them, with the addresses: made here, not kept
+        rec.first_diff = Result::FirstDiff{i64(e.diff.first->first), oc.insn(oc.insns[e.diff.first->first]).text(),
+                                           rc.insn(rc.insns[e.diff.first->second]).text()};
       rec.has_diff = true;
       rec.diff = std::move(e.diff.lines);
     }

@@ -11,7 +11,7 @@ namespace verifier {
 namespace {
 
 // the file: header, padding to 8; the index (u64 count, then Index records sorted by key); the entries
-constexpr std::string_view MAGIC = "verifier-diffs 3\n";
+constexpr std::string_view MAGIC = "verifier-diffs 4\n";
 
 // two 64-bit lanes over words; strings by length and their bytes in 8-byte words
 class KeyHash {
@@ -48,16 +48,36 @@ class KeyHash {
   u64 a_ = 0x243f6a8885a308d3ull, b_ = 0x13198a2e03707344ull;
 };
 
-std::pair<u64, u64> entry_key(const Code& oc, const Code& rc, const DiffContext& cx) {
+// a field whose bytes and value only say where its target is, which the targets' text gives
+bool placed_field(const Field& f) { return f.kind == F_EXT || f.kind == F_RIP; }
+
+// `placed`: with the rebuilt function's place and all its bytes; else without them (see the header)
+std::pair<u64, u64> entry_key(const Code& oc, const Code& rc, std::string_view targets, bool placed) {
   KeyHash h;
+  h.add(u64(placed));
   h.add(oc.start);
   h.add(oc.end);
   h.add(oc.code);
-  h.add(rc.start);
-  h.add(rc.end);
-  h.add(rc.code);
-  h.add(std::string_view(reinterpret_cast<const char*>(rc.field_list.data()), rc.field_list.size_bytes()));
-  h.add(rebuilt_targets(oc, rc, cx));  // what each field resolves to, and stands for in the alignment
+  if (placed) {
+    h.add(rc.start);
+    h.add(rc.end);
+    h.add(rc.code);
+    h.add(std::string_view(reinterpret_cast<const char*>(rc.field_list.data()), rc.field_list.size_bytes()));
+  } else {
+    h.add(rc.end - rc.start);
+    std::string code(rc.code);
+    std::vector<Field> fields(rc.field_list.begin(), rc.field_list.end());
+    for (auto& l : rc.insns)
+      for (size_t k = 0; k < l.nfields; ++k) {
+        Field& f = fields[l.field + k];
+        if (!placed_field(f)) continue;
+        f.value = 0;
+        for (size_t at = size_t(l.off) + f.off, n = 0; n < f.size && at < code.size(); ++n, ++at) code[at] = 0;
+      }
+    h.add(code);
+    h.add(std::string_view(reinterpret_cast<const char*>(fields.data()), fields.size() * sizeof(Field)));
+  }
+  h.add(targets);  // what each field resolves to, and stands for in the alignment
   return h.done();
 }
 
@@ -68,8 +88,7 @@ std::string entry_blob(const DiffReport& e) {
   w.put(u8(e.diff.first.has_value()));
   w.put(u64(e.diff.first ? e.diff.first->first : 0));
   w.put(u64(e.diff.first ? e.diff.first->second : 0));
-  w.str(e.first_orig);
-  w.str(e.first_rebuilt);
+  w.put(u8(e.diff.placed));
   w.put(u32(e.diff.lines.size()));
   for (auto& l : e.diff.lines) w.str(l);
   return std::move(w.out);
@@ -77,7 +96,7 @@ std::string entry_blob(const DiffReport& e) {
 
 bool read_entry(std::string_view b, DiffReport& e) {
   BinReader r(b, 0);
-  u8 cat = 0, differs = 0, first = 0;
+  u8 cat = 0, differs = 0, first = 0, placed = 0;
   u64 i = 0, j = 0;
   u32 lines = 0;
   r.get(cat);
@@ -85,11 +104,11 @@ bool read_entry(std::string_view b, DiffReport& e) {
   r.get(first);
   r.get(i);
   r.get(j);
-  r.str(e.first_orig);
-  r.str(e.first_rebuilt);
+  r.get(placed);
   if (!r.get(lines) || lines > b.size()) return false;
   if (cat) e.category = Category(cat - 1);
   e.diff.differs = differs;
+  e.diff.placed = placed;
   if (first) e.diff.first = {size_t(i), size_t(j)};
   e.diff.lines.resize(lines);
   for (auto& l : e.diff.lines) r.str(l);
@@ -127,7 +146,18 @@ void DiffStore::load() {
 DiffReport DiffStore::get(const Code& oc, const Code& rc, const DiffContext& cx,
                           const std::function<DiffReport()>& make) {
   if (path_.empty()) return make();
-  std::pair<u64, u64> k = entry_key(oc, rc, cx);
+  std::string targets = rebuilt_targets(oc, rc, cx);
+  std::pair<u64, u64> placeless = entry_key(oc, rc, targets, false);
+  if (auto e = find(placeless, make)) return std::move(*e);
+  std::pair<u64, u64> placed = entry_key(oc, rc, targets, true);
+  if (auto e = find(placed, make)) return std::move(*e);
+  ++stats_.misses;
+  DiffReport e = make();
+  used_.emplace(e.diff.placed ? placed : placeless, Used{entry_blob(e), std::string_view()});
+  return e;
+}
+
+std::optional<DiffReport> DiffStore::find(std::pair<u64, u64> k, const std::function<DiffReport()>& make) {
   auto kept = [&](std::string_view b) -> std::optional<DiffReport> {
     DiffReport e;
     if (!read_entry(b, e)) return std::nullopt;
@@ -135,7 +165,7 @@ DiffReport DiffStore::get(const Code& oc, const Code& rc, const DiffContext& cx,
     return e;
   };
   if (auto u = used_.find(k); u != used_.end())
-    if (auto e = kept(u->second.blob())) return std::move(*e);
+    if (auto e = kept(u->second.blob())) return e;
   const Index* it = std::lower_bound(index_, index_ + nindex_, k, [](const Index& x, const std::pair<u64, u64>& y) {
     return std::make_pair(x.k0, x.k1) < y;
   });
@@ -144,13 +174,10 @@ DiffReport DiffStore::get(const Code& oc, const Code& rc, const DiffContext& cx,
     if (auto e = kept(b)) {
       ++stats_.hits;
       used_.emplace(k, Used{std::string(), b});
-      return std::move(*e);
+      return e;
     }
   }
-  ++stats_.misses;
-  DiffReport e = make();
-  used_.emplace(k, Used{entry_blob(e), std::string_view()});
-  return e;
+  return std::nullopt;
 }
 
 void DiffStore::save() {

@@ -376,8 +376,9 @@ Findings rebuilt_store() {
   return bad;
 }
 
-// The DIFF reports kept between runs: found again for the same code and targets, made again when a rebuilt byte or
-// what a target resolves to changes, checked against one made when asked, and not used under another key.
+// The DIFF reports kept between runs: found again for the same code and targets, also when the rebuilt function and its
+// callee moved; made again when a rebuilt byte or what a target resolves to changes, or when the function moved and
+// its lines show the bytes of a branch out of it; checked against one made when asked, and not used under another key.
 Findings diff_store() {
   namespace fs = std::filesystem;
   fs::path d = fs::temp_directory_path() / ("verifier-diffs-" + unique_suffix());
@@ -391,9 +392,10 @@ Findings diff_store() {
   NameMap names{{of, "Callee"}};
   Findings bad;
   size_t made = 0;
-  auto report = [&](const Image& R, Key callee, const std::string& key, bool check = false) {
-    Code oc(O, o, o + ob.size()), rc(R, r, r + ob.size() + 1);
-    DiffContext cx{[&](u64 t) { return t == rf ? callee : Key::named(Key::UNRESOLVED, "x"); }, nullptr, name_of(names)};
+  auto report = [&](const Image& R, Key callee, const std::string& key, bool check = false, u64 at = 0, u64 cf = 0) {
+    if (!at) at = r, cf = rf;
+    Code oc(O, o, o + ob.size()), rc(R, at, at + ob.size() + 1);
+    DiffContext cx{[&](u64 t) { return t == cf ? callee : Key::named(Key::UNRESOLVED, "x"); }, nullptr, name_of(names)};
     DiffStore store(file, key);
     store.check = check;
     DiffReport e = store.get(oc, rc, cx, [&] {
@@ -418,6 +420,25 @@ Findings diff_store() {
   if (made != 4) bad.push_back({"diffs", "kept although a byte changed"});
   report(R, Key::of_va(of), "other key");
   if (made != 5) bad.push_back({"diffs", "another key's used"});
+  // the same code relinked: the function and its callee elsewhere, the call's displacement another
+  Side ms(0x400);
+  u64 mf = ms.put(TEXT, Bytes("\xc3", 1));
+  ms.reserve(TEXT, 0x30);
+  u64 m = ms.reserve(TEXT, 0x10);
+  ms.write(m, Bytes("\x40\x53", 2) + call(m + 2, mf) + Bytes("\x5b\xc3", 2));
+  report(R, Key::of_va(of), "key");  // kept again: a run keeps only the reports it used
+  DiffReport moved = report(ms.image(), Key::of_va(of), "key", false, m, mf);
+  if (made != 6 || !(moved == first) || first.diff.placed)
+    bad.push_back({"diffs", "not found again after a move (" + std::to_string(made) + " made)"});
+  report(ms.image(), Key::named(Key::UNRESOLVED, "Other"), "key", false, m, mf);
+  if (made != 7) bad.push_back({"diffs", "kept after a move although the callee resolves otherwise"});
+  // a call encoded otherwise: its line gives its bytes, displacement and all, so a move makes it again
+  rs.write(r, Bytes("\x53\x40", 2) + call(r + 2, rf) + Bytes("\x5b\xc3", 2));
+  DiffReport enc = report(rs.image(), Key::of_va(of), "key");
+  ms.write(m, Bytes("\x53\x40", 2) + call(m + 2, mf) + Bytes("\x5b\xc3", 2));
+  DiffReport enc_moved = report(ms.image(), Key::of_va(of), "key", false, m, mf);
+  if (made != 9 || !enc.diff.placed || enc_moved.diff.lines == enc.diff.lines)
+    bad.push_back({"diffs", "a placed report kept after a move (" + std::to_string(made) + " made)"});
   std::error_code ec;
   fs::remove_all(d, ec);
   return bad;

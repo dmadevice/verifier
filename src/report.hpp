@@ -90,6 +90,9 @@ struct CodeDiff {
   bool differs = false;                            // some instruction is not aligned with an equal one
   std::optional<std::pair<size_t, size_t>> first;  // the first difference: (original, rebuilt) instruction
   std::vector<std::string> lines;                  // when asked for
+  // a line weighs the rebuilt bytes of an instruction with address fields (whether it is an encoding note, and its
+  // bytes): the lines depend on where the rebuilt function is, not only on its code and what its fields stand for
+  bool placed = false;
 };
 CodeDiff code_diff(const Code& oc, const Code& rc, const DiffContext& cx, bool want_lines, int context = 2,
                    size_t limit = 200);
