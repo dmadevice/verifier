@@ -29,7 +29,7 @@ class KeyHash {
       add(w);
     }
     u64 w = 0;
-    std::memcpy(&w, s.data() + i, s.size() - i);
+    if (i < s.size()) std::memcpy(&w, s.data() + i, s.size() - i);  // (an empty view's data may be null)
     add(w);
   }
   std::pair<u64, u64> done() const { return {avalanche(a_), avalanche(b_ ^ 0x9e3779b97f4a7c15ull)}; }
@@ -148,19 +148,23 @@ DiffReport DiffStore::get(const Code& oc, const Code& rc, const DiffContext& cx,
   if (path_.empty()) return make();
   std::string targets = rebuilt_targets(oc, rc, cx);
   std::pair<u64, u64> placeless = entry_key(oc, rc, targets, false);
-  if (auto e = find(placeless, make)) return std::move(*e);
+  if (auto e = find(placeless, oc, rc, make)) return std::move(*e);
   std::pair<u64, u64> placed = entry_key(oc, rc, targets, true);
-  if (auto e = find(placed, make)) return std::move(*e);
+  if (auto e = find(placed, oc, rc, make)) return std::move(*e);
   ++stats_.misses;
   DiffReport e = make();
   used_.emplace(e.diff.placed ? placed : placeless, Used{entry_blob(e), std::string_view()});
   return e;
 }
 
-std::optional<DiffReport> DiffStore::find(std::pair<u64, u64> k, const std::function<DiffReport()>& make) {
+std::optional<DiffReport> DiffStore::find(std::pair<u64, u64> k, const Code& oc, const Code& rc,
+                                         const std::function<DiffReport()>& make) {
   auto kept = [&](std::string_view b) -> std::optional<DiffReport> {
     DiffReport e;
     if (!read_entry(b, e)) return std::nullopt;
+    // the first difference names an instruction of each function (a damaged file's may name none)
+    if (e.diff.first && (e.diff.first->first >= oc.insns.size() || e.diff.first->second >= rc.insns.size()))
+      return std::nullopt;
     if (check && !(make() == e)) throw std::runtime_error("diff store: a kept report differs from the one made");
     return e;
   };

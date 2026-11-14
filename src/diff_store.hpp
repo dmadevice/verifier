@@ -62,7 +62,8 @@ class DiffStore {
   Stats stats_;
   void load();
   // the report kept under `k`: this run's, or the file's
-  std::optional<DiffReport> find(std::pair<u64, u64> k, const std::function<DiffReport()>& make);
+  std::optional<DiffReport> find(std::pair<u64, u64> k, const Code& oc, const Code& rc,
+                                 const std::function<DiffReport()>& make);
 };
 
 }  // namespace verifier

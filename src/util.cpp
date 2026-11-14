@@ -243,7 +243,8 @@ std::vector<std::string> read_lines(const std::string& path) {
   return out;
 }
 
-std::string hex_signed(i64 v) { return v < 0 ? "-" + hex(u64(-v)) : hex(u64(v)); }
+// (negated as unsigned: the most negative value has no positive i64)
+std::string hex_signed(i64 v) { return v < 0 ? "-" + hex(0 - u64(v)) : hex(u64(v)); }
 
 std::string hex(u64 v) {
   char buf[24];
