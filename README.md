@@ -176,9 +176,9 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs \
 | `--map FILE` | its linker map (required) |
 | `--src DIR...` | one or more source trees to read annotations from (required) |
 | `--config FILE` | the configuration (default `verifier.conf`) |
-| `--matched FILE` | the regression list: functions that must keep matching |
-| `--check` | exit 1 when a listed function no longer matches, or on `LIBCODE` |
-| `--update` | add the new matches to the list; refuses while something regressed |
+| `--matched FILE` | the regression list: functions that must keep matching; must exist unless `--update` starts it |
+| `--check` | exit 1 when a listed function no longer matches, or on `LIBCODE`; needs `--matched` |
+| `--update` | add the new matches to the list; refuses while something regressed; needs `--matched` |
 | `--json FILE` | write the full report |
 | `--show 0x<va>` | print that function's two instruction streams side by side |
 
@@ -186,7 +186,7 @@ verifier --rebuilt build/game.exe --map build/game.map --src src stubs \
 |---|---|
 | 0 | the run completed; without `--check` or `--update`, DIFFs do not change the status |
 | 1 | with `--check` or `--update`: a listed function regressed, or there is `LIBCODE`. Always: duplicate annotations, or the original is not the configured `original_sha256` |
-| 2 | bad arguments, configuration or inputs |
+| 2 | bad arguments, configuration or inputs; a missing regression list; a report or list that could not be written |
 
 The regression list is a text file of `0x<va> <name>` lines that `--update` maintains. Commit it with your
 source.

@@ -60,6 +60,8 @@ Args parse_args(int argc, char** argv) {
   if (!have_map) missing.push_back("--map");
   if (a.src.empty()) missing.push_back("--src");
   if (!missing.empty()) usage("the following arguments are required: " + join(missing, ", "));
+  if ((a.check || a.update) && !a.matched)
+    usage(std::string("argument ") + (a.check ? "--check" : "--update") + ": requires --matched");
   return a;
 }
 

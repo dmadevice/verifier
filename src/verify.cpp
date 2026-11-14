@@ -144,10 +144,14 @@ Totals summarize(const std::vector<Outcome>& results, const std::vector<Result>&
   return t;
 }
 
+[[noreturn]] void cannot_write(const std::string& path) {
+  throw RunError(2, "verifier: cannot write " + path + "\n");
+}
+
 bool regression_gate(const std::string& path, const std::set<u64>& matched, const std::vector<Outcome>& results,
                      bool update, Out& out) {
   std::map<u64, std::string> prev;
-  if (file_exists(path)) {
+  if (!update || file_exists(path)) {  // only --update may start a list that does not exist yet
     for (auto& line : read_lines(path)) {
       std::string s = strip(line);
       if (s.empty() || starts_with(line, "#")) continue;
@@ -176,7 +180,7 @@ bool regression_gate(const std::string& path, const std::set<u64>& matched, cons
         auto it = names.find(v);
         text += hex(v) + " " + (it != names.end() ? it->second : prev.count(v) ? prev[v] : "") + "\n";
       }
-      std::ofstream(path, std::ios::binary) << text;
+      if (!write_file_atomic(path, text)) cannot_write(path);
     }
   }
   return !lost.empty();
@@ -243,7 +247,10 @@ struct Evaluated {
 class ReportFile {
  public:
   explicit ReportFile(const std::optional<std::string>& path) {
-    if (path) f_.open(*path, std::ios::binary | std::ios::trunc);
+    if (!path) return;
+    path_ = *path;
+    f_.open(path_, std::ios::binary | std::ios::trunc);
+    if (!f_) cannot_write(path_);
   }
   bool on() const { return f_.is_open(); }
   std::string& text() { return buf_; }  // appended to; written out once it is large
@@ -253,9 +260,17 @@ class ReportFile {
   void flush() {
     f_.write(buf_.data(), std::streamsize(buf_.size()));
     buf_.clear();
+    if (!f_) cannot_write(path_);
+  }
+  // the rest written and the file closed; throws when any of it did not reach the file
+  void close() {
+    flush();
+    f_.close();
+    if (!f_) cannot_write(path_);
   }
 
  private:
+  std::string path_;
   std::ofstream f_;
   std::string buf_;
 };
@@ -310,7 +325,7 @@ void finish_report(ReportFile& file, const Totals& totals) {
     json::put_value(report, v, 1);
   }
   report += "\n}\n";
-  file.flush();
+  file.close();
 }
 
 }  // namespace
@@ -318,6 +333,10 @@ void finish_report(ReportFile& file, const Totals& totals) {
 int run(int argc, char** argv) {
   Args a = parse_args(argc, argv);
   Config p = Config::load(a.config);
+  // a missing regression list or an unwritable report fails the run before the comparison, not after it
+  if (a.matched && !a.update && !file_exists(*a.matched))
+    throw RunError(2, "verifier: no regression list " + *a.matched + "\n");
+  ReportFile report(a.json);
   Phases ph;
   Out out;
   check_fast_path() = std::getenv("VERIFIER_CHECK_FAST") != nullptr;   // each fast answer checked by a full decode
@@ -381,7 +400,6 @@ int run(int argc, char** argv) {
   explore_all(anns, orig, reb, pairing, cmp, globals);
   ph.mark("explore+solve");
 
-  ReportFile report(a.json);
   // DIFF reports kept between runs: keyed by the original's inputs and this verifier (see diff_store.hpp)
   DiffStore diffs(orig.cache_key().empty() || self.empty() ? std::string() : p.cache_file("diff-cache.bin"),
                   orig.cache_key() + "verifier " + self);
