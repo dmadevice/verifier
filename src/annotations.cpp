@@ -147,6 +147,20 @@ bool match_annotation(std::string_view line, const std::string& module, Kind& ki
 
 namespace {
 
+// `SIZE <n>` (decimal, or hex with 0x) at the start of rest: n; nullopt when rest does not start with it
+std::optional<u64> size_flag(std::string_view rest) {
+  if (!starts_with(rest, "SIZE") || rest.size() < 5 || !is_space(rest[4])) return std::nullopt;
+  std::string n = strip(rest.substr(5));
+  n = n.substr(0, std::min(n.size(), n.find_first_of(" 	")));
+  bool hex = starts_with(n, "0x");
+  std::string_view digits = std::string_view(n).substr(hex ? 2 : 0);
+  if (digits.empty() || digits.size() > 15) return std::nullopt;
+  for (char c : digits)
+    if (!(hex ? std::isxdigit(static_cast<unsigned char>(c)) : std::isdigit(static_cast<unsigned char>(c))))
+      return std::nullopt;
+  return hex ? parse_hex(std::string(digits)) : u64(std::stoull(std::string(digits)));
+}
+
 // one file's annotations (appended to out) and the annotations naming nothing (to ignored)
 void parse_file(std::string_view data, const std::string& path, std::string_view kept_path, const std::string& module,
                 std::vector<Annotation>& out, std::vector<Ignored>* ignored) {
@@ -185,6 +199,7 @@ void parse_file(std::string_view data, const std::string& path, std::string_view
     }
     if (starts_with(rest, "(") && ends_with(rest, ")")) flags.sig = norm_params(rest);
     if (kind == Kind::Global) {
+      if (auto size = size_flag(rest)) flags.size = *size;
       for (auto& nxt : following) {
         if (auto name = global_decl_name(nxt)) {
           out.push_back({kind, va, *name, flags, kept_path, int(i + 1)});
@@ -257,8 +272,8 @@ std::vector<Annotation> parse_annotations(const std::vector<std::string>& roots,
 namespace {
 
 // the file: header; then for each source file listed, in order: its path, size and time, its annotations (kind,
-// address, name, FOLDED, destructor, parameter list, line, the lookup keys: Annotation's) and the annotations naming
-// nothing (line, text); strings as u32 length and bytes, counts as u32
+// address, name, FOLDED, destructor, parameter list, SIZE, line, the lookup keys: Annotation's) and the annotations
+// naming nothing (line, text); strings as u32 length and bytes, counts as u32
 constexpr std::string_view SOURCES_MAGIC = "verifier-sources 3\n";
 
 }  // namespace
@@ -290,6 +305,7 @@ SourceCache::SourceCache(std::string path, std::string key, i64 recent)
       r.get(folded);
       r.get(dtor);
       r.str(a.flags.sig);
+      r.get(a.flags.size);
       r.get(a.line);
       r.str(a.key);
       r.str(a.deleting_key);
@@ -344,6 +360,7 @@ void SourceCache::save() {
       w.put(u8(a.flags.folded));
       w.put(u8(a.flags.dtor));
       w.str(a.flags.sig);
+      w.put(a.flags.size);
       w.put(i32(a.line));
       w.str(a.key);
       w.str(a.deleting_key);

@@ -67,6 +67,7 @@ std::vector<std::string> overloads_of_annotation(const Rebuilt& reb, const Annot
 Pairing::Pairing(const Original& o, const Rebuilt& r, const std::vector<Annotation>& anns) : orig(o), reb(r) {
   pair_vftables();
   for (auto& a : anns) {
+    if (a.kind == Kind::Global && a.flags.size) sizes_[a.va] = std::max(sizes_[a.va], a.flags.size);
     Lookup lk = lookup_annotation(reb, a, sig_flag(a.flags), is_paired(a.kind));
     for (u64 rva : lk.vas) {
       reb_to_origs_.push_back({rva, a.va});  // in annotation order: the last of each rebuilt address wins

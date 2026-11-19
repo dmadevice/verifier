@@ -108,6 +108,34 @@ Findings sources_cache_keys() {
   return bad;
 }
 
+// a GLOBAL's SIZE, decimal or hex, read from the file and the same from the cache; not a SIZE: one on another kind,
+// one without a number
+Findings global_size() {
+  namespace fs = std::filesystem;
+  fs::path d = fs::temp_directory_path() / ("verifier-sources-size-" + unique_suffix());
+  fs::create_directories(d / "src");
+  std::string file = (d / "src" / "a.cpp").string(), cache = (d / "sources.bin").string();
+  std::ofstream(file, std::ios::binary) << "// GLOBAL: MOD 0x10 SIZE 4\nconst int kFirst = 1;\n"
+                                        << "// GLOBAL: MOD 0x20 SIZE 0x10\nconst Item kSecond = {};\n"
+                                        << "// GLOBAL: MOD 0x30\nconst int kThird = 3;\n"
+                                        << "// GLOBAL: MOD 0x40 SIZE many\nconst int kFourth = 4;\n"
+                                        << "// FUNCTION: MOD 0x50 SIZE 4\nvoid Get() {}\n";
+  fs::last_write_time(file, fs::file_time_type::clock::now() - std::chrono::hours(1));
+  std::vector<u64> want = {4, 16, 0, 0, 0};
+  Findings bad;
+  for (const char* pass : {"read", "cached"}) {
+    SourceCache c(cache, "key", two_seconds_ago());
+    auto anns = parse_annotations({(d / "src").string()}, "MOD", nullptr, &c);
+    c.save();
+    std::vector<u64> got;
+    for (auto& a : anns) got.push_back(a.flags.size);
+    if (got != want) bad.push_back({"global size", std::string(pass) + ": " + std::to_string(got.size()) + " sizes"});
+  }
+  std::error_code ec;
+  fs::remove_all(d, ec);
+  return bad;
+}
+
 // the original's snapshot key: none while an input is younger than two seconds (the snapshot is neither used nor
 // written), and the configured hash part of it
 Findings snapshot_key() {
@@ -452,6 +480,7 @@ void add_cache_cases(Cases& cases) {
                                 {"snapshot key", nullptr, snapshot_key},
                                 {"sources cache", nullptr, sources_cache},
                                 {"sources cache keys", nullptr, sources_cache_keys},
+                                {"GLOBAL SIZE read and cached", nullptr, global_size},
                                 {"original code store", nullptr, code_store},
                                 {"rebuilt code store", nullptr, rebuilt_store},
                                 {"DIFF report store", nullptr, diff_store},

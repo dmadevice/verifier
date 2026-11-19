@@ -64,6 +64,11 @@ class Pairing : public ComparerContext {
   int folded_locals(u64 base) const override { return int(reb.symbols.names(base).size()); }
   u64 orig_object_end(u64 t) const override { return orig.object_end(t); }
   bool orig_padding(u64 t) const override { return orig.in_padding(t); }
+  bool orig_item(u64 t) const override { return orig.item_at(t); }
+  std::optional<u64> object_size(u64 t) const override {
+    auto it = sizes_.find(t);
+    return it != sizes_.end() ? std::optional<u64>(it->second) : std::nullopt;
+  }
   bool orig_named(u64 t) const override;
   std::shared_ptr<const Code> orig_code(u64 start, u64 end) override {
     return orig_cache_ ? orig_cache_->code(start, end) : nullptr;
@@ -92,6 +97,7 @@ class Pairing : public ComparerContext {
   CodeCache *orig_cache_ = nullptr, *rebuilt_cache_ = nullptr;
   const Matching* matching_ = nullptr;
   std::vector<u64> named_;                         // original addresses with a name (sorted, distinct)
+  std::map<u64, u64> sizes_;                       // original address -> its GLOBALs' SIZE (the largest, if several)
   std::vector<std::pair<u64, u64>> reb_to_orig_;   // (rebuilt, original of the last annotation naming it), sorted
   std::vector<std::pair<u64, u64>> reb_to_origs_;  // every (rebuilt, original) annotations name, sorted, distinct
   // what resolve() answers for an address, worked out once (all but the local statics the matching places, which

@@ -32,7 +32,7 @@ bool lead_ea(std::string_view line, u64& ea, size_t& end) {
 // (u64 length, then the bytes), where the file's data lies in the image (a count, then each part's start and end),
 // where the laid-out image starts (page-aligned) and its size, and the image. Only the table and the image are used in
 // place once read.
-constexpr std::string_view SNAPSHOT_MAGIC = "verifier-snapshot 6\n";
+constexpr std::string_view SNAPSHOT_MAGIC = "verifier-snapshot 7\n";
 
 struct StringTable {
   std::string text;
@@ -259,7 +259,7 @@ void Original::save_snapshot(const std::string& path, const std::string& key) co
     st.put(w, l.symbol);
     u(l.has_symbol);
   }
-  for (auto* v : {&boundaries_, &align_starts_, &align_ends_}) {
+  for (auto* v : {&boundaries_, &align_starts_, &align_ends_, &items_}) {
     u(v->size());
     for (u64 x : *v) u(x);
   }
@@ -354,7 +354,7 @@ bool Original::load_snapshot(const std::string& path, const std::string& key) {
     l.has_symbol = u() != 0;
     o.linked[ea] = std::move(l);
   }
-  for (auto* v : {&o.boundaries_, &o.align_starts_, &o.align_ends_}) {
+  for (auto* v : {&o.boundaries_, &o.align_starts_, &o.align_ends_, &o.items_}) {
     u64 n = count(8);
     v->reserve(n);
     while (n--) v->push_back(u());
@@ -412,9 +412,14 @@ void Original::load_items(const std::string& data_items, const std::string& data
         size = u64(d["size"].as_int());
       }
       b.push_back(ea);
-      if (line.find("\"align\"") != std::string_view::npos) align[ea] = ea + size;
+      if (line.find("\"align\"") != std::string_view::npos)
+        align[ea] = ea + size;
+      else if (size)
+        items_.push_back(ea);
     });
   }
+  std::sort(items_.begin(), items_.end());
+  items_.erase(std::unique(items_.begin(), items_.end()), items_.end());
   if (file_exists(data_names)) {
     for_each_file_line(data_names, [&](std::string_view line) {
       if (line.find("\"kind\": \"data\"") == std::string_view::npos) return;
@@ -442,6 +447,8 @@ u64 Original::object_end(u64 va) const {
 }
 
 bool Original::named_data(u64 va) const { return std::binary_search(data_names_.begin(), data_names_.end(), va); }
+
+bool Original::item_at(u64 va) const { return std::binary_search(items_.begin(), items_.end(), va); }
 
 bool Original::in_padding(u64 va) const {
   long i = long(std::upper_bound(align_starts_.begin(), align_starts_.end(), va) - align_starts_.begin()) - 1;

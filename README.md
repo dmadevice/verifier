@@ -92,6 +92,14 @@ compared functions resolve.
   pairs and the one at the lowest address is compared.
 - **Folded functions.** When the linker's identical-code folding (`/OPT:ICF`) gave several functions one
   address, write `FOLDED` after the address. Two annotations on one address without it are an error.
+- **Data sizes.** `SIZE <n>` after a `GLOBAL`'s address (`// GLOBAL: GAME 0x140200010 SIZE 4`, decimal or `0x`
+  hex) says the variable is `n` bytes, and read-only data is compared over that many bytes on both sides. Use it
+  where neither image can tell: the original object's end comes from the data items, and an unreferenced
+  constant the original keeps after it, which no item or reference separates, would otherwise be compared as part
+  of it against the rebuild's padding. A `SIZE` is refused, and the data reported as differing, where the
+  disassembler gives the object a size itself, where the original has a pointer past `n` bytes before the
+  object's end, and where the rebuilt object has nonzero bytes past `n`. State the evidence next to it: who
+  reads the object, how wide, and that nothing refers to the bytes after it.
 - **Destructors.** A `FUNCTION` above `X::~X` pairs with the scalar deleting destructor when the original
   address is a vtable slot, otherwise with the plain destructor.
 - **Annotations that name nothing.** An annotation with no definition, variable or class within three lines is
@@ -151,7 +159,9 @@ integers. The key names follow IDA's, but any disassembler or script that writes
 
 `data_items` is worth exporting. With it, a data object is compared up to its original end. Without it, a data
 object is compared only up to the rebuilt object's last nonzero byte, so a table whose last entries the rebuild
-leaves zero, or a string cut short, still matches.
+leaves zero, or a string cut short, still matches. An item with a nonzero size that is not padding sizes the
+object at its start, and a `GLOBAL`'s `SIZE` is refused there; an item of size 0 (a reference target) only ends
+the object before it.
 
 ### Library attribution
 

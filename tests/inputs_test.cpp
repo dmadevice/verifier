@@ -111,7 +111,8 @@ Findings data_items_load() {
                                          << "{\"ea\": 4106, \"size\": 2, \"kind\": \"align\"}\n"
                                          << "\n"
                                          << "{\"kind\": \"data\", \"size\": 4, \"ea\": 4108}\n"
-                                         << "{\"ea\": 4112, \"size\": 8, \"kind\": \"data\"}\n";
+                                         << "{\"ea\": 4112, \"size\": 8, \"kind\": \"data\"}\n"
+                                         << "{\"ea\": 4128, \"size\": 0, \"kind\": \"ref\"}\n";
   Original o;
   o.load_items(items, (d / "absent.jsonl").string());
   std::error_code ec;
@@ -119,8 +120,11 @@ Findings data_items_load() {
   Findings bad;
   if (o.object_end(4096) != 4106 || o.object_end(4100) != 4106) bad.push_back({"items", "a string's end"});
   if (o.object_end(4108) != 4112) bad.push_back({"items", "a data item (other key order) ends at the next one"});
-  if (o.object_end(4112) != 4112) bad.push_back({"items", "the last item's end is unknown"});
+  if (o.object_end(4112) != 4128) bad.push_back({"items", "a reference ends the object before it"});
+  if (o.object_end(4128) != 4128) bad.push_back({"items", "the last item's end is unknown"});
   if (!o.in_padding(4107) || o.in_padding(4100) || o.in_padding(4108)) bad.push_back({"items", "padding"});
+  if (!o.item_at(4096) || !o.item_at(4108) || o.item_at(4106) || o.item_at(4128) || o.item_at(4100))
+    bad.push_back({"items", "item starts: not padding, not a reference alone"});
   return bad;
 }
 

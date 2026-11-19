@@ -126,6 +126,44 @@ Findings literal_vs_global(bool string) {
   return c.check(of, of + 7, rf, rf + 7);
 }
 
+// a GLOBAL's SIZE: a 4-byte constant the original follows with another 4 bytes nothing refers to (so its known end is 8
+// bytes on), and the rebuild with padding. Without SIZE the 8 bytes differ; SIZE 4 compares 4. SIZE is refused where
+// the disassembler sized the object, where the original has a pointer past it, and where the rebuilt object has
+// nonzero bytes past it
+enum class SizeCase { None, Given, Item, PointerPast, RebuiltPast };
+Findings global_size(SizeCase k) {
+  Side o(0), r(0x240);
+  Bytes ob = unhex("1f00000001000000"), rb = unhex("1f00000000000000");
+  if (k == SizeCase::PointerPast) {
+    ob = unhex("1f00000000000000") + le64b(BASE + DATA);
+    rb += Bytes(8, '\0');
+  }
+  if (k == SizeCase::RebuiltPast) rb = unhex("1f00000002000000");
+  u64 ot = o.put(RDATA, ob, 16), rt = r.put(RDATA, rb, 16);
+  if (k == SizeCase::PointerPast) o.relocs.push_back(ot + 8);
+  u64 of = o.reserve(TEXT, 16), rf = r.reserve(TEXT, 16);
+  o.write(of, lea_rcx(of, ot) + "\xc3");
+  r.write(rf, lea_rcx(rf, rt) + "\xc3");
+  Image O = o.image(), R = r.image();
+  struct Sized : ComparerContext {
+    u64 n = 0;
+    SizeCase k = SizeCase::None;
+    u64 span(u64) const override { return n; }
+    bool symbol_start(u64) const override { return true; }
+    u64 orig_object_end(u64 t) const override { return t + n; }
+    bool orig_item(u64) const override { return k == SizeCase::Item; }
+    std::optional<u64> object_size(u64) const override {
+      return k == SizeCase::None ? std::nullopt : std::optional<u64>(4);
+    }
+  } sized;
+  sized.n = ob.size();
+  sized.k = k;
+  Comparer c(
+      &O, &R, [&](u64 t) { return t == rt ? Key::of_va(ot) : Key::named(Key::UNRESOLVED, hex(t)); }, nullptr, nullptr,
+      &sized);
+  return c.check(of, of + 8, rf, rf + 8);
+}
+
 // read-only data whose original extent is known (from its padding): compared to that end, so a table cut short
 // ({1,2,3,4} vs {1,2,3,0}) differs, either way round. Without the extent only the rebuilt nonzero bytes are compared:
 // past them the original's bytes may as well be the next object, which the rebuild put after its padding
@@ -312,6 +350,11 @@ void add_compare_cases(Cases& cases) {
                    {"original table cut short", "data", [] { return short_table(false); }},
                    {"pointer only in the original", "data", pointer_only_in_original},
                    {"end pointer past a table", nullptr, end_pointer},
+                   {"constant before unreferenced bytes, no SIZE", "data", [] { return global_size(SizeCase::None); }},
+                   {"constant before unreferenced bytes, SIZE 4", nullptr, [] { return global_size(SizeCase::Given); }},
+                   {"SIZE where the disassembler sized it", "data", [] { return global_size(SizeCase::Item); }},
+                   {"SIZE leaving out an original pointer", "data", [] { return global_size(SizeCase::PointerPast); }},
+                   {"SIZE short of the rebuilt bytes", "data", [] { return global_size(SizeCase::RebuiltPast); }},
                    {"table cycle, the failing table first", "data", [] { return table_cycle(true); }},
                    {"table cycle, the other first", "data", [] { return table_cycle(false); }},
                    {"malformed unwind chain ends", nullptr, malformed_unwind},

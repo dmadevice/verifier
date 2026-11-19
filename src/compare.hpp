@@ -83,6 +83,9 @@ class ComparerContext {
   virtual u64 orig_object_end(u64 t) const { return t; }    // where the object at t ends (t: unknown)
   virtual bool orig_padding(u64 t) const { return false; }  // t is alignment padding
   virtual bool orig_named(u64 t) const { return false; }    // t has a name of its own
+  virtual bool orig_item(u64 t) const { return false; }     // the disassembler defines an item (with its size) at t
+  // the size a GLOBAL's SIZE gives the original object at t (nullopt: none given)
+  virtual std::optional<u64> object_size(u64 t) const { return std::nullopt; }
   virtual std::vector<u64> orig_refs(u64 f) { return {}; }  // the addresses function f's code refers to, sorted
   // the pairing
   virtual bool annotated_between(u64 lo, u64 hi) const { return false; }  // an annotated original in (lo, hi]

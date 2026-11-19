@@ -22,6 +22,7 @@ struct AnnotationFlags {
   bool folded = false;  // FOLDED: identical-code folding gave several functions the address
   bool dtor = false;    // the definition is a destructor
   std::string sig;      // the parameter list it pairs with (normalised; "" for any)
+  u64 size = 0;         // SIZE <n> on a GLOBAL: the object's size in bytes, where nothing else tells it (0: not given)
 };
 
 struct Annotation {

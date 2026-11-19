@@ -97,6 +97,7 @@ class Original {
   u64 object_end(u64 va) const;
   bool named_data(u64 va) const;
   bool in_padding(u64 va) const;
+  bool item_at(u64 va) const;  // a data item (not padding, not only a reference) starts at va
   // the data items' and named data's exports (either may be absent): where objects end, and the padding
   void load_items(const std::string& data_items, const std::string& data_names);
 
@@ -107,6 +108,7 @@ class Original {
   std::deque<std::string> text_;                // or the names from the exports
   std::string_view keep(std::string s) { return text_.emplace_back(std::move(s)); }
   std::vector<u64> boundaries_, align_starts_, align_ends_;
+  std::vector<u64> items_;       // where data items start (sorted, distinct)
   std::vector<u64> data_names_;  // sorted, distinct
   void load_exports();           // the tables from the text exports
   bool load_snapshot(const std::string& path, const std::string& key);

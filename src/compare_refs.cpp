@@ -259,6 +259,19 @@ std::optional<Problem> Comparer::rodata(u64 o_t, u64 r_t) {
 
 std::optional<Problem> Comparer::rodata_body(u64 o_t, u64 r_t) {
   u64 n = ctx->span(r_t);
+  // a GLOBAL's SIZE: the object is that many bytes on both sides. It only says what neither image can: refused where
+  // the disassembler sized the original object, where it would leave out a pointer the original has, and where the
+  // rebuilt object holds more than that many bytes
+  if (auto s = ctx->object_size(o_t)) {
+    std::string at = "SIZE " + std::to_string(*s) + " at " + hex(o_t) + ": ";
+    if (ctx->orig_item(o_t)) return Problem{Category::Data, at + "the disassembler gives the object's size"};
+    u64 end = std::max(ctx->orig_object_end(o_t), o_t + *s);
+    if (O->reloc_lower_bound(o_t + *s) < O->reloc_lower_bound(end))
+      return Problem{Category::Data, at + "the original has a pointer past it"};
+    if (u64(initialized(*R, r_t, i64(n)).size()) > *s)
+      return Problem{Category::Data, at + "the rebuilt object has nonzero bytes past it"};
+    n = std::min(n, *s);
+  }
   i64 want = i64(initialized(*R, r_t, i64(n)).size());
   size_t lo = R->reloc_lower_bound(r_t), hi = R->reloc_lower_bound(r_t + n);
   std::vector<i64> ptrs;
